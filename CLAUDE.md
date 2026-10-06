@@ -118,6 +118,8 @@ src/
 │   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
 ├── file_tree/
 │   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
+│   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)
+│   ├── indent_guides.rs vertical tree lines from flat entry depths
 │   └── icons.rs         Material Icon Theme (full set) → tree_icon(path, …)
 └── ui/
     ├── components.rs    shared compositions encoding DESIGN.md rules
@@ -223,12 +225,13 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
   feature and `#[gpui_kit::test]` — worth adding for tab close, dialogs, tree.
 - Modified flag is set on any edit and not cleared by undoing back to the saved
   text.
-- No New File / Save As / rename / delete; no file watching; `.gitignore` is not
-  respected in the tree; no "Open Recent" in the native menu (welcome screen
-  only). `.env` / `.gitignore` / lockfiles / Dockerfile use Bash/JSON/TOML
-  aliases (no dedicated Dockerfile grammar compatible with GPUI's tree-sitter);
-  GraphQL highlights are patched in `editor::highlights` because GPUI Kit ships
-  an empty query.
+- No New File / Save As / rename / delete; no file watching; no "Open Recent"
+  in the native menu (welcome screen only). Gitignored files are shown muted
+  in the tree (not hidden); ignore rules refresh on folder open / expand, not
+  on every save of `.gitignore`. `.env` / `.gitignore` / lockfiles / Dockerfile
+  use Bash/JSON/TOML aliases (no dedicated Dockerfile grammar compatible with
+  GPUI's tree-sitter); GraphQL highlights are patched in `editor::highlights`
+  because GPUI Kit ships an empty query.
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
   root context menu, switch dialogs. Quitting with an untitled multi-root
   workspace does not offer to save it (only switching does). Workspace
@@ -258,6 +261,12 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Gitignored tree rows: lighter dim (70% opacity only; was
+  opacity + muted stacked).
+- **2026-10-07** — File tree: indent columns don't shrink on narrow panels
+  (labels truncate instead).
+- **2026-10-07** — File tree indent guides + gitignore dimming (show muted,
+  don't hide); `ignore` crate + `file_tree::{indent_guides,ignore}`.
 - **2026-10-07** — Editor/gutter background = sidebar (matches file tree);
   Dockerfile/Containerfile detected (Bash grammar alias; status shows
   "Dockerfile"); `.dockerignore` → Bash.

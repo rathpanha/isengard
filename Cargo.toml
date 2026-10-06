@@ -16,6 +16,7 @@ rust-embed = "8"
 # tree-sitter-sequel (SQL via tree-sitter-languages) needs cc ~1.2;
 # without this, embed-resource locks cc 1.6 and resolution fails.
 cc = "~1.2.1"
+ignore = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Sets the Dock icon at runtime so unbundled builds (`cargo run`) show the logo.

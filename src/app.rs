@@ -934,7 +934,11 @@ impl Render for IsengardApp {
                 cx,
             );
             h_resizable("main-split")
-                .child(resizable_panel().size(px(260.)).child(tree))
+                .child(
+                    resizable_panel()
+                        .size(px(260.))
+                        .child(div().size_full().min_w_0().overflow_hidden().child(tree)),
+                )
                 .child(resizable_panel().child(self.render_editor_area(cx)))
                 .into_any_element()
         } else {

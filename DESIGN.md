@@ -74,6 +74,13 @@ Add a row here whenever a new shared component is created.
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
   `img()` so upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and
   re-tints. Do not replace Lucide for other UI chrome.
+- **File tree indent guides:** vertical 1px lines in each depth column
+  (`sidebar_border`) when a sibling exists below that level (VS Code–style).
+  Indent columns are fixed-width (`flex_shrink_0`); a narrow panel truncates
+  labels instead of compressing the tree.
+- **Gitignored entries:** still listed; icon + label at ~70% opacity (not
+  hidden, not double-muted). Matched via `ignore` + each root's `.gitignore`
+  tree.
 - **Title bar:** macOS shows the centred window title; Windows/Linux show the
   in-window `AppMenuBar`. No theme toggle (dark only).
 - **Keyboard shortcut hints:** one `Kbd` key cap per key with `gap_1`
@@ -109,6 +116,10 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — File tree: narrow panel keeps indent alignment (no flex
+  shrink on guide columns; truncate labels).
+- **2026-10-07** — File tree: indent guide lines + gitignored rows dimmed
+  (still visible; `ignore` crate).
 - **2026-10-07** — Editor background matches file-tree sidebar; Dockerfile
   language alias (Bash highlighter).
 - **2026-10-07** — Project GPL-3.0-only; CONTRIBUTING: no PRs.

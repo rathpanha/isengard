@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -10,10 +11,13 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::app::RemoveWorkspaceFolder;
-use crate::file_tree::{FsNode, tree_icon};
+use crate::file_tree::{FsNode, GitIgnoreIndex, compute_guide_masks, tree_icon};
 
 /// Separates a directory path from the suffix of its placeholder child's id.
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
+/// Horizontal space per tree depth level (indent guide column width).
+const INDENT_COL: f32 = 16.;
+const INDENT_BASE: f32 = 8.;
 
 /// The workspace's lazily-loaded folder tree, rendered with GPUI Kit's `Tree`.
 ///
@@ -24,6 +28,7 @@ const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
 pub struct FileTreePanel {
     roots: Vec<FsNode>,
     state: Entity<TreeState>,
+    gitignores: GitIgnoreIndex,
 }
 
 impl FileTreePanel {
@@ -31,6 +36,7 @@ impl FileTreePanel {
         Self {
             roots: Vec::new(),
             state: cx.new(|cx| TreeState::new(cx)),
+            gitignores: GitIgnoreIndex::default(),
         }
     }
 
@@ -58,6 +64,7 @@ impl FileTreePanel {
                 },
             )
             .collect();
+        self.refresh_gitignores();
         self.sync(cx);
     }
 
@@ -72,6 +79,8 @@ impl FileTreePanel {
             return;
         };
         if node.set_expanded(expanded) {
+            // Nested `.gitignore` may have appeared under the newly loaded dir.
+            self.refresh_gitignores();
             self.sync(cx);
         }
     }
@@ -83,6 +92,11 @@ impl FileTreePanel {
             let ix = state.index_of(&id);
             state.set_selected_index(ix, cx);
         });
+    }
+
+    fn refresh_gitignores(&mut self) {
+        let roots: Vec<PathBuf> = self.roots.iter().map(|r| r.path().to_path_buf()).collect();
+        self.gitignores.rebuild(&roots);
     }
 
     fn sync(&self, cx: &mut App) {
@@ -118,18 +132,38 @@ impl FileTreePanel {
         let name = title.to_uppercase();
         let multi_root = self.roots.len() > 1;
         let on_open_file = Rc::new(on_open_file);
+        let guide_masks = Rc::new(compute_guide_masks(self.state.read(cx)));
+        let ignored_paths = Rc::new({
+            let state = self.state.read(cx);
+            let mut set = HashSet::new();
+            let mut ix = 0;
+            while let Some(entry) = state.entry(ix) {
+                let path = PathBuf::from(entry.item().id.as_ref());
+                if !path.to_string_lossy().contains(PLACEHOLDER_SUFFIX)
+                    && self.gitignores.is_ignored(&path)
+                {
+                    set.insert(path);
+                }
+                ix += 1;
+            }
+            set
+        });
 
         v_flex()
             .size_full()
+            .min_w_0()
+            .overflow_hidden()
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
             .child(
                 div()
                     .px_3()
                     .py_2()
+                    .flex_shrink_0()
                     .text_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
+                    .truncate()
                     .child(name),
             )
             .child(
@@ -139,6 +173,7 @@ impl FileTreePanel {
                     let path = PathBuf::from(item.id.as_ref());
                     let is_missing_root = entry.depth() == 0 && entry.is_disabled();
                     let is_dir = entry.is_folder() || is_missing_root;
+                    let git_ignored = !is_placeholder && ignored_paths.contains(&path);
                     let icon = (!is_placeholder).then(|| {
                         tree_icon(
                             &path,
@@ -150,22 +185,59 @@ impl FileTreePanel {
                     });
                     let on_open_file = on_open_file.clone();
                     let is_file = !entry.is_folder() && !is_placeholder;
+                    let guides = guide_masks.get(ix).cloned().unwrap_or_default();
+                    let guide_color = cx.theme().sidebar_border;
+                    let muted = cx.theme().muted_foreground;
 
                     ListItem::new(ix)
                         .w_full()
+                        .min_w_0()
+                        .overflow_hidden()
                         .when(!entry.is_disabled(), |item| item.cursor_pointer())
                         .rounded(cx.theme().radius)
                         .py_0p5()
-                        .px_2()
-                        .pl(px(16.) * entry.depth() + px(8.))
                         .child(
                             h_flex()
-                                .gap_2()
-                                .children(icon)
-                                .child(item.label.clone())
-                                .when(is_placeholder, |this| {
-                                    this.text_color(cx.theme().muted_foreground)
-                                }),
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .overflow_hidden()
+                                // Indent columns must not shrink — otherwise a narrow
+                                // panel compresses deeper rows and the tree looks skewed.
+                                .child(div().w(px(INDENT_BASE)).flex_shrink_0())
+                                .children(guides.into_iter().map(|continues| {
+                                    div()
+                                        .w(px(INDENT_COL))
+                                        .h(px(22.))
+                                        .flex_shrink_0()
+                                        .flex()
+                                        .justify_center()
+                                        .items_center()
+                                        .children(continues.then(|| {
+                                            div().w(px(1.)).h_full().bg(guide_color)
+                                        }))
+                                }))
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .when(git_ignored, |this| this.opacity(0.7))
+                                        .children(icon)
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .flex_1()
+                                                .overflow_hidden()
+                                                .truncate()
+                                                .when(is_placeholder, |this| {
+                                                    this.text_color(muted)
+                                                })
+                                                .child(item.label.clone()),
+                                        ),
+                                ),
                         )
                         .on_click(move |_, window, cx| {
                             if is_file {
@@ -186,6 +258,8 @@ impl FileTreePanel {
                     })
                 })
                 .flex_1()
+                .min_w_0()
+                .overflow_hidden()
                 .text_sm()
                 .px_1(),
             )
