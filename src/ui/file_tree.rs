@@ -154,6 +154,7 @@ impl FileTreePanel {
 
                     ListItem::new(ix)
                         .w_full()
+                        .when(!entry.is_disabled(), |item| item.cursor_pointer())
                         .rounded(cx.theme().radius)
                         .py_0p5()
                         .px_2()

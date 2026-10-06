@@ -537,12 +537,14 @@ impl IsengardApp {
                     .gap_2()
                     .child(
                         Button::new("dialog-cancel")
+                            .cursor_pointer()
                             .outline()
                             .label("Cancel")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
                         Button::new("dialog-secondary")
+                            .cursor_pointer()
                             .outline()
                             .label(secondary_label)
                             .on_click(move |_, window, cx| {
@@ -553,6 +555,7 @@ impl IsengardApp {
                     )
                     .child(
                         Button::new("dialog-primary")
+                            .cursor_pointer()
                             .primary()
                             .label(primary_label)
                             .on_click(move |_, window, cx| {
@@ -868,7 +871,7 @@ impl IsengardApp {
                 let path = tab.path.clone();
                 let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
                 let hovered = self.is_destructive_hovered(&id);
-                Tab::new().label(tab.label()).suffix(
+                Tab::new().label(tab.label()).cursor_pointer().suffix(
                     destructive_icon_button(
                         id,
                         IconName::Close,

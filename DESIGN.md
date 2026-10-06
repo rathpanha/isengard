@@ -47,6 +47,12 @@ fix the code (or ask the user before changing the rule).
   - Destructive commands with data loss ask first, using
     `IsengardApp::open_choice_dialog`: buttons in the order Cancel · secondary
     ("Don't Save") · primary (the safe default, e.g. "Save", "Save All").
+- **Pointer cursor** on everything clickable (buttons, tabs, tree/list rows,
+  links); disabled items and plain text keep the default arrow, text areas the
+  I-beam. GPUI Kit only does this itself for `link()`/`text()` buttons, so add
+  `.cursor_pointer()` to every other clickable component (for list/tree rows:
+  `.when(!disabled, |item| item.cursor_pointer())`). Shared components in
+  `src/ui/components.rs` already include it.
 - **Tooltips** on every icon-only button, naming the action ("Close",
   "Remove from recent").
 
@@ -93,6 +99,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-06** — Pointer cursor on everything clickable.
 - **2026-10-06** — Workspaces before folders: Open Workspace first in Start,
   Recent workspaces above Recent folders.
 - **2026-10-06** — Workspace naming, multi-root tree, context menus, recent

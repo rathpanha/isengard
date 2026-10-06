@@ -43,6 +43,7 @@ pub fn destructive_icon_button(
         .child(
             Button::new(id)
                 .custom(variant)
+                .cursor_pointer()
                 .xsmall()
                 .icon(Icon::new(icon).text_color(if hovered { danger } else { muted }))
                 .tooltip(tooltip)

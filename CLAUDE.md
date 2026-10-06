@@ -233,6 +233,11 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — Removed Next/Previous Tab from the View menu (the
+  Ctrl+Tab / Ctrl+Shift+Tab shortcuts still work).
+- **2026-10-06** — Pointer cursor on all clickable elements (dialog buttons,
+  tabs, tree rows, destructive buttons); GPUI Kit only sets it for link/text
+  buttons (DESIGN.md §3).
 - **2026-10-06** — Welcome screen: workspaces before folders ("Open Workspace…"
   first in Start; "Recent workspaces" above "Recent folders").
 - **2026-10-06** — VS Code–style workspaces: multi-root folders, `.isengard-workspace`
