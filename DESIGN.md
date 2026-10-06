@@ -78,9 +78,8 @@ Add a row here whenever a new shared component is created.
   (`sidebar_border`) when a sibling exists below that level (VS Code–style).
   Indent columns are fixed-width (`flex_shrink_0`); a narrow panel truncates
   labels instead of compressing the tree.
-- **Gitignored entries:** still listed; icon + label at ~70% opacity (not
-  hidden, not double-muted). Matched via `ignore` + each root's `.gitignore`
-  tree.
+- **Gitignored entries:** still listed; icon + label at 60% opacity (not
+  hidden). Matched via `ignore` + each root's `.gitignore` tree.
 - **Title bar:** macOS shows the centred window title; Windows/Linux show the
   in-window `AppMenuBar`. No theme toggle (dark only).
 - **Keyboard shortcut hints:** one `Kbd` key cap per key with `gap_1`

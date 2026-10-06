@@ -261,8 +261,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
-- **2026-10-07** — Gitignored tree rows: lighter dim (70% opacity only; was
-  opacity + muted stacked).
+- **2026-10-07** — Gitignored tree rows: 60% opacity.
 - **2026-10-07** — File tree: indent columns don't shrink on narrow panels
   (labels truncate instead).
 - **2026-10-07** — File tree indent guides + gitignore dimming (show muted,

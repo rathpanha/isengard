@@ -224,7 +224,7 @@ impl FileTreePanel {
                                         .min_w_0()
                                         .flex_1()
                                         .overflow_hidden()
-                                        .when(git_ignored, |this| this.opacity(0.7))
+                                        .when(git_ignored, |this| this.opacity(0.6))
                                         .children(icon)
                                         .child(
                                             div()
