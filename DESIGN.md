@@ -69,8 +69,10 @@ Add a row here whenever a new shared component is created.
 
 ## 5. Patterns
 
+- **Dirty tabs:** unsaved buffer shows a 6px square in `theme.yellow` before
+  the close × (block style — no round “dot”).
 - **Preview tabs:** single-click a file in the tree → italic preview tab
-  (only one; the next preview replaces it unless dirty, then it pins). 
+  (only one; the next preview replaces it unless dirty, then it pins).
   Double-click the file or the tab, or edit the buffer → permanent. File >
   Open File / CLI opens permanent.
 - **File tree icons:** full Material Icon Theme under
@@ -119,6 +121,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Unsaved tab indicator: yellow square (`theme.yellow`).
 - **2026-10-07** — Preview tabs: italic until double-click / edit.
 - **2026-10-07** — Gitignored tree rows: 60% opacity.
 - **2026-10-07** — Editor background matches file-tree sidebar; Dockerfile

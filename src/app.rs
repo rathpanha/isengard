@@ -94,12 +94,7 @@ struct EditorTab {
 
 impl EditorTab {
     fn label(&self) -> String {
-        let name = document::file_name(&self.path);
-        if self.is_modified {
-            format!("{name} •")
-        } else {
-            name
-        }
+        document::file_name(&self.path)
     }
 }
 
@@ -909,6 +904,8 @@ impl IsengardApp {
                 let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
                 let hovered = self.is_destructive_hovered(&id);
                 let preview = tab.preview;
+                let modified = tab.is_modified;
+                let dirty_color = cx.theme().yellow;
                 Tab::new()
                     .label(tab.label())
                     .cursor_pointer()
@@ -921,17 +918,28 @@ impl IsengardApp {
                         this.activate_tab(ix, window, cx);
                     }))
                     .suffix(
-                        destructive_icon_button(
-                            id,
-                            IconName::Close,
-                            "Close",
-                            hovered,
-                            move |this, window, cx| this.request_close(&path, window, cx),
-                            cx,
-                        )
-                        // Same 12px from the tab's right border as the label's left padding:
-                        // mr_2 (8px) plus the xsmall icon button's 4px inset.
-                        .mr_2(),
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            // Same 12px from the tab's right border as the label's left padding.
+                            .mr_2()
+                            .when(modified, |this| {
+                                this.child(
+                                    // Block-style dirty mark (DESIGN.md: no rounded corners).
+                                    div()
+                                        .size(px(6.))
+                                        .flex_shrink_0()
+                                        .bg(dirty_color),
+                                )
+                            })
+                            .child(destructive_icon_button(
+                                id,
+                                IconName::Close,
+                                "Close",
+                                hovered,
+                                move |this, window, cx| this.request_close(&path, window, cx),
+                                cx,
+                            )),
                     )
             }));
 

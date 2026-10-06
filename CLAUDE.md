@@ -263,6 +263,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Unsaved tabs: yellow square indicator (`theme.yellow`).
 - **2026-10-07** — Preview tabs (VS Code-style): tree single-click = preview,
   double-click file/tab or edit = pin.
 - **2026-10-07** — Gitignored tree rows: 60% opacity.
