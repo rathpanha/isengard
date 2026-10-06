@@ -9,24 +9,27 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
+use crate::app::RemoveWorkspaceFolder;
 use crate::file_tree::FsNode;
 
 /// Separates a directory path from the suffix of its placeholder child's id.
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
 
-/// The open folder's lazily-loaded tree, rendered with GPUI Kit's `Tree`.
+/// The workspace's lazily-loaded folder tree, rendered with GPUI Kit's `Tree`.
 ///
-/// `FsNode` is the source of truth; it is converted to `TreeItem`s whenever a
-/// directory is loaded for the first time.
+/// `FsNode`s are the source of truth; they are converted to `TreeItem`s whenever
+/// the roots change or a directory is loaded for the first time. With one root
+/// its children are the top level (a plain folder); with several, each root is
+/// a top-level item (a multi-root workspace).
 pub struct FileTreePanel {
-    root: Option<FsNode>,
+    roots: Vec<FsNode>,
     state: Entity<TreeState>,
 }
 
 impl FileTreePanel {
     pub fn new(cx: &mut App) -> Self {
         Self {
-            root: None,
+            roots: Vec::new(),
             state: cx.new(|cx| TreeState::new(cx)),
         }
     }
@@ -36,37 +39,36 @@ impl FileTreePanel {
     }
 
     pub fn is_open(&self) -> bool {
-        self.root.is_some()
+        !self.roots.is_empty()
     }
 
-    pub fn root_path(&self) -> Option<&Path> {
-        self.root.as_ref().map(FsNode::path)
-    }
-
-    pub fn open_folder(&mut self, path: &Path, cx: &mut App) {
-        let mut root = FsNode::from_path(path);
-        root.set_expanded(true);
-        self.root = Some(root);
+    /// Replaces the roots, keeping the loaded/expanded state of roots that remain.
+    pub fn set_folders(&mut self, folders: &[PathBuf], cx: &mut App) {
+        let mut previous = std::mem::take(&mut self.roots);
+        self.roots = folders
+            .iter()
+            .map(
+                |folder| match previous.iter().position(|node| node.path() == folder) {
+                    Some(ix) => previous.swap_remove(ix),
+                    None => {
+                        let mut root = FsNode::from_path(folder);
+                        root.set_expanded(true);
+                        root
+                    }
+                },
+            )
+            .collect();
         self.sync(cx);
     }
 
-    pub fn close(&mut self, cx: &mut App) {
-        self.root = None;
-        self.state
-            .update(cx, |state, cx| state.set_items(Vec::new(), cx));
-    }
-
-    /// Keeps `FsNode` in step with the tree's expand/collapse events.
+    /// Keeps `FsNode`s in step with the tree's expand/collapse events.
     pub fn handle_event(&mut self, event: &TreeEvent, cx: &mut App) {
         let (id, expanded) = match event {
             TreeEvent::Expanded(id) => (id, true),
             TreeEvent::Collapsed(id) => (id, false),
         };
-        let Some(node) = self
-            .root
-            .as_mut()
-            .and_then(|r| r.find_mut(Path::new(id.as_ref())))
-        else {
+        let path = Path::new(id.as_ref());
+        let Some(node) = self.roots.iter_mut().find_map(|root| root.find_mut(path)) else {
             return;
         };
         if node.set_expanded(expanded) {
@@ -84,14 +86,15 @@ impl FileTreePanel {
     }
 
     fn sync(&self, cx: &mut App) {
-        let items: Vec<TreeItem> = self
-            .root
-            .as_ref()
-            .and_then(FsNode::children)
-            .unwrap_or_default()
-            .iter()
-            .map(to_tree_item)
-            .collect();
+        let items: Vec<TreeItem> = match self.roots.as_slice() {
+            [root] => root
+                .children()
+                .unwrap_or_default()
+                .iter()
+                .map(to_tree_item)
+                .collect(),
+            roots => roots.iter().map(to_root_item).collect(),
+        };
         self.state.update(cx, |state, cx| {
             let selected = state.selected_item().map(|item| item.id.clone());
             state.set_items(items, cx);
@@ -102,18 +105,18 @@ impl FileTreePanel {
         });
     }
 
-    /// Renders the folder header and tree. `on_open_file` is called when a file is clicked.
+    /// Renders the header (`title`, upper-cased) and the tree. `on_open_file` is
+    /// called when a file is clicked. In a multi-root workspace, right-clicking a
+    /// root offers "Remove Folder from Workspace".
     pub fn render(
         &self,
+        title: &str,
         on_open_file: impl Fn(PathBuf, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> AnyElement {
         let theme = cx.theme();
-        let name = self
-            .root
-            .as_ref()
-            .map(|r| r.name().to_uppercase())
-            .unwrap_or_default();
+        let name = title.to_uppercase();
+        let multi_root = self.roots.len() > 1;
         let on_open_file = Rc::new(on_open_file);
 
         v_flex()
@@ -135,6 +138,9 @@ impl FileTreePanel {
                     let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
                     let icon = if is_placeholder {
                         None
+                    } else if entry.depth() == 0 && entry.is_disabled() {
+                        // A workspace root that no longer exists on disk.
+                        Some(IconName::Folder)
                     } else if !entry.is_folder() {
                         Some(IconName::File)
                     } else if entry.is_expanded() {
@@ -167,6 +173,18 @@ impl FileTreePanel {
                             }
                         })
                 })
+                .when(multi_root, |tree| {
+                    tree.context_menu(|_, entry, menu, _, _| {
+                        if entry.depth() > 0 {
+                            return menu;
+                        }
+                        let root = PathBuf::from(entry.item().id.as_ref());
+                        menu.menu(
+                            "Remove Folder from Workspace",
+                            Box::new(RemoveWorkspaceFolder(root)),
+                        )
+                    })
+                })
                 .flex_1()
                 .text_sm()
                 .px_1(),
@@ -197,6 +215,20 @@ fn to_tree_item(node: &FsNode) -> TreeItem {
                 .children(children)
                 .expanded(*expanded)
         }
+    }
+}
+
+/// A workspace root as a top-level item; a root that no longer exists on disk
+/// is shown disabled with a "(missing)" label.
+fn to_root_item(root: &FsNode) -> TreeItem {
+    if root.path().is_dir() {
+        to_tree_item(root)
+    } else {
+        TreeItem::new(
+            root.path().to_string_lossy().into_owned(),
+            format!("{} (missing)", root.name()),
+        )
+        .disabled(true)
     }
 }
 

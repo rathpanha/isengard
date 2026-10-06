@@ -9,28 +9,58 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
-use crate::app::{IsengardApp, OpenFile, OpenFolder};
+use crate::app::{IsengardApp, OpenFile, OpenFolder, OpenWorkspace};
 use crate::ui::components::destructive_icon_button;
 
-/// Start page shown while no folder or file is open: start actions plus recent folders.
-pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
-    let recent = app.recent_folders();
-    let theme = cx.theme();
-    let muted = theme.muted_foreground;
+#[derive(Clone, Copy)]
+enum RecentKind {
+    Folder,
+    Workspace,
+}
 
-    let recent_list = if recent.is_empty() {
-        div()
-            .text_sm()
-            .text_color(muted)
-            .child("No recent folders")
-            .into_any_element()
-    } else {
-        let rows: Vec<AnyElement> = recent
+/// Start page shown while nothing is open: start actions plus the recent
+/// workspaces and recent folders lists (each hidden when empty).
+pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    let mut recents: Vec<AnyElement> = Vec::new();
+    // Workspaces before folders, matching the Start actions above.
+    for (title, kind, paths) in [
+        (
+            "Recent workspaces",
+            RecentKind::Workspace,
+            app.recent_workspaces(),
+        ),
+        ("Recent folders", RecentKind::Folder, app.recent_folders()),
+    ] {
+        if paths.is_empty() {
+            continue;
+        }
+        let rows: Vec<AnyElement> = paths
             .iter()
-            .map(|folder| render_recent(app, folder, muted, cx))
+            .map(|path| render_recent(app, kind, path, muted, cx))
             .collect();
-        v_flex().gap_1().children(rows).into_any_element()
-    };
+        recents.push(
+            v_flex()
+                .gap_2()
+                .child(section_title(title))
+                .child(v_flex().gap_1().children(rows))
+                .into_any_element(),
+        );
+    }
+    if recents.is_empty() {
+        recents.push(
+            v_flex()
+                .gap_2()
+                .child(section_title("Recent"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child("No recent folders or workspaces"),
+                )
+                .into_any_element(),
+        );
+    }
 
     div()
         .size_full()
@@ -63,6 +93,15 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
                         .items_start()
                         .child(section_title("Start"))
                         .child(
+                            Button::new("welcome-open-workspace")
+                                .link()
+                                .icon(IconName::Folder)
+                                .label("Open Workspace…")
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(OpenWorkspace), cx)
+                                }),
+                        )
+                        .child(
                             h_flex()
                                 .gap_3()
                                 .child(
@@ -86,12 +125,7 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
                                 }),
                         ),
                 )
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .child(section_title("Recent"))
-                        .child(recent_list),
-                ),
+                .children(recents),
         )
         .into_any_element()
 }
@@ -132,27 +166,34 @@ fn section_title(title: &'static str) -> impl IntoElement {
 
 fn render_recent(
     app: &IsengardApp,
-    folder: &Path,
+    kind: RecentKind,
+    path: &Path,
     muted: Hsla,
     cx: &mut Context<IsengardApp>,
 ) -> AnyElement {
-    let id = folder.to_string_lossy().into_owned();
-    let name = folder
-        .file_name()
+    let id = path.to_string_lossy().into_owned();
+    let (prefix, name) = match kind {
+        RecentKind::Folder => ("recent-folder", path.file_name()),
+        RecentKind::Workspace => ("recent-workspace", path.file_stem()),
+    };
+    let name = name
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| id.clone());
-    let parent = folder.parent().map(abbreviate_home).unwrap_or_default();
+    let parent = path.parent().map(abbreviate_home).unwrap_or_default();
 
     h_flex()
         .gap_3()
         .child(
-            Button::new(SharedString::from(format!("recent-open-{id}")))
+            Button::new(SharedString::from(format!("{prefix}-open-{id}")))
                 .link()
                 .label(name)
                 .tooltip(id.clone())
                 .on_click(cx.listener({
-                    let folder = folder.to_path_buf();
-                    move |this, _, window, cx| this.open_folder(&folder, window, cx)
+                    let path = path.to_path_buf();
+                    move |this, _, window, cx| match kind {
+                        RecentKind::Folder => this.open_folder(&path, window, cx),
+                        RecentKind::Workspace => this.open_workspace_file(&path, window, cx),
+                    }
                 })),
         )
         .child(
@@ -165,15 +206,18 @@ fn render_recent(
                 .child(parent),
         )
         .child({
-            let folder = folder.to_path_buf();
-            let button_id = SharedString::from(format!("recent-remove-{id}"));
+            let path = path.to_path_buf();
+            let button_id = SharedString::from(format!("{prefix}-remove-{id}"));
             let hovered = app.is_destructive_hovered(&button_id);
             destructive_icon_button(
                 button_id,
                 IconName::Close,
                 "Remove from recent",
                 hovered,
-                move |this, _, cx| this.remove_recent_folder(&folder, cx),
+                move |this, _, cx| match kind {
+                    RecentKind::Folder => this.remove_recent_folder(&path, cx),
+                    RecentKind::Workspace => this.remove_recent_workspace(&path, cx),
+                },
                 cx,
             )
         })

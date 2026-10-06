@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gpui_kit::component::{
     ActiveTheme as _, IconName, TitleBar, WindowExt as _,
@@ -15,6 +16,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use serde::Deserialize;
 
 use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE};
 use crate::editor::document;
@@ -24,13 +26,17 @@ use crate::theme;
 use crate::ui::components::destructive_icon_button;
 use crate::ui::file_tree::FileTreePanel;
 use crate::ui::welcome;
+use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 
 actions!(
     isengard,
     [
         OpenFolder,
         OpenFile,
-        CloseFolder,
+        OpenWorkspace,
+        AddFolderToWorkspace,
+        SaveWorkspaceAs,
+        CloseWorkspace,
         Save,
         SaveAll,
         CloseTab,
@@ -44,6 +50,20 @@ actions!(
         Quit,
     ]
 );
+
+/// Removes one root folder from the workspace (tree context menu on a root).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct RemoveWorkspaceFolder(pub PathBuf);
+
+/// What to switch the window to once the user has confirmed leaving the
+/// current workspace (VS Code closes all editors when switching).
+#[derive(Clone)]
+enum Switch {
+    Folder(PathBuf),
+    Workspace(Workspace),
+    Close,
+}
 
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
@@ -85,6 +105,8 @@ impl EditorTab {
 pub struct IsengardApp {
     config: AppConfig,
     focus_handle: FocusHandle,
+    /// The open folders; the file tree mirrors `workspace.folders()`.
+    workspace: Workspace,
     file_tree: FileTreePanel,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
@@ -121,6 +143,7 @@ impl IsengardApp {
         let mut app = Self {
             config,
             focus_handle,
+            workspace: Workspace::default(),
             file_tree,
             tabs: TabList::default(),
             app_menu_bar,
@@ -131,6 +154,9 @@ impl IsengardApp {
 
         // Otherwise start on the welcome screen.
         match initial_path {
+            Some(path) if Workspace::is_workspace_file(&path) => {
+                app.open_workspace_file(&path, window, cx)
+            }
             Some(path) if path.is_dir() => app.open_folder(&path, window, cx),
             Some(path) if path.is_file() => {
                 if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -145,6 +171,7 @@ impl IsengardApp {
 
     // ---- Folders and files -------------------------------------------------
 
+    /// Replaces the workspace with `folder` (asking first if work would be lost).
     pub fn open_folder(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if !folder.is_dir() {
             self.remove_recent_folder(folder, cx);
@@ -155,11 +182,179 @@ impl IsengardApp {
             );
             return;
         }
-        self.file_tree.open_folder(folder, cx);
-        self.config.add_recent_folder(folder);
-        self.config.save();
-        window.set_window_title(&format!("{} — Isengard", document::file_name(folder)));
+        self.request_switch(Switch::Folder(folder.to_path_buf()), window, cx);
+    }
+
+    /// Replaces the workspace with the one saved in `file`.
+    pub fn open_workspace_file(
+        &mut self,
+        file: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match Workspace::load(file) {
+            Ok(workspace) => self.request_switch(Switch::Workspace(workspace), window, cx),
+            Err(err) => {
+                if !file.exists() {
+                    self.remove_recent_workspace(file, cx);
+                }
+                notify_error(format!("Could not open workspace: {err:#}"), window, cx);
+            }
+        }
+    }
+
+    /// Adds root folders to the current workspace, keeping open tabs. A saved
+    /// workspace file is updated right away.
+    fn add_folders(&mut self, folders: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        let was_empty = self.workspace.is_empty();
+        let mut added = false;
+        for folder in folders.iter().filter(|f| f.is_dir()) {
+            added |= self.workspace.add_folder(folder);
+        }
+        if !added {
+            return;
+        }
+        if was_empty && !self.workspace.is_multi_root() {
+            self.config.add_recent_folder(&self.workspace.folders()[0]);
+            self.config.save();
+        }
+        self.persist_workspace(window, cx);
+        self.workspace_changed(window, cx);
+    }
+
+    /// Re-writes the workspace file after a folder change, if there is one.
+    fn persist_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(err) = self.workspace.save() {
+            notify_error(format!("Could not save workspace: {err:#}"), window, cx);
+        }
+    }
+
+    /// Re-syncs the tree and titles after `workspace` changed.
+    fn workspace_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.file_tree.set_folders(self.workspace.folders(), cx);
+        window.set_window_title(&self.window_title());
         cx.notify();
+    }
+
+    fn window_title(&self) -> String {
+        if self.workspace.is_empty() {
+            "Isengard".to_owned()
+        } else {
+            format!("{} — Isengard", self.workspace.title())
+        }
+    }
+
+    /// Leaves the current workspace: offers to save an untitled multi-root
+    /// workspace, then to save unsaved files, then switches.
+    fn request_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.workspace.is_untitled_multi_root() {
+            return self.confirm_unsaved_then(switch, window, cx);
+        }
+        let after_discard = switch.clone();
+        self.open_choice_dialog(
+            "Save workspace?",
+            "Save the folders in this workspace to a workspace file so you can reopen it later?",
+            "Don't Save",
+            "Save…",
+            move |this, window, cx| this.confirm_unsaved_then(after_discard.clone(), window, cx),
+            move |this, window, cx| this.save_workspace_as(Some(switch.clone()), window, cx),
+            window,
+            cx,
+        );
+    }
+
+    fn confirm_unsaved_then(
+        &mut self,
+        switch: Switch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_unsaved() {
+            return self.apply_switch(switch, window, cx);
+        }
+        let after_discard = switch.clone();
+        self.open_choice_dialog(
+            "Unsaved changes",
+            "Some files have unsaved changes. Save them before closing this workspace?",
+            "Don't Save",
+            "Save All",
+            move |this, window, cx| this.apply_switch(after_discard.clone(), window, cx),
+            move |this, window, cx| match this.save_all(cx) {
+                Ok(()) => this.apply_switch(switch.clone(), window, cx),
+                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn apply_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
+        self.tabs = TabList::default();
+        self.hovered_destructive = None;
+        self.workspace = match switch {
+            Switch::Folder(folder) => {
+                self.config.add_recent_folder(&folder);
+                Workspace::from_folder(&folder)
+            }
+            Switch::Workspace(workspace) => {
+                if let Some(file) = workspace.file() {
+                    self.config.add_recent_workspace(file);
+                }
+                workspace
+            }
+            Switch::Close => Workspace::default(),
+        };
+        self.config.save();
+        self.focus_handle.focus(window, cx);
+        self.workspace_changed(window, cx);
+    }
+
+    /// Asks where to save the workspace file, saves it, then continues with `next`.
+    fn save_workspace_as(
+        &mut self,
+        next: Option<Switch>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = self
+            .workspace
+            .folders()
+            .first()
+            .and_then(|folder| folder.parent())
+            .map(Path::to_path_buf)
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let name = format!("{}.{WORKSPACE_EXTENSION}", self.workspace.display_name());
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, window| {
+            let path = path.await.ok()?.ok()??;
+            this.update_in(window, |this, window, cx| {
+                let path = if Workspace::is_workspace_file(&path) {
+                    path
+                } else {
+                    path.with_extension(WORKSPACE_EXTENSION)
+                };
+                match this.workspace.save_as(&path) {
+                    Ok(()) => {
+                        this.config.add_recent_workspace(&path);
+                        this.config.save();
+                        this.workspace_changed(window, cx);
+                        window.push_notification(
+                            format!("Saved workspace {}", document::file_name(&path)),
+                            cx,
+                        );
+                        if let Some(next) = next {
+                            this.confirm_unsaved_then(next, window, cx);
+                        }
+                    }
+                    Err(err) => {
+                        notify_error(format!("Could not save workspace: {err:#}"), window, cx)
+                    }
+                }
+            })
+            .ok()
+        })
+        .detach();
     }
 
     pub(crate) fn is_destructive_hovered(&self, id: &SharedString) -> bool {
@@ -176,6 +371,18 @@ impl IsengardApp {
 
     pub(crate) fn recent_folders(&self) -> &[PathBuf] {
         &self.config.recent_folders
+    }
+
+    pub(crate) fn recent_workspaces(&self) -> &[PathBuf] {
+        &self.config.recent_workspaces
+    }
+
+    pub fn remove_recent_workspace(&mut self, file: &Path, cx: &mut Context<Self>) {
+        // The removed row's button never reports hover-out.
+        self.hovered_destructive = None;
+        self.config.remove_recent_workspace(file);
+        self.config.save();
+        cx.notify();
     }
 
     pub fn remove_recent_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
@@ -304,52 +511,77 @@ impl IsengardApp {
 
     // ---- Dialogs -----------------------------------------------------------
 
-    fn confirm_close_tab(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a confirmation dialog with Cancel, a secondary choice, and the
+    /// primary (safe default) choice. Choices run on the app after the dialog closes.
+    #[allow(clippy::too_many_arguments)]
+    fn open_choice_dialog(
+        &self,
+        title: &'static str,
+        message: impl Into<SharedString>,
+        secondary_label: &'static str,
+        primary_label: &'static str,
+        on_secondary: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        on_primary: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let app = cx.entity().downgrade();
-        let name = document::file_name(&path);
+        let message: SharedString = message.into();
+        let on_secondary = Rc::new(on_secondary);
+        let on_primary = Rc::new(on_primary);
         window.open_dialog(cx, move |dialog, _, _| {
-            let (app_save, app_discard) = (app.clone(), app.clone());
-            let (path_save, path_discard) = (path.clone(), path.clone());
-            dialog
-                .title("Unsaved changes")
-                .child(format!("Save changes to {name} before closing?"))
-                .footer(
-                    DialogFooter::new()
-                        .gap_2()
-                        .child(
-                            Button::new("close-cancel")
-                                .outline()
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("close-discard")
-                                .outline()
-                                .label("Don't Save")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = app_discard.update(cx, |this, cx| {
-                                        this.close_tab(&path_discard, window, cx)
-                                    });
-                                }),
-                        )
-                        .child(Button::new("close-save").primary().label("Save").on_click(
-                            move |_, window, cx| {
+            let (app_secondary, app_primary) = (app.clone(), app.clone());
+            let (on_secondary, on_primary) = (on_secondary.clone(), on_primary.clone());
+            dialog.title(title).child(message.clone()).footer(
+                DialogFooter::new()
+                    .gap_2()
+                    .child(
+                        Button::new("dialog-cancel")
+                            .outline()
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("dialog-secondary")
+                            .outline()
+                            .label(secondary_label)
+                            .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
-                                _ = app_save.update(cx, |this, cx| {
-                                    match this.save_tab(&path_save, cx) {
-                                        Ok(()) => this.close_tab(&path_save, window, cx),
-                                        Err(err) => notify_error(
-                                            format!("Save failed: {err:#}"),
-                                            window,
-                                            cx,
-                                        ),
-                                    }
-                                });
-                            },
-                        )),
-                )
+                                _ = app_secondary
+                                    .update(cx, |this, cx| on_secondary(this, window, cx));
+                            }),
+                    )
+                    .child(
+                        Button::new("dialog-primary")
+                            .primary()
+                            .label(primary_label)
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                _ = app_primary.update(cx, |this, cx| on_primary(this, window, cx));
+                            }),
+                    ),
+            )
         });
+    }
+
+    fn confirm_close_tab(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let path_discard = path.clone();
+        self.open_choice_dialog(
+            "Unsaved changes",
+            format!(
+                "Save changes to {} before closing?",
+                document::file_name(&path)
+            ),
+            "Don't Save",
+            "Save",
+            move |this, window, cx| this.close_tab(&path_discard, window, cx),
+            move |this, window, cx| match this.save_tab(&path, cx) {
+                Ok(()) => this.close_tab(&path, window, cx),
+                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            },
+            window,
+            cx,
+        );
     }
 
     /// Returns `true` if the app may close now; otherwise asks the user first.
@@ -357,48 +589,19 @@ impl IsengardApp {
         if self.allow_quit || !self.has_unsaved() {
             return true;
         }
-        let app = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let (app_save, app_discard) = (app.clone(), app.clone());
-            dialog
-                .title("Quit Isengard?")
-                .child("Some files have unsaved changes.")
-                .footer(
-                    DialogFooter::new()
-                        .gap_2()
-                        .child(
-                            Button::new("quit-cancel")
-                                .outline()
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("quit-discard")
-                                .outline()
-                                .label("Quit Without Saving")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = app_discard.update(cx, |this, cx| this.quit(cx));
-                                }),
-                        )
-                        .child(
-                            Button::new("quit-save")
-                                .primary()
-                                .label("Save All & Quit")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = app_save.update(cx, |this, cx| match this.save_all(cx) {
-                                        Ok(()) => this.quit(cx),
-                                        Err(err) => notify_error(
-                                            format!("Save failed: {err:#}"),
-                                            window,
-                                            cx,
-                                        ),
-                                    });
-                                }),
-                        ),
-                )
-        });
+        self.open_choice_dialog(
+            "Quit Isengard?",
+            "Some files have unsaved changes.",
+            "Quit Without Saving",
+            "Save All & Quit",
+            |this, _, cx| this.quit(cx),
+            |this, window, cx| match this.save_all(cx) {
+                Ok(()) => this.quit(cx),
+                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            },
+            window,
+            cx,
+        );
         false
     }
 
@@ -436,6 +639,8 @@ impl IsengardApp {
             this.update_in(window, |this, window, cx| {
                 if directories {
                     this.open_folder(&path, window, cx);
+                } else if Workspace::is_workspace_file(&path) {
+                    this.open_workspace_file(&path, window, cx);
                 } else {
                     this.open_file(&path, window, cx);
                 }
@@ -445,10 +650,88 @@ impl IsengardApp {
         .detach();
     }
 
-    fn on_close_folder(&mut self, _: &CloseFolder, window: &mut Window, cx: &mut Context<Self>) {
-        self.file_tree.close(cx);
-        window.set_window_title("Isengard");
-        cx.notify();
+    fn on_open_workspace(
+        &mut self,
+        _: &OpenWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open Workspace".into()),
+        });
+        cx.spawn_in(window, async move |this, window| {
+            let path = paths.await.ok()?.ok()??.into_iter().next()?;
+            this.update_in(window, |this, window, cx| {
+                this.open_workspace_file(&path, window, cx)
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    fn on_add_folder_to_workspace(
+        &mut self,
+        _: &AddFolderToWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+            prompt: Some("Add Folder to Workspace".into()),
+        });
+        cx.spawn_in(window, async move |this, window| {
+            let paths = paths.await.ok()?.ok()??;
+            this.update_in(window, |this, window, cx| {
+                this.add_folders(&paths, window, cx)
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    fn on_save_workspace_as(
+        &mut self,
+        _: &SaveWorkspaceAs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.is_empty() {
+            notify_error(
+                "Open a folder before saving a workspace.".into(),
+                window,
+                cx,
+            );
+            return;
+        }
+        self.save_workspace_as(None, window, cx);
+    }
+
+    fn on_remove_workspace_folder(
+        &mut self,
+        action: &RemoveWorkspaceFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.remove_folder(&action.0) {
+            self.persist_workspace(window, cx);
+            self.workspace_changed(window, cx);
+        }
+    }
+
+    fn on_close_workspace(
+        &mut self,
+        _: &CloseWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.workspace.is_empty() || !self.tabs.is_empty() {
+            self.request_switch(Switch::Close, window, cx);
+        }
     }
 
     fn on_save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
@@ -541,14 +824,11 @@ impl IsengardApp {
 
     /// The welcome screen replaces the workspace until a folder or file is open.
     fn show_welcome(&self) -> bool {
-        !self.file_tree.is_open() && self.tabs.is_empty()
+        self.workspace.is_empty() && self.tabs.is_empty()
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let title = match self.file_tree.root_path() {
-            Some(root) => format!("{} — Isengard", document::file_name(root)),
-            None => "Isengard".to_owned(),
-        };
+        let title = self.window_title();
         TitleBar::new()
             .child(
                 h_flex()
@@ -622,13 +902,10 @@ impl IsengardApp {
     /// The status bar describes the active file, so it only exists while one is open.
     fn render_status_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tab = self.tabs.active()?;
-        let path = match self.file_tree.root_path() {
-            Some(root) => tab.path.strip_prefix(root).unwrap_or(&tab.path),
-            None => &tab.path,
-        };
+        let path = self.workspace.relative_label(&tab.path);
         let cursor = tab.state.read(cx).cursor_position();
         let bar = StatusBar::new()
-            .left(div().child(path.display().to_string()))
+            .left(div().child(path))
             .right(
                 h_flex()
                     .gap_4()
@@ -651,6 +928,7 @@ impl Render for IsengardApp {
         } else if self.file_tree.is_open() {
             let app = cx.entity().downgrade();
             let tree = self.file_tree.render(
+                &self.workspace.title(),
                 move |path, window, cx| {
                     _ = app.update(cx, |this, cx| this.open_file(&path, window, cx));
                 },
@@ -674,7 +952,11 @@ impl Render for IsengardApp {
             .font_family(cx.theme().font_family.clone())
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_open_file))
-            .on_action(cx.listener(Self::on_close_folder))
+            .on_action(cx.listener(Self::on_open_workspace))
+            .on_action(cx.listener(Self::on_add_folder_to_workspace))
+            .on_action(cx.listener(Self::on_save_workspace_as))
+            .on_action(cx.listener(Self::on_remove_workspace_folder))
+            .on_action(cx.listener(Self::on_close_workspace))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_close_tab))

@@ -44,8 +44,9 @@ fix the code (or ask the user before changing the rule).
   - Never show red at rest — red means "you're about to destroy something".
   - Always use `components::destructive_icon_button`; never restyle a `Button`
     by hand for this.
-  - Destructive commands with data loss ask first (unsaved changes → dialog
-    with Save / Don't Save / Cancel, the safe default on the primary button).
+  - Destructive commands with data loss ask first, using
+    `IsengardApp::open_choice_dialog`: buttons in the order Cancel · secondary
+    ("Don't Save") · primary (the safe default, e.g. "Save", "Save All").
 - **Tooltips** on every icon-only button, naming the action ("Close",
   "Remove from recent").
 
@@ -70,11 +71,31 @@ Add a row here whenever a new shared component is created.
   regular buttons with one `primary`.
 - **Secondary text:** paths and hints use `muted_foreground` and a smaller
   size (`text_sm`/`text_xs`).
+- **Workspaces:**
+  - Naming: a single folder shows its name; a workspace file or several folders
+    show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). The
+    same text is used for the window title and, upper-cased, the tree header.
+  - Multi-root tree: each root is a top-level item; a root missing on disk is
+    shown disabled as `<name> (missing)` with a folder icon.
+  - Actions on a tree item live in its right-click menu (`Tree::context_menu`),
+    e.g. "Remove Folder from Workspace" on roots.
+- **Welcome "Start" actions,** top to bottom: Open Workspace…, Open Folder…
+  (with its shortcut), Open File….
+- **Workspaces before folders** wherever both appear (Start actions, recent
+  lists, menus).
+- **Recent lists:** one titled section per kind ("Recent workspaces", then
+  "Recent folders"); a section is hidden when empty, and when all are empty
+  a single "Recent" section says so. Rows: link-style name, muted parent path,
+  `destructive_icon_button` to remove.
 - **Logo:** use `branding::LOGO_MARK` (block "I" + amber cursor) on light/dark
   surfaces; never recolor or round it. Brand colors (logo only, not UI): tile
   `#0b0b0c`, mark `#ececec`, cursor `#f5a524`.
 
 ## Changelog
 
+- **2026-10-06** — Workspaces before folders: Open Workspace first in Start,
+  Recent workspaces above Recent folders.
+- **2026-10-06** — Workspace naming, multi-root tree, context menus, recent
+  lists, and the shared choice dialog.
 - **2026-10-06** — Created: foundation, spacing, destructive-action rule,
   shared `destructive_icon_button`, shortcut/empty-state/logo patterns.

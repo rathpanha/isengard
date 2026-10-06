@@ -6,6 +6,7 @@ mod file_tree;
 mod menus;
 mod theme;
 mod ui;
+mod workspace;
 
 use std::path::PathBuf;
 
@@ -17,7 +18,8 @@ use crate::config::AppConfig;
 
 fn main() {
     env_logger::init();
-    // `isengard <folder>` opens a folder; `isengard <file>` opens its parent and the file.
+    // `isengard <folder>` opens a folder, `isengard <x.isengard-workspace>` a workspace,
+    // and `isengard <file>` opens its parent folder and the file.
     let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
 
     gpui_kit::application()

@@ -50,10 +50,20 @@ to GPUI Kit. Phase 5 (Claude AI panel) has not started.
 Working features (verified by screenshots on macOS: welcome screen, file tree,
 tabs, highlighted editor, status bar):
 - Welcome screen on every launch (unless a path is passed on the CLI): Open
-  Folder, Open File, recent folders (max 8, click to open, × to remove).
+  Workspace (listed first), Open Folder, Open File, then "Recent workspaces"
+  and "Recent folders"
+  (max 8 each, click to open, × to remove; empty lists are hidden).
   The Open Folder shortcut hint is one `Kbd` per key (`⌘` `O` / `Ctrl` `O`),
   built by `welcome::shortcut_keys`; a single `Kbd` runs the keys together.
-- File tree (GPUI Kit `Tree`) only while a folder is open; lazy directory
+- VS Code–style workspaces: several root folders in one window
+  (File > Add Folder to Workspace…), saved to / opened from
+  `.isengard-workspace` JSON files (File > Save Workspace As… / Open
+  Workspace…, or `isengard x.isengard-workspace`). Folder paths are stored
+  relative to the file. Switching folder/workspace closes all tabs, asking
+  first about unsaved files and about saving an untitled multi-root workspace.
+  Right-click a root to remove it. A saved workspace file is re-written when
+  folders are added/removed.
+- File tree (GPUI Kit `Tree`) only while a workspace is open; lazy directory
   loading; dirs first, case-insensitive sort; hides `.git` and `.DS_Store`.
 - Tabs (`TabBar`/`Tab` with a close button), one `EditorState` per tab so each
   keeps its own undo history and cursor. The close button and the welcome screen's
@@ -89,7 +99,9 @@ src/
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo image for the UI + macOS Dock icon (objc2 AppKit)
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
-├── config.rs            AppConfig (serde JSON file) + recent-folder helpers
+├── config.rs            AppConfig (serde JSON file) + recent folders/workspaces
+├── workspace.rs         Workspace (root folders + optional file): naming,
+│                        root_for/relative_label, load/save .isengard-workspace
 ├── editor/
 │   ├── document.rs      read_text (UTF-8 only) / write_text / file_name
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
@@ -115,6 +127,16 @@ src/
 - **Tabs**: `TabList<EditorTab>`; each `EditorTab` owns an `Entity<EditorState>`
   plus two subscriptions: `InputEvent::Change` → mark modified, and `observe` →
   re-render (keeps Ln/Col current).
+- **Workspace**: `IsengardApp::workspace` is the source of truth for open
+  folders; after changing it call `workspace_changed` (re-syncs the tree via
+  `FileTreePanel::set_folders` and the titles) and `persist_workspace` (writes
+  the file if there is one). Switching goes through `request_switch(Switch)` →
+  optional "save untitled workspace" dialog → `confirm_unsaved_then` →
+  `apply_switch` (closes tabs, records recents). Confirmations use
+  `open_choice_dialog` (Cancel / secondary / primary).
+  `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
+  (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
+  the tree's context menu.
 - **File tree**: `FsNode` is the source of truth. Unloaded/empty directories get
   a disabled placeholder child (`"Loading…"` / `"(empty)"`) because GPUI Kit's
   `TreeItem::is_folder()` is just "has children". On `TreeEvent::Expanded` the
@@ -185,6 +207,11 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 - No New File / Save As / rename / delete; no file watching; `.gitignore` is not
   respected in the tree; no "Open Recent" in the native menu (welcome screen
   only).
+- Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
+  root context menu, switch dialogs. Quitting with an untitled multi-root
+  workspace does not offer to save it (only switching does). Workspace
+  `settings` are stored but not applied. Session restore (reopening tabs) is
+  not implemented.
 - Save All stops at the first failing file.
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
 - Windows icon embedding (`build.rs`) and the Linux X11 window icon are
@@ -206,6 +233,12 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — Welcome screen: workspaces before folders ("Open Workspace…"
+  first in Start; "Recent workspaces" above "Recent folders").
+- **2026-10-06** — VS Code–style workspaces: multi-root folders, `.isengard-workspace`
+  files (relative paths), Add Folder / Open / Save As / Close Workspace,
+  root context menu, separate recent folders/workspaces lists, shared
+  `open_choice_dialog`.
 - **2026-10-06** — Added DESIGN.md (design rules). Extracted
   `destructive_icon_button`; the recent-folder remove × now matches the tab
   close × (red only on hover).
