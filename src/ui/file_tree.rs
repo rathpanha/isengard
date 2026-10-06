@@ -18,6 +18,15 @@ impl FileTreePanel {
         self.selected = None;
     }
 
+    pub fn close(&mut self) {
+        self.root = None;
+        self.selected = None;
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.root.is_some()
+    }
+
     pub fn root_path(&self) -> Option<&Path> {
         self.root.as_ref().map(FsNode::path)
     }
@@ -28,20 +37,22 @@ impl FileTreePanel {
 
     /// Renders the tree. Returns the path of a file the user clicked this frame.
     pub fn show(&mut self, ui: &mut Ui) -> Option<PathBuf> {
-        let Some(root) = &mut self.root else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(16.0);
-                ui.label("No folder open");
-                ui.small("File > Open Folder…");
-            });
-            return None;
-        };
+        let root = self.root.as_mut()?;
+
+        ui.add_space(6.0);
+        ui.label(RichText::new(root.name().to_uppercase()).small().strong())
+            .on_hover_text(root.path().display().to_string());
+        ui.add_space(4.0);
 
         let mut clicked = None;
+        let selected = self.selected.as_deref();
         egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                show_node(ui, root, self.selected.as_deref(), &mut clicked);
+                root.ensure_loaded();
+                for child in root.children_mut().into_iter().flatten() {
+                    show_node(ui, child, selected, &mut clicked);
+                }
             });
         if let Some(path) = &clicked {
             self.selected = Some(path.clone());

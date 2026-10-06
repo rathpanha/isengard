@@ -6,6 +6,7 @@ use egui::{Key, KeyboardShortcut, Modifiers};
 use crate::config::AppConfig;
 use crate::ui::editor_workspace::EditorWorkspace;
 use crate::ui::file_tree::FileTreePanel;
+use crate::ui::welcome::{self, WelcomeAction};
 
 const CONFIG_KEY: &str = "isengard_config";
 const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
@@ -55,11 +56,8 @@ impl IsengardApp {
                 }
                 app.open_file(&path);
             }
-            _ => {
-                if let Some(folder) = app.config.last_folder.clone().filter(|p| p.is_dir()) {
-                    app.open_folder(&folder);
-                }
-            }
+            // Otherwise start on the welcome screen.
+            _ => {}
         }
         app
     }
@@ -75,8 +73,22 @@ impl IsengardApp {
     }
 
     fn open_folder(&mut self, folder: &Path) {
+        if !folder.is_dir() {
+            self.config.remove_recent_folder(folder);
+            self.set_status(format!("Folder not found: {}", folder.display()));
+            return;
+        }
         self.file_tree.open_folder(folder);
-        self.config.last_folder = Some(folder.to_path_buf());
+        self.config.add_recent_folder(folder);
+    }
+
+    fn handle_welcome_action(&mut self, action: WelcomeAction) {
+        match action {
+            WelcomeAction::OpenFolder => self.open_folder_dialog(),
+            WelcomeAction::OpenFile => self.open_file_dialog(),
+            WelcomeAction::OpenRecent(folder) => self.open_folder(&folder),
+            WelcomeAction::RemoveRecent(folder) => self.config.remove_recent_folder(&folder),
+        }
     }
 
     fn open_file_dialog(&mut self) {
@@ -109,11 +121,13 @@ impl IsengardApp {
         if self.applied_style == Some(wanted) {
             return;
         }
-        ctx.set_visuals(if self.config.dark_mode {
+        let mut visuals = if self.config.dark_mode {
             egui::Visuals::dark()
         } else {
             egui::Visuals::light()
-        });
+        };
+        square_corners(&mut visuals);
+        ctx.set_visuals(visuals);
         ctx.style_mut(|style| {
             if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Monospace) {
                 font.size = self.config.font_size;
@@ -178,6 +192,23 @@ impl IsengardApp {
                     if ui.button("Open File…").clicked() {
                         ui.close_menu();
                         self.open_file_dialog();
+                    }
+                    ui.add_enabled_ui(!self.config.recent_folders.is_empty(), |ui| {
+                        ui.menu_button("Open Recent", |ui| {
+                            for folder in self.config.recent_folders.clone() {
+                                if ui.button(folder.display().to_string()).clicked() {
+                                    ui.close_menu();
+                                    self.open_folder(&folder);
+                                }
+                            }
+                        });
+                    });
+                    if ui
+                        .add_enabled(self.file_tree.is_open(), egui::Button::new("Close Folder"))
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        self.file_tree.close();
                     }
                     ui.separator();
                     if ui
@@ -296,6 +327,11 @@ impl IsengardApp {
             });
     }
 
+    /// The welcome screen replaces the whole workspace until a folder or file is open.
+    fn show_welcome(&self) -> bool {
+        !self.file_tree.is_open() && self.workspace.is_empty()
+    }
+
     fn quit(&mut self, ctx: &egui::Context) {
         self.allow_quit = true;
         self.show_quit_dialog = false;
@@ -322,23 +358,34 @@ impl eframe::App for IsengardApp {
         self.handle_shortcuts(ctx);
 
         self.menu_bar(ctx);
-        self.status_bar(ctx);
+        if !self.show_welcome() {
+            self.status_bar(ctx);
+        }
 
         let modal_open = self.workspace.is_dialog_open() || self.show_quit_dialog;
 
-        egui::SidePanel::left("file_tree")
-            .resizable(true)
-            .default_width(240.0)
-            .width_range(140.0..=600.0)
-            .show(ctx, |ui| {
-                ui.add_enabled_ui(!modal_open, |ui| {
-                    if let Some(path) = self.file_tree.show(ui) {
-                        self.open_file(&path);
-                    }
+        if self.file_tree.is_open() {
+            egui::SidePanel::left("file_tree")
+                .resizable(true)
+                .default_width(240.0)
+                .width_range(140.0..=600.0)
+                .show(ctx, |ui| {
+                    ui.add_enabled_ui(!modal_open, |ui| {
+                        if let Some(path) = self.file_tree.show(ui) {
+                            self.open_file(&path);
+                        }
+                    });
                 });
-            });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.show_welcome() {
+                let shortcut = ctx.format_shortcut(&OPEN_FOLDER);
+                if let Some(action) = welcome::show(ui, &self.config.recent_folders, &shortcut) {
+                    self.handle_welcome_action(action);
+                }
+                return;
+            }
             ui.add_enabled_ui(!modal_open, |ui| {
                 self.workspace.show(ui, self.config.font_size);
             });
@@ -352,8 +399,23 @@ impl eframe::App for IsengardApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        self.config.last_folder = self.file_tree.root_path().map(Path::to_path_buf);
         eframe::set_value(storage, CONFIG_KEY, &self.config);
+    }
+}
+
+/// Block style: no rounded corners on any widget, window, or menu.
+fn square_corners(visuals: &mut egui::Visuals) {
+    visuals.window_rounding = egui::Rounding::ZERO;
+    visuals.menu_rounding = egui::Rounding::ZERO;
+    let widgets = &mut visuals.widgets;
+    for state in [
+        &mut widgets.noninteractive,
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+        &mut widgets.open,
+    ] {
+        state.rounding = egui::Rounding::ZERO;
     }
 }
 

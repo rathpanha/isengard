@@ -56,6 +56,10 @@ impl EditorWorkspace {
         self.focus_editor = true;
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
     pub fn active_tab(&self) -> Option<&EditorTab> {
         self.tabs.get(self.active)
     }
@@ -124,17 +128,18 @@ impl EditorWorkspace {
 
     /// Renders the tab bar and the active editor.
     pub fn show(&mut self, ui: &mut Ui, font_size: f32) {
-        if self.tabs.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.weak("Open a file from the tree to start editing");
-            });
-            return;
+        if !self.tabs.is_empty() {
+            self.show_tab_bar(ui);
+            ui.separator();
         }
 
-        self.show_tab_bar(ui);
-        ui.separator();
-
-        let tab = &mut self.tabs[self.active];
+        // The tab bar may have just closed the last tab, so re-check before indexing.
+        let Some(tab) = self.tabs.get_mut(self.active) else {
+            ui.centered_and_justified(|ui| {
+                ui.weak("Select a file to start editing");
+            });
+            return;
+        };
         let id = tab.editor_id();
         if std::mem::take(&mut self.focus_editor) {
             ui.memory_mut(|m| m.request_focus(id));
