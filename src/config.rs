@@ -14,7 +14,6 @@ pub const MAX_RECENT: usize = 8;
 pub struct AppConfig {
     /// Code editor font size in pixels.
     pub font_size: f32,
-    pub dark_mode: bool,
     /// Claude model used by the (upcoming) AI panel.
     pub model: String,
     /// Most recently opened first.
@@ -27,7 +26,6 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
-            dark_mode: true,
             model: "claude-sonnet-4-5".to_owned(),
             recent_folders: Vec::new(),
             recent_workspaces: Vec::new(),
@@ -153,10 +151,7 @@ mod tests {
     fn save_and_load_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("nested/config.json");
-        let mut config = AppConfig {
-            dark_mode: false,
-            ..Default::default()
-        };
+        let mut config = AppConfig::default();
         config.add_recent_folder(Path::new("/code/app"));
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path), config);

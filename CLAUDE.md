@@ -89,14 +89,14 @@ tabs, highlighted editor, status bar):
   the app icon: Dock icon at runtime on macOS, embedded .exe icon on Windows,
   `cargo bundle` metadata for a macOS .app / Linux .deb.
 - JetBrains Mono Nerd Font everywhere (UI + editor); square corners
-  (`theme.radius = 0`); dark/light theme toggle (View menu + title-bar
-  sun/moon icon); editor font size zoom.
-  Editor/syntax colours are our GitHub Dark / GitHub Light highlight themes
-  (`assets/themes/github-*-highlight.json`); tree-sitter grammars unchanged.
+  (`theme.radius = 0`); **dark mode only** (no light theme / toggle); editor
+  font size zoom. Editor/syntax colours are Ayu Darker
+  (`assets/themes/ayu-darker-highlight.json`, GPL-3.0 from
+  k4yt3x/zed-theme-ayu-darker); tree-sitter grammars unchanged.
 
 Not yet verified interactively (no clicking was possible during the port):
 tree expand/collapse, clicking files, tab switching/closing, dialogs,
-keyboard shortcuts, theme toggle. Check these first if something is off.
+keyboard shortcuts. Check these first if something is off.
 
 ## Architecture
 
@@ -163,10 +163,10 @@ src/
   button's id in `IsengardApp::hovered_destructive` (set from a wrapper's
   `on_hover`). Callers pass `hovered` in — don't `cx.entity().read(cx)` the view
   while it is rendering (it is leased and would panic).
-- **Theme**: `theme::apply` calls `Theme::change(mode)` first (it reloads the
+- **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
-  `highlight_theme` (GitHub Dark or Light). Re-run it after any theme/font
-  change. `theme.font_size` (14px) is the rem base for the whole UI;
+  `highlight_theme` (Ayu Darker). Re-run it after any font-size change.
+  `theme.font_size` (14px) is the rem base for the whole UI;
   `mono_font_size` is the editor size from config.
 - **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,
   near-black tile). `logo-mark.svg` is the shapes only (welcome screen,
@@ -182,8 +182,10 @@ src/
   16–512 @1x/@2x, `iconutil -c icns`, and pack PNGs 16–256 into the .ico.
 - **Fonts**: five JetBrains Mono Nerd Font weights are embedded with
   `include_bytes!` (~13 MB) and registered via `cx.text_system().add_fonts`.
-  Family name: `"JetBrainsMono Nerd Font"`. Licenses: `assets/fonts/OFL.txt`,
-  `assets/fonts/LICENSE-NerdFonts.txt`.
+  Family name: `"JetBrainsMono Nerd Font"`. Licenses: project is GPL-3.0-only
+  (`LICENSE`); fonts `assets/fonts/OFL.txt` + `LICENSE-NerdFonts.txt`;
+  highlight theme under `assets/themes/` (also GPL-3.0; see NOTICE.txt).
+  Material icons: MIT under `assets/icons/material/LICENSE`.
 
 ### Conventions
 - Follow GPUI Kit's own agent guides (cloned docs: `skills/gpui-kit` in
@@ -232,6 +234,9 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 - Windows icon embedding (`build.rs`) and the Linux X11 window icon are
   untested; X11 would need `WindowOptions::icon` set (not done).
 - `package.metadata.bundle.identifier` (`dev.isengard.editor`) is a placeholder.
+- Syntax highlight theme (`assets/themes/`, Ayu Darker) is GPL-3.0; the project
+  as a whole is also **GPL-3.0-only** (`LICENSE`, `Cargo.toml`). See
+  `CONTRIBUTING.md` — forks are fine, PRs are not accepted.
 
 ## Roadmap — Phase 5: Claude AI panel (not started)
 - GPUI Kit has chat components (`Message`, `Bubble`, `MessageScroller`,
@@ -248,6 +253,15 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Project licensed GPL-3.0-only (`LICENSE`, `Cargo.toml`);
+  `CONTRIBUTING.md` states forks OK, PRs not accepted.
+- **2026-10-07** — Syntax tokens: Ayu Darker from
+  [k4yt3x/zed-theme-ayu-darker](https://github.com/k4yt3x/zed-theme-ayu-darker)
+  (GPL-3.0; `assets/themes/LICENSE`). Replaces MIT Ayu Dark / Gruvbox.
+- **2026-10-07** — Syntax tokens: Ayu Dark (MIT from Zed's theme). Gruvbox
+  removed. (Superseded same day by Ayu Darker.)
+- **2026-10-07** — Dark mode only: removed light theme, View/title-bar toggle,
+  and `AppConfig.dark_mode`. Syntax tokens were briefly Gruvbox Dark.
 - **2026-10-06** — Title-bar sun/moon icon toggles light/dark (same as View
   menu); macOS title stays centred.
 - **2026-10-06** — Editor/syntax colours: GitHub Dark + GitHub Light highlight

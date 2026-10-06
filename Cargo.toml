@@ -2,6 +2,7 @@
 name = "isengard"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-only"
 
 [dependencies]
 gpui-kit = { version = "0.7.1", features = ["tree-sitter-languages"] }

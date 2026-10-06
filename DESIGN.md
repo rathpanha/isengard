@@ -22,10 +22,9 @@ fix the code (or ask the user before changing the rule).
   hex/rgb in UI code. Opacity variations of a theme color are fine
   (e.g. `danger.opacity(0.15)`). Exception: the file tree uses Material Icon
   Theme SVGs with their upstream fill colours (see §5).
-- **Light and dark:** every screen must work in both themes; because colors are
-  semantic this is automatic — check both when adding something visual. Editor
-  syntax colours come from `assets/themes/github-*-highlight.json` (not raw
-  hex in UI chrome).
+- **Dark only:** the app is dark mode permanently — no light theme, no toggle.
+  Editor syntax colours come from `assets/themes/ayu-darker-highlight.json`
+  (GPL-3.0; not raw hex in UI chrome).
 
 ## 2. Spacing
 
@@ -74,10 +73,8 @@ Add a row here whenever a new shared component is created.
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
   `img()` so upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and
   re-tints. Do not replace Lucide for other UI chrome.
-- **Title bar:** trailing ghost icon button toggles light/dark (sun in dark
-  mode, moon in light). Same action as View > Toggle Light/Dark Theme. Keep
-  the macOS window title optically centred (flex spacers), and leave `mr_2`
-  before the OS window controls / right edge.
+- **Title bar:** macOS shows the centred window title; Windows/Linux show the
+  in-window `AppMenuBar`. No theme toggle (dark only).
 - **Keyboard shortcut hints:** one `Kbd` key cap per key with `gap_1`
   (`⌘` `O`, `Ctrl` `O`) — see `welcome::shortcut_keys`. Never a single cap with
   the keys run together.
@@ -105,12 +102,19 @@ Add a row here whenever a new shared component is created.
   "Recent folders"); a section is hidden when empty, and when all are empty
   a single "Recent" section says so. Rows: link-style name, muted parent path,
   `destructive_icon_button` to remove.
-- **Logo:** use `branding::LOGO_MARK` (block "I" + amber cursor) on light/dark
-  surfaces; never recolor or round it. Brand colors (logo only, not UI): tile
+- **Logo:** use `branding::LOGO_MARK` (block "I" + amber cursor) on the dark
+  UI; never recolor or round it. Brand colors (logo only, not UI): tile
   `#0b0b0c`, mark `#ececec`, cursor `#f5a524`.
 
 ## Changelog
 
+- **2026-10-07** — Project GPL-3.0-only; CONTRIBUTING: no PRs.
+- **2026-10-07** — Syntax tokens: Ayu Darker from
+  k4yt3x/zed-theme-ayu-darker (GPL-3.0); `assets/themes/LICENSE` is GPL.
+- **2026-10-07** — Syntax tokens: Ayu Dark (MIT, from Zed). Gruvbox removed.
+  (Superseded same day by Ayu Darker.)
+- **2026-10-07** — Dark mode only; Gruvbox Dark syntax tokens (GitHub themes
+  and the light/dark toggle removed).
 - **2026-10-06** — Title-bar sun/moon icon toggles light/dark theme.
 - **2026-10-06** — Editor syntax: GitHub Dark / Light token colours only
   (no editor background override).

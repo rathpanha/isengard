@@ -1,11 +1,15 @@
-GitHub Dark / Light syntax highlight colours
---------------------------------------------
-Token colours adapted from the classic GitHub theme used by
-github-vscode-theme / Shiki (`github-dark`, `github-light`).
+Ayu Darker syntax highlight colours
+-----------------------------------
+Token colours adapted from k4yt3x's Zed Ayu Darker theme
+(https://github.com/k4yt3x/zed-theme-ayu-darker), theme name "Ayu Darker".
 
-Upstream: https://github.com/primer/github-vscode-theme (MIT)
-Shiki copy: https://github.com/shikijs/textmate-grammars-themes
+License: GPL-3.0 — see `LICENSE` in this directory.
+Original Ayu palette by Ike Ku (https://github.com/dempfi/ayu).
 
 These JSON files are HighlightThemeStyle maps for GPUI Kit: syntax token
 colours only (no editor.background / gutter / line-number overrides).
 Tree-sitter scopes stay the same; only colours change.
+Keys unknown to GPUI Kit's SyntaxColors were dropped.
+
+Bundling this GPL-3.0 asset may affect how you can license/distribute
+Isengard as a whole — treat `assets/themes/` as GPL-licensed material.
