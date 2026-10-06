@@ -8,11 +8,11 @@ use gpui_kit::component::{
     dialog::DialogFooter,
     h_flex,
     input::{Editor, EditorState, InputEvent, TabSize},
-    menu::AppMenuBar,
+    menu::{AppMenuBar, ContextMenuExt as _},
     notification::Notification,
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
-    tab::{Tab, TabBar},
+    tab::Tab,
     text::TextView,
     tree::TreeEvent,
     v_flex,
@@ -44,6 +44,7 @@ actions!(
         Save,
         SaveAll,
         CloseTab,
+        CloseAllTabs,
         NextTab,
         PrevTab,
         IncreaseFontSize,
@@ -59,6 +60,16 @@ actions!(
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]
 pub struct RemoveWorkspaceFolder(pub PathBuf);
+
+/// Closes the tab for this path (tab context menu; may not be the active tab).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct CloseTabAt(pub PathBuf);
+
+/// Closes every tab except the one for this path.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct CloseOtherTabs(pub PathBuf);
 
 /// What to switch the window to once the user has confirmed leaving the
 /// current workspace (VS Code closes all editors when switching).
@@ -707,13 +718,68 @@ impl IsengardApp {
         }
     }
 
-    fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ix) = self.tabs.position(|t| t.path == path) {
-            self.tabs.remove(ix);
-            self.focus_active_editor(window, cx);
-            self.persist_session(cx);
-            cx.notify();
+    /// Closes many tabs at once; one confirmation if any are dirty.
+    fn request_close_many(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
         }
+        let dirty = paths.iter().any(|path| {
+            self.tabs
+                .iter()
+                .any(|t| t.path == *path && t.is_modified)
+        });
+        if !dirty {
+            self.close_tabs(&paths, window, cx);
+            return;
+        }
+        let paths_discard = paths.clone();
+        self.open_choice_dialog(
+            "Unsaved changes",
+            "Some files have unsaved changes. Save them before closing?",
+            "Don't Save",
+            "Save All",
+            move |this, window, cx| this.close_tabs(&paths_discard, window, cx),
+            move |this, window, cx| {
+                for path in &paths {
+                    if this
+                        .tabs
+                        .iter()
+                        .any(|t| t.path == *path && t.is_modified)
+                        && let Err(err) = this.save_tab(path, cx)
+                    {
+                        return notify_error(format!("Save failed: {err:#}"), window, cx);
+                    }
+                }
+                this.close_tabs(&paths, window, cx);
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_tabs(&[path.to_path_buf()], window, cx);
+    }
+
+    fn close_tabs(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        // Remove from the end so earlier indexes stay valid while we scan.
+        let mut indexes: Vec<usize> = paths
+            .iter()
+            .filter_map(|path| self.tabs.position(|t| t.path == *path))
+            .collect();
+        indexes.sort_unstable();
+        indexes.dedup();
+        for ix in indexes.into_iter().rev() {
+            self.tabs.remove(ix);
+        }
+        self.focus_active_editor(window, cx);
+        self.persist_session(cx);
+        cx.notify();
     }
 
     // ---- Dialogs -----------------------------------------------------------
@@ -974,6 +1040,45 @@ impl IsengardApp {
         }
     }
 
+    fn on_close_tab_at(
+        &mut self,
+        action: &CloseTabAt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_close(&action.0, window, cx);
+    }
+
+    fn on_close_other_tabs(
+        &mut self,
+        action: &CloseOtherTabs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keep = &action.0;
+        // Activate the right-clicked tab so it stays selected after others close.
+        if let Some(ix) = self.tabs.position(|t| t.path == *keep) {
+            self.tabs.activate(ix);
+        }
+        let paths: Vec<PathBuf> = self
+            .tabs
+            .iter()
+            .filter(|t| t.path != *keep)
+            .map(|t| t.path.clone())
+            .collect();
+        self.request_close_many(paths, window, cx);
+    }
+
+    fn on_close_all_tabs(
+        &mut self,
+        _: &CloseAllTabs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths: Vec<PathBuf> = self.tabs.iter().map(|t| t.path.clone()).collect();
+        self.request_close_many(paths, window, cx);
+    }
+
     fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.cycle(true);
         self.focus_active_editor(window, cx);
@@ -1127,51 +1232,80 @@ impl IsengardApp {
                 .into_any_element();
         };
 
-        let tab_bar = TabBar::new("editor-tabs")
-            .selected_index(self.tabs.active_index().unwrap_or_default())
+        let active_ix = self.tabs.active_index().unwrap_or_default();
+        let tab_count = self.tabs.iter().count();
+        // TabBar::children requires bare `Tab` (Into<Tab>), so ContextMenu cannot
+        // wrap a tab there — compose Kit `Tab`s in divs for the right-click menu.
+        // (Tab itself is not an Element, so ContextMenu cannot wrap it either.)
+        let tab_bar = h_flex()
+            .id("editor-tabs")
+            .w_full()
+            .flex_shrink_0()
+            .overflow_x_scroll()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
             .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
                 let path = tab.path.clone();
+                let path_menu = path.clone();
                 let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
+                let tab_id = SharedString::from(format!("tab-{}", tab.path.display()));
                 let preview = tab.preview;
                 let modified = tab.is_modified;
                 let dirty_color = cx.theme().blue;
-                Tab::new()
-                    .label(tab.label())
-                    .cursor_pointer()
-                    .when(preview, |tab| tab.italic())
-                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                        // Double-click the tab pins a preview (VS Code).
-                        if ev.click_count() >= 2 {
-                            this.pin_tab(ix, cx);
-                        }
-                        this.activate_tab(ix, window, cx);
-                    }))
-                    .suffix(
-                        h_flex()
-                            .items_center()
-                            .gap_1()
-                            // Same 12px from the tab's right border as the label's left padding.
-                            .mr_2()
-                            .when(modified, |this| {
-                                this.child(
-                                    // Block-style dirty mark (DESIGN.md: no rounded corners).
-                                    div()
-                                        .size(px(6.))
-                                        .flex_shrink_0()
-                                        .bg(dirty_color),
-                                )
-                            })
-                            .child(
-                                Button::new(id)
-                                    .ghost()
-                                    .cursor_pointer()
-                                    .xsmall()
-                                    .icon(IconName::Close)
-                                    .tooltip("Close")
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.request_close(&path, window, cx);
-                                    })),
+                let close_others_disabled = tab_count <= 1;
+                let selected = ix == active_ix;
+                div()
+                    .id(ElementId::Name(tab_id))
+                    .context_menu(move |menu, _, _| {
+                        menu.menu("Close", Box::new(CloseTabAt(path_menu.clone())))
+                            .menu_with_disabled(
+                                "Close Others",
+                                Box::new(CloseOtherTabs(path_menu.clone())),
+                                close_others_disabled,
+                            )
+                            .menu("Close All", Box::new(CloseAllTabs))
+                    })
+                    .child(
+                        Tab::new()
+                            .label(tab.label())
+                            .selected(selected)
+                            .cursor_pointer()
+                            .when(preview, |tab| tab.italic())
+                            .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                                // Double-click the tab pins a preview (VS Code).
+                                if ev.click_count() >= 2 {
+                                    this.pin_tab(ix, cx);
+                                }
+                                this.activate_tab(ix, window, cx);
+                            }))
+                            .suffix(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    // Same 12px from the tab's right border as the label's left padding.
+                                    .mr_2()
+                                    .when(modified, |this| {
+                                        this.child(
+                                            // Block-style dirty mark (DESIGN.md: no rounded corners).
+                                            div()
+                                                .size(px(6.))
+                                                .flex_shrink_0()
+                                                .bg(dirty_color),
+                                        )
+                                    })
+                                    .child(
+                                        Button::new(id)
+                                            .ghost()
+                                            .cursor_pointer()
+                                            .xsmall()
+                                            .icon(IconName::Close)
+                                            .tooltip("Close")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.request_close(&path, window, cx);
+                                            })),
+                                    ),
                             ),
                     )
             }));
@@ -1365,6 +1499,9 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_close_tab))
+            .on_action(cx.listener(Self::on_close_tab_at))
+            .on_action(cx.listener(Self::on_close_other_tabs))
+            .on_action(cx.listener(Self::on_close_all_tabs))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_increase_font))

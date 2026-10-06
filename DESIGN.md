@@ -83,6 +83,11 @@ Add a row here whenever a new shared component is created.
   (only one; the next preview replaces it unless dirty, then it pins).
   Double-click the file or the tab, or edit the buffer → permanent. File >
   Open File / CLI opens permanent.
+- **Tab context menu:** right-click a tab → Close, Close Others (disabled when
+  only one tab), Close All. Dirty tabs get one Save All / Don't Save dialog
+  for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not
+  `TabBar`) because `TabBar::children` requires bare `Tab` and cannot host
+  `ContextMenu`.
 - **File tree icons:** full Material Icon Theme under
   `assets/icons/material/` (MIT; see its `LICENSE`) with associations from
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
@@ -142,6 +147,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Tab context menu: Close, Close Others, Close All.
 - **2026-10-07** — Slogan: "The already configured editor" (welcome, About,
   bundle short_description).
 - **2026-10-07** — Session restore: per-tab cursor + editor scroll.

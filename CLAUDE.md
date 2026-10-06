@@ -66,15 +66,16 @@ tabs, highlighted editor, status bar):
   loading; dirs first, case-insensitive sort; hides `.git` and `.DS_Store`.
   Icons are the full Material Icon Theme set (associations from
   `material-icons.json`); other UI chrome still uses Lucide via GPUI Kit.
-- Tabs (`TabBar`/`Tab` with a close button), one `EditorState` per tab so each
-  keeps its own undo history and cursor. Tree single-click opens a **preview**
-  tab (italic; replaced by the next preview open); double-click the file or the
-  tab (or edit) pins it permanent. Tab close and welcome "remove recent" use
-  Kit ghost `Button`s (default hover). Markdown files get an Edit / Preview
-  toolbar (`TextView::markdown` / SVG `img` from buffer); View > Toggle Preview
-  or `⌘⇧V` / `Ctrl+Shift+V`. Raster images (png/jpg/gif/webp/…) open as an
-  `img(path)` preview tab; SVG is editable text with the same Edit/Preview
-  toggle as Markdown.
+- Tabs (Kit `Tab`s in an `h_flex` — not `TabBar`, so each tab can own a
+  `ContextMenu`), one `EditorState` per tab so each keeps its own undo history
+  and cursor. Right-click → Close / Close Others / Close All. Tree single-click
+  opens a **preview** tab (italic; replaced by the next preview open);
+  double-click the file or the tab (or edit) pins it permanent. Tab close and
+  welcome "remove recent" use Kit ghost `Button`s (default hover). Markdown
+  files get an Edit / Preview toolbar (`TextView::markdown` / SVG `img` from
+  buffer); View > Toggle Preview or `⌘⇧V` / `Ctrl+Shift+V`. Raster images
+  (png/jpg/gif/webp/…) open as an `img(path)` preview tab; SVG is editable
+  text with the same Edit/Preview toggle as Markdown.
 - Code editor (GPUI Kit `Editor`): tree-sitter highlighting for every language
   GPUI Kit vendors via `tree-sitter-languages` (astro, bash, c/c++/c#, cmake,
   css, diff, ejs, elixir, erb, go, graphql, html, java, javascript, json,
@@ -266,6 +267,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Tab right-click: Close / Close Others / Close All (Kit
+  `Tab`s in `h_flex` + `ContextMenu`; `TabBar` cannot host menus).
 - **2026-10-07** — Slogan "The already configured editor" on welcome, About,
   and cargo-bundle short_description.
 - **2026-10-07** — Session restore also keeps per-tab cursor (line/col) and
