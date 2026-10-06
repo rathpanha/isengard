@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, IconName,
     button::{Button, ButtonVariants as _},
     h_flex,
     kbd::Kbd,
@@ -10,9 +10,11 @@ use gpui_kit::component::{
 use gpui_kit::*;
 
 use crate::app::{IsengardApp, OpenFile, OpenFolder};
+use crate::ui::components::destructive_icon_button;
 
 /// Start page shown while no folder or file is open: start actions plus recent folders.
-pub fn render(recent: &[PathBuf], cx: &mut Context<IsengardApp>) -> AnyElement {
+pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
+    let recent = app.recent_folders();
     let theme = cx.theme();
     let muted = theme.muted_foreground;
 
@@ -25,7 +27,7 @@ pub fn render(recent: &[PathBuf], cx: &mut Context<IsengardApp>) -> AnyElement {
     } else {
         let rows: Vec<AnyElement> = recent
             .iter()
-            .map(|folder| render_recent(folder, muted, cx))
+            .map(|folder| render_recent(app, folder, muted, cx))
             .collect();
         v_flex().gap_1().children(rows).into_any_element()
     };
@@ -41,6 +43,12 @@ pub fn render(recent: &[PathBuf], cx: &mut Context<IsengardApp>) -> AnyElement {
                 .gap_8()
                 .child(
                     v_flex()
+                        .child(
+                            img(crate::branding::LOGO_MARK.clone())
+                                .w(rems(4.))
+                                .h(rems(4.7))
+                                .mb_4(),
+                        )
                         .child(
                             div()
                                 .text_3xl()
@@ -66,9 +74,7 @@ pub fn render(recent: &[PathBuf], cx: &mut Context<IsengardApp>) -> AnyElement {
                                             window.dispatch_action(Box::new(OpenFolder), cx)
                                         }),
                                 )
-                                .child(Kbd::new(
-                                    Keystroke::parse("secondary-o").expect("valid keystroke"),
-                                )),
+                                .child(shortcut_keys("secondary-o")),
                         )
                         .child(
                             Button::new("welcome-open-file")
@@ -90,6 +96,33 @@ pub fn render(recent: &[PathBuf], cx: &mut Context<IsengardApp>) -> AnyElement {
         .into_any_element()
 }
 
+/// Renders a shortcut as one key cap per key (e.g. `⌘` `O`) so the keys don't run together.
+fn shortcut_keys(binding: &str) -> impl IntoElement {
+    let stroke = Keystroke::parse(binding).expect("valid keystroke");
+    let m = stroke.modifiers;
+    // Same order as the platform's own shortcut display: ⌃⌥⇧⌘ / Ctrl+Alt+Shift+Win.
+    // Each modifier is passed as a bare key name, which `Kbd` formats per platform.
+    let modifiers = [
+        (m.control, "ctrl"),
+        (m.alt, "alt"),
+        (m.shift, "shift"),
+        (m.platform, "cmd"),
+    ];
+    let keys = modifiers
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, name)| name.to_owned())
+        .chain([stroke.key.clone()]);
+    h_flex().gap_1().children(keys.map(|key| {
+        // Built directly: `Keystroke::parse` would read "cmd" as a modifier.
+        Kbd::new(Keystroke {
+            modifiers: Modifiers::default(),
+            key,
+            key_char: None,
+        })
+    }))
+}
+
 fn section_title(title: &'static str) -> impl IntoElement {
     div()
         .text_lg()
@@ -97,7 +130,12 @@ fn section_title(title: &'static str) -> impl IntoElement {
         .child(title)
 }
 
-fn render_recent(folder: &Path, muted: Hsla, cx: &mut Context<IsengardApp>) -> AnyElement {
+fn render_recent(
+    app: &IsengardApp,
+    folder: &Path,
+    muted: Hsla,
+    cx: &mut Context<IsengardApp>,
+) -> AnyElement {
     let id = folder.to_string_lossy().into_owned();
     let name = folder
         .file_name()
@@ -126,17 +164,19 @@ fn render_recent(folder: &Path, muted: Hsla, cx: &mut Context<IsengardApp>) -> A
                 .text_color(muted)
                 .child(parent),
         )
-        .child(
-            Button::new(SharedString::from(format!("recent-remove-{id}")))
-                .ghost()
-                .xsmall()
-                .icon(IconName::Close)
-                .tooltip("Remove from recent")
-                .on_click(cx.listener({
-                    let folder = folder.to_path_buf();
-                    move |this, _, _, cx| this.remove_recent_folder(&folder, cx)
-                })),
-        )
+        .child({
+            let folder = folder.to_path_buf();
+            let button_id = SharedString::from(format!("recent-remove-{id}"));
+            let hovered = app.is_destructive_hovered(&button_id);
+            destructive_icon_button(
+                button_id,
+                IconName::Close,
+                "Remove from recent",
+                hovered,
+                move |this, _, cx| this.remove_recent_folder(&folder, cx),
+                cx,
+            )
+        })
         .into_any_element()
 }
 

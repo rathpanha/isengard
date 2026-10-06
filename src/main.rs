@@ -1,4 +1,5 @@
 mod app;
+mod branding;
 mod config;
 mod editor;
 mod file_tree;
@@ -24,6 +25,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx); // must come before any component is used
+            branding::set_dock_icon();
             theme::load_fonts(cx);
             let config = AppConfig::load();
             theme::apply(&config, None, cx);

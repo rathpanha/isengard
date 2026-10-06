@@ -1,0 +1,2 @@
+// Windows resources: the executable's icon (shown in Explorer, the taskbar and Alt+Tab).
+1 ICON "../logo/Isengard.ico"

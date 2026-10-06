@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, TitleBar, WindowExt as _,
-    button::{Button, ButtonCustomVariant, ButtonVariants as _},
+    ActiveTheme as _, IconName, TitleBar, WindowExt as _,
+    button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
     input::{Editor, EditorState, InputEvent, TabSize},
@@ -21,6 +21,7 @@ use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::theme;
+use crate::ui::components::destructive_icon_button;
 use crate::ui::file_tree::FileTreePanel;
 use crate::ui::welcome;
 
@@ -87,8 +88,8 @@ pub struct IsengardApp {
     file_tree: FileTreePanel,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
-    /// Tab whose close button is under the pointer (its × turns red).
-    hovered_close: Option<PathBuf>,
+    /// Id of the destructive icon button under the pointer (its icon turns red).
+    hovered_destructive: Option<SharedString>,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
     _subscriptions: Vec<Subscription>,
@@ -123,7 +124,7 @@ impl IsengardApp {
             file_tree,
             tabs: TabList::default(),
             app_menu_bar,
-            hovered_close: None,
+            hovered_destructive: None,
             allow_quit: false,
             _subscriptions: vec![tree_subscription],
         };
@@ -161,7 +162,25 @@ impl IsengardApp {
         cx.notify();
     }
 
+    pub(crate) fn is_destructive_hovered(&self, id: &SharedString) -> bool {
+        self.hovered_destructive.as_ref() == Some(id)
+    }
+
+    pub(crate) fn set_destructive_hovered(&mut self, id: SharedString, hovered: bool) {
+        if hovered {
+            self.hovered_destructive = Some(id);
+        } else if self.hovered_destructive.as_ref() == Some(&id) {
+            self.hovered_destructive = None;
+        }
+    }
+
+    pub(crate) fn recent_folders(&self) -> &[PathBuf] {
+        &self.config.recent_folders
+    }
+
     pub fn remove_recent_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        // The removed row's button never reports hover-out.
+        self.hovered_destructive = None;
         self.config.remove_recent_folder(folder);
         self.config.save();
         cx.notify();
@@ -277,7 +296,7 @@ impl IsengardApp {
         if let Some(ix) = self.tabs.position(|t| t.path == path) {
             self.tabs.remove(ix);
             // The removed button never reports hover-out.
-            self.hovered_close = None;
+            self.hovered_destructive = None;
             self.focus_active_editor(window, cx);
             cx.notify();
         }
@@ -560,14 +579,6 @@ impl IsengardApp {
                 .into_any_element();
         };
 
-        // Muted × that turns destructive (danger red icon + faint red tint) on hover.
-        let danger = cx.theme().danger;
-        let muted = cx.theme().muted_foreground;
-        let close_variant = ButtonCustomVariant::new(cx)
-            .foreground(muted)
-            .hover(danger.opacity(0.15))
-            .active(danger.opacity(0.25));
-
         let tab_bar = TabBar::new("editor-tabs")
             .selected_index(self.tabs.active_index().unwrap_or_default())
             .on_click(
@@ -575,45 +586,20 @@ impl IsengardApp {
             )
             .children(self.tabs.iter().map(|tab| {
                 let path = tab.path.clone();
-                // Button's hover style can only change the background, and an Icon
-                // resolves its color at render time, so the red icon is driven by
-                // hover state tracked on a wrapper.
-                let is_hovered = self.hovered_close.as_deref() == Some(tab.path.as_path());
-                let hover_path = tab.path.clone();
+                let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
+                let hovered = self.is_destructive_hovered(&id);
                 Tab::new().label(tab.label()).suffix(
-                    div()
-                        .id(SharedString::from(format!(
-                            "close-tab-hover-{}",
-                            tab.path.display()
-                        )))
-                        // The tab's label padding is 12px; mr_2 plus the button's 4px
-                        // inset puts the × the same 12px from the tab's right border.
-                        .mr_2()
-                        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                            let path = hover_path.clone();
-                            this.hovered_close = hovered.then_some(path);
-                            cx.notify();
-                        }))
-                        .child(
-                            Button::new(SharedString::from(format!(
-                                "close-tab-{}",
-                                tab.path.display()
-                            )))
-                            .custom(close_variant)
-                            .xsmall()
-                            .icon(Icon::new(IconName::Close).text_color(if is_hovered {
-                                danger
-                            } else {
-                                muted
-                            }))
-                            .tooltip("Close")
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.request_close(&path, window, cx);
-                                },
-                            )),
-                        ),
+                    destructive_icon_button(
+                        id,
+                        IconName::Close,
+                        "Close",
+                        hovered,
+                        move |this, window, cx| this.request_close(&path, window, cx),
+                        cx,
+                    )
+                    // Same 12px from the tab's right border as the label's left padding:
+                    // mr_2 (8px) plus the xsmall icon button's 4px inset.
+                    .mr_2(),
                 )
             }));
 
@@ -661,7 +647,7 @@ impl IsengardApp {
 impl Render for IsengardApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if self.show_welcome() {
-            welcome::render(&self.config.recent_folders, cx).into_any_element()
+            welcome::render(self, cx).into_any_element()
         } else if self.file_tree.is_open() {
             let app = cx.entity().downgrade();
             let tree = self.file_tree.render(

@@ -11,6 +11,11 @@ fully before making changes.
 > [Changelog](#changelog) sections, plus any section the change makes stale.
 > Keep it accurate; a stale hand-off doc is worse than none.
 
+> **Design rule (user decision):** all UI must follow [DESIGN.md](DESIGN.md)
+> (block style, font, colors, spacing, destructive-action hover, shared
+> components). Read it before any UI change and add new approved patterns to it
+> in the same commit.
+
 > **UI rule (user decision):** the app uses GPUI Kit components only — do not
 > hand-build widgets that the library already provides. Look for a component
 > first (catalog below), and only compose/style when none fits.
@@ -46,12 +51,14 @@ Working features (verified by screenshots on macOS: welcome screen, file tree,
 tabs, highlighted editor, status bar):
 - Welcome screen on every launch (unless a path is passed on the CLI): Open
   Folder, Open File, recent folders (max 8, click to open, × to remove).
+  The Open Folder shortcut hint is one `Kbd` per key (`⌘` `O` / `Ctrl` `O`),
+  built by `welcome::shortcut_keys`; a single `Kbd` runs the keys together.
 - File tree (GPUI Kit `Tree`) only while a folder is open; lazy directory
   loading; dirs first, case-insensitive sort; hides `.git` and `.DS_Store`.
 - Tabs (`TabBar`/`Tab` with a close button), one `EditorState` per tab so each
-  keeps its own undo history and cursor. The close button is a muted × that turns
-  destructive on hover (theme `danger` icon + faint danger tint), and sits 12px
-  from the tab's right border — the same as the label's left padding.
+  keeps its own undo history and cursor. The close button and the welcome screen's
+  "remove recent" × are `destructive_icon_button`s: muted at rest, red icon +
+  faint red tint on hover (DESIGN.md §3).
 - Code editor (GPUI Kit `Editor`): tree-sitter highlighting for JavaScript,
   TypeScript, TSX, HTML, CSS, JSON; line numbers, indent guides, search.
 - Save (`•` marks modified tabs), Save All, close-tab confirmation (Save /
@@ -62,6 +69,9 @@ tabs, highlighted editor, status bar):
 - Status bar: relative path, Ln/Col, language — rendered only while a file
   tab is active (hidden on the welcome screen and with a folder but no file).
   Notifications for saves/errors.
+- Logo (block "I" with battlements + amber cursor) on the welcome screen and as
+  the app icon: Dock icon at runtime on macOS, embedded .exe icon on Windows,
+  `cargo bundle` metadata for a macOS .app / Linux .deb.
 - JetBrains Mono Nerd Font everywhere (UI + editor); square corners
   (`theme.radius = 0`); dark/light theme toggle; editor font size zoom.
 
@@ -77,6 +87,7 @@ src/
 │                        menus, window (QuitMode::LastWindowClosed)
 ├── app.rs               IsengardApp view: actions, tabs, dialogs, layout, status bar
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
+├── branding.rs          logo image for the UI + macOS Dock icon (objc2 AppKit)
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
 ├── config.rs            AppConfig (serde JSON file) + recent-folder helpers
 ├── editor/
@@ -85,6 +96,8 @@ src/
 │   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
 ├── file_tree/node.rs    FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
 └── ui/
+    ├── components.rs    shared compositions encoding DESIGN.md rules
+    │                    (destructive_icon_button)
     ├── file_tree.rs     FileTreePanel: FsNode -> TreeItem sync, TreeEvent handling, render
     └── welcome.rs       welcome screen (start actions + recent folders)
 ```
@@ -111,12 +124,26 @@ src/
   capture a `WeakEntity<IsengardApp>` and call back into it.
 - **Hover-colored icons**: `Button`'s hover style only changes its background,
   and `Icon` resolves its color at render time, so `group_hover`/`.hover` can't
-  recolor an icon. Track hover state in the view instead (see
-  `IsengardApp::hovered_close`, set from a wrapper div's `on_hover`).
+  recolor an icon. `ui::components::destructive_icon_button` keeps the hovered
+  button's id in `IsengardApp::hovered_destructive` (set from a wrapper's
+  `on_hover`). Callers pass `hovered` in — don't `cx.entity().read(cx)` the view
+  while it is rendering (it is leased and would panic).
 - **Theme**: `theme::apply` calls `Theme::change(mode)` first (it reloads the
   theme config) and then overrides fonts, sizes and `radius`/`radius_lg = 0`.
   Re-run it after any theme/font change. `theme.font_size` (14px) is the rem
   base for the whole UI; `mono_font_size` is the editor size from config.
+- **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,
+  near-black tile). `logo-mark.svg` is the shapes only (welcome screen,
+  `branding::LOGO_MARK`). `icon-macos.svg` puts the tile on Apple's 824px grid
+  with a transparent margin and square corners (block style). Exports:
+  `Isengard.icns`, `icon-1024.png` (Dock icon, cargo-bundle), `logo-512.png`,
+  `Isengard.ico` (Windows, via `build.rs` + `assets/windows/isengard.rc` +
+  `embed-resource`). Colors: tile `#0b0b0c`, mark `#ececec`, cursor `#f5a524`.
+  The group is optically centred (halfway between bbox centre and area
+  centroid). To re-export after editing an SVG: render PNGs with a transparent
+  background using `resvg` (e.g. a tiny `resvg = "=0.45.1"` CLI; `qlmanage`
+  fills transparency with white, don't use it), build the iconset sizes
+  16–512 @1x/@2x, `iconutil -c icns`, and pack PNGs 16–256 into the .ico.
 - **Fonts**: five JetBrains Mono Nerd Font weights are embedded with
   `include_bytes!` (~13 MB) and registered via `cx.text_system().add_fonts`.
   Family name: `"JetBrainsMono Nerd Font"`. Licenses: `assets/fonts/OFL.txt`,
@@ -160,7 +187,9 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
   only).
 - Save All stops at the first failing file.
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
-- No app icon yet.
+- Windows icon embedding (`build.rs`) and the Linux X11 window icon are
+  untested; X11 would need `WindowOptions::icon` set (not done).
+- `package.metadata.bundle.identifier` (`dev.isengard.editor`) is a placeholder.
 
 ## Roadmap — Phase 5: Claude AI panel (not started)
 - GPUI Kit has chat components (`Message`, `Bubble`, `MessageScroller`,
@@ -177,6 +206,13 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — Added DESIGN.md (design rules). Extracted
+  `destructive_icon_button`; the recent-folder remove × now matches the tab
+  close × (red only on hover).
+- **2026-10-06** — Welcome screen shortcut hint shows separate key caps (`⌘` `O`).
+- **2026-10-06** — App logo (concept B, optically centred) on the welcome
+  screen and as the app icon (macOS Dock at runtime, Windows .exe icon,
+  cargo-bundle metadata).
 - **2026-10-06** — Tab close button: muted ×, red only on hover; 12px right spacing
   matching the label padding.
 - **2026-10-06** — Status bar is hidden entirely unless a file tab is active.

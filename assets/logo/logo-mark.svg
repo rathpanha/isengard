@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="296 230 480 564" width="480" height="564">
+  <!-- Isengard mark without background, cropped to the shapes (for use inside the app UI). -->
+  <path fill="#ececec" d="
+    M296 230 H376 V290 H436 V230 H516 V290 H576 V230 H656 V362
+    H536 V722 H656 V794 H296 V722 H416 V362 H296 Z"/>
+  <rect x="696" y="722" width="80" height="72" fill="#f5a524"/>
+</svg>
