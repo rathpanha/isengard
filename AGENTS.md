@@ -1,5 +1,7 @@
 # Agent instructions
 
-All project context for AI agents lives in [CLAUDE.md](CLAUDE.md), and the UI
-design rules live in [DESIGN.md](DESIGN.md). Read both before making changes, and
-update them in the same commit as any change you make.
+Read [docs/README.md](docs/README.md) first (map + how to update docs), then
+[docs/status.md](docs/status.md) and [docs/architecture.md](docs/architecture.md).
+For any UI change, also read [docs/design.md](docs/design.md).
+
+Do not put project context or changelogs in this file — keep it a pointer only.

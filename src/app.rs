@@ -1287,7 +1287,7 @@ impl IsengardApp {
                                     .mr_2()
                                     .when(modified, |this| {
                                         this.child(
-                                            // Block-style dirty mark (DESIGN.md: no rounded corners).
+                                            // Block-style dirty mark (docs/design.md: no rounded corners).
                                             div()
                                                 .size(px(6.))
                                                 .flex_shrink_0()

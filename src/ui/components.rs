@@ -1,5 +1,5 @@
 //! Small app-level compositions of GPUI Kit components that encode our design
-//! rules (see DESIGN.md). Use these instead of re-styling the same pattern.
+//! rules (see docs/design.md). Use these instead of re-styling the same pattern.
 
 use gpui_kit::component::dialog::Dialog;
 use gpui_kit::*;

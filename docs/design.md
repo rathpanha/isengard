@@ -1,9 +1,12 @@
-# Isengard — Design Rules
+# Design rules
 
 These rules keep the UI consistent. They are requirements, not suggestions:
 every new or changed UI must follow them, and any new pattern the user approves
 must be added here in the same change. When a rule and existing code disagree,
 fix the code (or ask the user before changing the rule).
+
+History goes in [changelog.md](changelog.md) only — do not add a Changelog
+section here.
 
 ## 1. Foundation
 
@@ -144,57 +147,3 @@ Add a row here whenever a new shared component is created.
 - **Slogan:** welcome subtitle and About / bundle blurb —
   "The already configured editor" (no settings-panel cosplay). About may add
   one short supporting line; don't invent a second tagline.
-
-## Changelog
-
-- **2026-10-07** — Tab context menu: Close, Close Others, Close All.
-- **2026-10-07** — Slogan: "The already configured editor" (welcome, About,
-  bundle short_description).
-- **2026-10-07** — Session restore: per-tab cursor + editor scroll.
-- **2026-10-07** — Session restore: multi-root collapsed roots honored on reopen.
-- **2026-10-07** — Session restore for folders/workspaces (tabs + tree expand
-  in config `sessions`).
-- **2026-10-07** — File tree: no tree `px` — hover full-bleed; content keeps
-  `px_3` inside the row.
-- **2026-10-07** — Removed the uppercased workspace/folder label above the
-  file tree (title bar already shows it).
-- **2026-10-07** — Indent guides run through every descendant (including last
-  child); 1px segment overlap; multi-root still skips the cross-root rail.
-- **2026-10-07** — File tree: depth-0 rows share `px_3` with the workspace
-  title; one `INDENT_COL` per depth (dropped extra `INDENT_BASE` so the first
-  nest matches a normal folder). Multi-root still suppresses the cross-root rail.
-- **2026-10-07** — SVG Edit/Preview (source + live `img` from buffer); raster
-  images stay image-only tabs.
-- **2026-10-07** — Image tabs: open common image types with `img(path)` preview.
-- **2026-10-07** — Notifications bottom-right.
-- **2026-10-07** — Markdown Edit/Preview toggle (`TextView::markdown`).
-- **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`).
-- **2026-10-07** — Close/remove × buttons use Kit ghost default (no red hover).
-- **2026-10-07** — Unsaved tab indicator: yellow square (`theme.yellow`).
-- **2026-10-07** — Preview tabs: italic until double-click / edit.
-- **2026-10-07** — Gitignored tree rows: 60% opacity.
-- **2026-10-07** — Editor background matches file-tree sidebar; Dockerfile
-  language alias (Bash highlighter).
-- **2026-10-07** — Project GPL-3.0-only; CONTRIBUTING: no PRs.
-- **2026-10-07** — Syntax tokens: Ayu Darker from
-  k4yt3x/zed-theme-ayu-darker (GPL-3.0); `assets/themes/LICENSE` is GPL.
-- **2026-10-07** — Syntax tokens: Ayu Dark (MIT, from Zed). Gruvbox removed.
-  (Superseded same day by Ayu Darker.)
-- **2026-10-07** — Dark mode only; Gruvbox Dark syntax tokens (GitHub themes
-  and the light/dark toggle removed).
-- **2026-10-06** — Title-bar sun/moon icon toggles light/dark theme.
-- **2026-10-06** — Editor syntax: GitHub Dark / Light token colours only
-  (no editor background override).
-- **2026-10-06** — File tree uses the full Material Icon Theme pack +
-  association JSON (not a curated subset).
-- **2026-10-06** — File tree Material icons via `img()` (keep colours); GPUI
-  `Icon`/`svg()` would alpha-mask them.
-- **2026-10-06** — File tree uses a Material Icon Theme subset (type-specific
-  file/folder icons); other UI stays on Lucide.
-- **2026-10-06** — Pointer cursor on everything clickable.
-- **2026-10-06** — Workspaces before folders: Open Workspace first in Start,
-  Recent workspaces above Recent folders.
-- **2026-10-06** — Workspace naming, multi-root tree, context menus, recent
-  lists, and the shared choice dialog.
-- **2026-10-06** — Created: foundation, spacing, destructive-action rule,
-  shared `destructive_icon_button`, shortcut/empty-state/logo patterns.
