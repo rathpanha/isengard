@@ -20,7 +20,9 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use serde::Deserialize;
 
-use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE, WorkspaceSession};
+use crate::config::{
+    AppConfig, DEFAULT_EDITOR_FONT_SIZE, FileViewState, OpenFileEntry, WorkspaceSession,
+};
 use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
@@ -170,13 +172,13 @@ impl IsengardApp {
         let tree_subscription =
             cx.subscribe(file_tree.state(), |this, _, event: &TreeEvent, cx| {
                 this.file_tree.handle_event(event, cx);
-                this.persist_session();
+                this.persist_session(cx);
             });
 
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
-                this.persist_session();
+                this.persist_session(cx);
                 this.confirm_quit(window, cx)
             })
             .unwrap_or(true)
@@ -265,7 +267,7 @@ impl IsengardApp {
         }
         self.persist_workspace(window, cx);
         self.workspace_changed(window, cx);
-        self.persist_session();
+        self.persist_session(cx);
     }
 
     /// Re-writes the workspace file after a folder change, if there is one.
@@ -335,7 +337,7 @@ impl IsengardApp {
     }
 
     fn apply_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
-        self.persist_session();
+        self.persist_session(cx);
         self.tabs = TabList::default();
         self.workspace = match switch {
             Switch::Folder(folder) => {
@@ -356,16 +358,37 @@ impl IsengardApp {
         self.restore_session(window, cx);
     }
 
-    /// Writes the current tabs + expanded dirs under this workspace's session key.
-    fn persist_session(&mut self) {
+    /// Writes the current tabs + cursor/scroll + expanded dirs under this workspace's key.
+    fn persist_session(&mut self, cx: &App) {
         if self.restoring_session {
             return;
         }
         let Some(key) = self.workspace.session_key() else {
             return;
         };
+        let open_files = self
+            .tabs
+            .iter()
+            .map(|tab| {
+                let view = tab
+                    .editor_state()
+                    .map(|state| {
+                        let state = state.read(cx);
+                        let cursor = state.cursor_position();
+                        let scroll = state.scroll_offset();
+                        FileViewState {
+                            cursor_line: cursor.line,
+                            cursor_character: cursor.character,
+                            scroll_x: scroll.x.into(),
+                            scroll_y: scroll.y.into(),
+                        }
+                    })
+                    .unwrap_or_default();
+                OpenFileEntry::with_view(tab.path.clone(), view)
+            })
+            .collect();
         let session = WorkspaceSession {
-            open_files: self.tabs.iter().map(|t| t.path.clone()).collect(),
+            open_files,
             active: self.tabs.active().map(|t| t.path.clone()),
             expanded: self.file_tree.expanded_paths(),
         };
@@ -373,7 +396,7 @@ impl IsengardApp {
         self.config.save();
     }
 
-    /// Reopens saved tabs and expands dirs for the current workspace key.
+    /// Reopens saved tabs (with cursor/scroll) and expands dirs for the current key.
     fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(key) = self.workspace.session_key() else {
             return;
@@ -384,18 +407,56 @@ impl IsengardApp {
 
         self.restoring_session = true;
         self.file_tree.expand_paths(&session.expanded, cx);
-        for path in &session.open_files {
-            if path.is_file() {
-                self.open_file(path, true, window, cx);
+        for entry in &session.open_files {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
             }
+            self.open_file(path, true, window, cx);
+            self.apply_file_view(path, &entry.view(), window, cx);
         }
         if let Some(active) = &session.active
             && let Some(ix) = self.tabs.position(|t| t.path == *active)
         {
             self.activate_tab(ix, window, cx);
+            if let Some(entry) = session.open_files.iter().find(|e| e.path() == active.as_path())
+            {
+                // Re-apply scroll after activate; cursor move-to can shift the viewport.
+                self.apply_file_view(active, &entry.view(), window, cx);
+            }
         }
         self.restoring_session = false;
-        self.persist_session();
+        self.persist_session(cx);
+    }
+
+    fn apply_file_view(
+        &self,
+        path: &Path,
+        view: &FileViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self
+            .tabs
+            .iter()
+            .find(|t| t.path == path)
+            .and_then(|t| t.editor_state())
+            .cloned()
+        else {
+            return;
+        };
+        state.update(cx, |state, cx| {
+            // gpui prelude's `Position` is CSS; the editor uses LSP Position from Kit.
+            state.set_cursor_position(
+                gpui_kit::component::input::Position {
+                    line: view.cursor_line,
+                    character: view.cursor_character,
+                },
+                window,
+                cx,
+            );
+            state.set_scroll_offset(point(px(view.scroll_x), px(view.scroll_y)), cx);
+        });
     }
 
     /// Asks where to save the workspace file, saves it, then continues with `next`.
@@ -504,7 +565,7 @@ impl IsengardApp {
             });
             self.file_tree.select_path(path, cx);
             self.focus_handle.focus(window, cx);
-            self.persist_session();
+            self.persist_session(cx);
             cx.notify();
             return;
         }
@@ -559,7 +620,7 @@ impl IsengardApp {
         });
         self.file_tree.select_path(path, cx);
         self.focus_active_editor(window, cx);
-        self.persist_session();
+        self.persist_session(cx);
         cx.notify();
     }
 
@@ -591,7 +652,7 @@ impl IsengardApp {
                 self.file_tree.select_path(&path, cx);
             }
             self.focus_active_editor(window, cx);
-            self.persist_session();
+            self.persist_session(cx);
             cx.notify();
         }
     }
@@ -650,7 +711,7 @@ impl IsengardApp {
         if let Some(ix) = self.tabs.position(|t| t.path == path) {
             self.tabs.remove(ix);
             self.focus_active_editor(window, cx);
-            self.persist_session();
+            self.persist_session(cx);
             cx.notify();
         }
     }
@@ -740,7 +801,7 @@ impl IsengardApp {
     /// Returns `true` if the app may close now; otherwise asks the user first.
     fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.allow_quit || !self.has_unsaved() {
-            self.persist_session();
+            self.persist_session(cx);
             return true;
         }
         self.open_choice_dialog(
@@ -760,7 +821,7 @@ impl IsengardApp {
     }
 
     fn quit(&mut self, cx: &mut Context<Self>) {
-        self.persist_session();
+        self.persist_session(cx);
         self.allow_quit = true;
         cx.quit();
     }
@@ -875,7 +936,7 @@ impl IsengardApp {
         if self.workspace.remove_folder(&action.0) {
             self.persist_workspace(window, cx);
             self.workspace_changed(window, cx);
-            self.persist_session();
+            self.persist_session(cx);
         }
     }
 
@@ -916,14 +977,14 @@ impl IsengardApp {
     fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.cycle(true);
         self.focus_active_editor(window, cx);
-        self.persist_session();
+        self.persist_session(cx);
         cx.notify();
     }
 
     fn on_prev_tab(&mut self, _: &PrevTab, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.cycle(false);
         self.focus_active_editor(window, cx);
-        self.persist_session();
+        self.persist_session(cx);
         cx.notify();
     }
 

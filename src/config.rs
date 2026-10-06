@@ -11,11 +11,52 @@ pub const MAX_RECENT: usize = 8;
 /// Cap for persisted workspace sessions (tabs + tree expand).
 pub const MAX_SESSIONS: usize = 16;
 
+/// Cursor + scroll for one open text tab (images omit these / use defaults).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FileViewState {
+    pub cursor_line: u32,
+    pub cursor_character: u32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+}
+
+/// One open tab in a session. Plain path strings from older configs still load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpenFileEntry {
+    Path(PathBuf),
+    View {
+        path: PathBuf,
+        #[serde(flatten)]
+        view: FileViewState,
+    },
+}
+
+impl OpenFileEntry {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Path(path) | Self::View { path, .. } => path,
+        }
+    }
+
+    pub fn view(&self) -> FileViewState {
+        match self {
+            Self::Path(_) => FileViewState::default(),
+            Self::View { view, .. } => view.clone(),
+        }
+    }
+
+    pub fn with_view(path: PathBuf, view: FileViewState) -> Self {
+        Self::View { path, view }
+    }
+}
+
 /// Open tabs and expanded folders for one workspace / folder key.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceSession {
-    pub open_files: Vec<PathBuf>,
+    pub open_files: Vec<OpenFileEntry>,
     pub active: Option<PathBuf>,
     pub expanded: Vec<PathBuf>,
 }
@@ -217,7 +258,9 @@ mod tests {
             config.put_session(
                 format!("/extra/{i:02}"),
                 WorkspaceSession {
-                    open_files: vec![PathBuf::from(format!("/extra/{i:02}/f"))],
+                    open_files: vec![OpenFileEntry::Path(PathBuf::from(format!(
+                        "/extra/{i:02}/f"
+                    )))],
                     ..Default::default()
                 },
             );
@@ -226,7 +269,15 @@ mod tests {
         config.put_session(
             "/code/app".into(),
             WorkspaceSession {
-                open_files: vec![PathBuf::from("/code/app/main.rs")],
+                open_files: vec![OpenFileEntry::with_view(
+                    PathBuf::from("/code/app/main.rs"),
+                    FileViewState {
+                        cursor_line: 3,
+                        cursor_character: 5,
+                        scroll_x: 0.0,
+                        scroll_y: -40.0,
+                    },
+                )],
                 active: Some(PathBuf::from("/code/app/main.rs")),
                 expanded: vec![PathBuf::from("/code/app/src")],
             },
@@ -235,10 +286,18 @@ mod tests {
         assert!(config.session("/code/app").is_some());
         config.save_to(&path).unwrap();
         let loaded = AppConfig::load_from(&path);
-        assert_eq!(
-            loaded.session("/code/app").map(|s| s.open_files.clone()),
-            Some(vec![PathBuf::from("/code/app/main.rs")])
-        );
+        let entry = &loaded.session("/code/app").unwrap().open_files[0];
+        assert_eq!(entry.path(), Path::new("/code/app/main.rs"));
+        assert_eq!(entry.view().cursor_line, 3);
+        assert_eq!(entry.view().scroll_y, -40.0);
+    }
+
+    #[test]
+    fn open_file_entry_accepts_legacy_path_string() {
+        let json = r#"{"open_files":["/a/b.rs"],"active":"/a/b.rs","expanded":[]}"#;
+        let session: WorkspaceSession = serde_json::from_str(json).unwrap();
+        assert_eq!(session.open_files[0].path(), Path::new("/a/b.rs"));
+        assert_eq!(session.open_files[0].view(), FileViewState::default());
     }
 
     #[test]

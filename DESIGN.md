@@ -117,10 +117,10 @@ Add a row here whenever a new shared component is created.
     show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). Used
     for the window / title-bar title only (no duplicate label above the tree).
   - Session restore: reopening a folder or workspace (welcome recent, Open, or
-    CLI) restores its last open tabs and expanded tree directories from
-    `config.json` `sessions`. Multi-root roots stay collapsed unless they were
-    expanded when saved. Unsaved edits are not restored; cold start still
-    shows the welcome screen.
+    CLI) restores its last open tabs (cursor + scroll), and expanded tree
+    directories from `config.json` `sessions`. Multi-root roots stay collapsed
+    unless they were expanded when saved. Unsaved edits are not restored;
+    cold start still shows the welcome screen.
   - Multi-root tree: each root is a top-level item; a root missing on disk is
     shown disabled as `<name> (missing)` with a folder icon.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`),
@@ -139,6 +139,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Session restore: per-tab cursor + editor scroll.
 - **2026-10-07** — Session restore: multi-root collapsed roots honored on reopen.
 - **2026-10-07** — Session restore for folders/workspaces (tabs + tree expand
   in config `sessions`).

@@ -238,9 +238,10 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
   root context menu, switch dialogs. Quitting with an untitled multi-root
   workspace does not offer to save it (only switching does). Workspace
-  `settings` are stored but not applied. Session restore reopens tabs and
-  expanded tree folders per workspace/folder (from config `sessions`); does
-  not restore unsaved buffer text or auto-open last workspace on launch.
+  `settings` are stored but not applied. Session restore reopens tabs (with
+  cursor + scroll) and expanded tree folders per workspace/folder (config
+  `sessions`); does not restore unsaved buffer text or auto-open last
+  workspace on launch.
 - Save All stops at the first failing file.
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
 - Windows icon embedding (`build.rs`) and the Linux X11 window icon are
@@ -265,6 +266,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Session restore also keeps per-tab cursor (line/col) and
+  editor scroll offset.
 - **2026-10-07** — Session restore: multi-root expand respects collapsed roots
   (`expand_paths` applies the saved set; nested expands under a collapsed
   parent are not persisted).
