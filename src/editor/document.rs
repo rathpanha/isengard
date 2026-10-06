@@ -2,6 +2,30 @@ use std::path::Path;
 
 use anyhow::Context as _;
 
+/// Image extensions GPUI can load via `img(path)` (see `ImageFormat`).
+/// SVG is UTF-8 text with Edit/Preview (not a pure image tab).
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff",
+];
+
+/// True when `path` should open as an image preview instead of a text editor.
+pub fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            IMAGE_EXTENSIONS
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
+        })
+}
+
+/// True for `.svg` — edited as text, optionally rendered like Markdown preview.
+pub fn is_svg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
+}
+
 /// Reads a file for editing. Fails for files that are not valid UTF-8 text.
 pub fn read_text(path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
@@ -22,6 +46,7 @@ pub fn file_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn read_write_roundtrip() {
@@ -37,5 +62,16 @@ mod tests {
         let path = tmp.path().join("blob.bin");
         std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
         assert!(read_text(&path).is_err());
+    }
+
+    #[test]
+    fn detects_image_extensions() {
+        assert!(is_image(Path::new("shot.PNG")));
+        assert!(is_image(Path::new("a/b/photo.jpeg")));
+        assert!(!is_image(Path::new("icon.svg")));
+        assert!(is_svg(Path::new("icon.svg")));
+        assert!(is_svg(Path::new("Logo.SVG")));
+        assert!(!is_image(Path::new("readme.md")));
+        assert!(!is_image(Path::new("blob.bin")));
     }
 }

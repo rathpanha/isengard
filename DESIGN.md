@@ -70,10 +70,15 @@ Add a row here whenever a new shared component is created.
 
 - **Dirty tabs:** unsaved buffer shows a 6px square in `theme.blue` before
   the close × (block style — no round “dot”).
-- **Markdown preview:** `.md` tabs show an Edit / Preview `ButtonGroup` under
-  the tab bar. Preview uses GPUI Kit `TextView::markdown` (not a separate
-  crate). Distinct from **preview tabs** (italic, temporary). Toggle also via
-  View > Toggle Markdown Preview or `⌘⇧V` / `Ctrl+Shift+V`.
+- **Markdown / SVG preview:** `.md` and `.svg` tabs show an Edit / Preview
+  `ButtonGroup` under the tab bar. Markdown preview uses
+  `TextView::markdown`; SVG preview renders the buffer via
+  `Image::from_bytes(Svg)` (live, including unsaved edits). Toggle also via
+  View > Toggle Preview or `⌘⇧V` / `Ctrl+Shift+V`. Distinct from **preview
+  tabs** (italic, temporary).
+- **Image preview:** raster images (png/jpg/gif/webp/…) open as a centred
+  `img(path)` pane (no text editor). Status bar shows "Image". SVG is not in
+  this list — it uses Edit/Preview above.
 - **Preview tabs:** single-click a file in the tree → italic preview tab
   (only one; the next preview replaces it unless dirty, then it pins).
   Double-click the file or the tab, or edit the buffer → permanent. File >
@@ -126,6 +131,9 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — SVG Edit/Preview (source + live `img` from buffer); raster
+  images stay image-only tabs.
+- **2026-10-07** — Image tabs: open common image types with `img(path)` preview.
 - **2026-10-07** — Notifications bottom-right.
 - **2026-10-07** — Markdown Edit/Preview toggle (`TextView::markdown`).
 - **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`).

@@ -71,8 +71,10 @@ tabs, highlighted editor, status bar):
   tab (italic; replaced by the next preview open); double-click the file or the
   tab (or edit) pins it permanent. Tab close and welcome "remove recent" use
   Kit ghost `Button`s (default hover). Markdown files get an Edit / Preview
-  toolbar (`TextView::markdown`); View > Toggle Markdown Preview or
-  `⌘⇧V` / `Ctrl+Shift+V`.
+  toolbar (`TextView::markdown` / SVG `img` from buffer); View > Toggle Preview
+  or `⌘⇧V` / `Ctrl+Shift+V`. Raster images (png/jpg/gif/webp/…) open as an
+  `img(path)` preview tab; SVG is editable text with the same Edit/Preview
+  toggle as Markdown.
 - Code editor (GPUI Kit `Editor`): tree-sitter highlighting for every language
   GPUI Kit vendors via `tree-sitter-languages` (astro, bash, c/c++/c#, cmake,
   css, diff, ejs, elixir, erb, go, graphql, html, java, javascript, json,
@@ -114,7 +116,7 @@ src/
 ├── workspace.rs         Workspace (root folders + optional file): naming,
 │                        root_for/relative_label, load/save .isengard-workspace
 ├── editor/
-│   ├── document.rs      read_text (UTF-8 only) / write_text / file_name
+│   ├── document.rs      read_text / write_text / file_name / is_image
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
 │   ├── highlights.rs    patches empty GPUI Kit highlight queries (GraphQL)
 │   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
@@ -261,6 +263,9 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — SVG Edit/Preview like Markdown (buffer → `Image::from_bytes`);
+  View menu "Toggle Preview" covers both. Raster images remain image-only.
+- **2026-10-07** — Image preview tabs (`img(path)` for png/jpg/gif/webp/…).
 - **2026-10-07** — Notifications bottom-right (`theme.notification.placement`).
 - **2026-10-07** — Markdown Edit/Preview toggle via Kit `TextView::markdown`
   (toolbar + View menu + `⌘⇧V` / `Ctrl+Shift+V`). Not the same as preview tabs.

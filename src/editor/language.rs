@@ -32,6 +32,8 @@ pub enum Language {
     Lua,
     Make,
     Markdown,
+    /// SVG markup; highlighter aliases to HTML (no dedicated SVG grammar).
+    Svg,
     Php,
     Proto,
     Python,
@@ -114,6 +116,7 @@ impl Language {
             "lua" => Language::Lua,
             "mk" | "mak" => Language::Make,
             "md" | "markdown" | "mdx" => Language::Markdown,
+            "svg" => Language::Svg,
             "php" | "php3" | "php4" | "php5" | "phtml" => Language::Php,
             "proto" => Language::Proto,
             "py" | "pyi" | "pyw" => Language::Python,
@@ -158,6 +161,8 @@ impl Language {
             Language::Lua => "lua",
             Language::Make => "make",
             Language::Markdown => "markdown",
+            // No SVG grammar; HTML highlighting is the closest available.
+            Language::Svg => "html",
             Language::Php => "php",
             Language::Proto => "proto",
             Language::Python => "python",
@@ -200,6 +205,7 @@ impl Language {
             Language::Lua => "Lua",
             Language::Make => "Make",
             Language::Markdown => "Markdown",
+            Language::Svg => "SVG",
             Language::Php => "PHP",
             Language::Proto => "Protocol Buffers",
             Language::Python => "Python",
@@ -216,6 +222,11 @@ impl Language {
             Language::Zig => "Zig",
             Language::PlainText => "Plain Text",
         }
+    }
+
+    /// Markdown and SVG can toggle a rendered preview of the buffer.
+    pub fn supports_rendered_preview(self) -> bool {
+        matches!(self, Language::Markdown | Language::Svg)
     }
 }
 
@@ -237,6 +248,7 @@ mod tests {
         assert_eq!(Language::from_path(Path::new("docker-compose.yml")), Language::Yaml);
         assert_eq!(Language::from_path(Path::new("Cargo.toml")), Language::Toml);
         assert_eq!(Language::from_path(Path::new("README.md")), Language::Markdown);
+        assert_eq!(Language::from_path(Path::new("icon.svg")), Language::Svg);
         assert_eq!(Language::from_path(Path::new("Makefile")), Language::Make);
         assert_eq!(Language::from_path(Path::new("CMakeLists.txt")), Language::CMake);
         assert_eq!(Language::from_path(Path::new("notes.xyz")), Language::PlainText);

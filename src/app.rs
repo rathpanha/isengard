@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
@@ -46,7 +47,7 @@ actions!(
         IncreaseFontSize,
         DecreaseFontSize,
         ResetFontSize,
-        ToggleMarkdownPreview,
+        TogglePreview,
         About,
         Quit,
     ]
@@ -78,7 +79,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-=", IncreaseFontSize, None),
         KeyBinding::new("secondary--", DecreaseFontSize, None),
         KeyBinding::new("secondary-0", ResetFontSize, None),
-        KeyBinding::new("secondary-shift-v", ToggleMarkdownPreview, None),
+        KeyBinding::new("secondary-shift-v", TogglePreview, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     // Fallback when the app view is not on the focus path (e.g. while a dialog is open).
@@ -87,19 +88,58 @@ pub fn init(cx: &mut App) {
 
 struct EditorTab {
     path: PathBuf,
-    language: Language,
-    state: Entity<EditorState>,
+    body: TabBody,
     is_modified: bool,
     /// VS Code–style preview: replaced by the next single-click open until pinned.
     preview: bool,
-    /// Render Markdown with `TextView` instead of the source editor.
-    markdown_preview: bool,
-    _subscriptions: Vec<Subscription>,
+}
+
+enum TabBody {
+    Text {
+        language: Language,
+        state: Entity<EditorState>,
+        /// Rendered view (Markdown → TextView, SVG → img) instead of the source editor.
+        rendered_preview: bool,
+        _subscriptions: Vec<Subscription>,
+    },
+    Image,
 }
 
 impl EditorTab {
     fn label(&self) -> String {
         document::file_name(&self.path)
+    }
+
+    fn language(&self) -> Option<Language> {
+        match &self.body {
+            TabBody::Text { language, .. } => Some(*language),
+            TabBody::Image => None,
+        }
+    }
+
+    fn is_image(&self) -> bool {
+        matches!(self.body, TabBody::Image)
+    }
+
+    fn editor_state(&self) -> Option<&Entity<EditorState>> {
+        match &self.body {
+            TabBody::Text { state, .. } => Some(state),
+            TabBody::Image => None,
+        }
+    }
+
+    fn rendered_preview(&self) -> bool {
+        match &self.body {
+            TabBody::Text {
+                rendered_preview, ..
+            } => *rendered_preview,
+            TabBody::Image => false,
+        }
+    }
+
+    fn supports_rendered_preview(&self) -> bool {
+        self.language()
+            .is_some_and(Language::supports_rendered_preview)
     }
 }
 
@@ -396,6 +436,26 @@ impl IsengardApp {
             self.retire_preview_tab(window, cx);
         }
 
+        if document::is_image(path) {
+            if !path.is_file() {
+                return notify_error(
+                    format!("Image not found: {}", path.display()),
+                    window,
+                    cx,
+                );
+            }
+            self.tabs.push(EditorTab {
+                path: path.to_path_buf(),
+                body: TabBody::Image,
+                is_modified: false,
+                preview: !permanent,
+            });
+            self.file_tree.select_path(path, cx);
+            self.focus_handle.focus(window, cx);
+            cx.notify();
+            return;
+        }
+
         let text = match document::read_text(path) {
             Ok(text) => text,
             Err(err) => return notify_error(format!("Could not open file: {err:#}"), window, cx),
@@ -418,7 +478,10 @@ impl IsengardApp {
             cx.subscribe(&state, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let id = state.entity_id();
-                    if let Some(tab) = this.tabs.find_mut(|t| t.state.entity_id() == id) {
+                    if let Some(tab) = this.tabs.find_mut(|t| {
+                        t.editor_state()
+                            .is_some_and(|s| s.entity_id() == id)
+                    }) {
                         tab.is_modified = true;
                         // Editing pins a preview tab (VS Code behaviour).
                         tab.preview = false;
@@ -432,12 +495,14 @@ impl IsengardApp {
 
         self.tabs.push(EditorTab {
             path: path.to_path_buf(),
-            language,
-            state,
+            body: TabBody::Text {
+                language,
+                state,
+                rendered_preview: false,
+                _subscriptions: subscriptions,
+            },
             is_modified: false,
             preview: !permanent,
-            markdown_preview: false,
-            _subscriptions: subscriptions,
         });
         self.file_tree.select_path(path, cx);
         self.focus_active_editor(window, cx);
@@ -477,8 +542,8 @@ impl IsengardApp {
     }
 
     fn focus_active_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.tabs.active() {
-            Some(tab) => tab.state.update(cx, |state, cx| state.focus(window, cx)),
+        match self.tabs.active().and_then(|t| t.editor_state()) {
+            Some(state) => state.update(cx, |state, cx| state.focus(window, cx)),
             None => self.focus_handle.focus(window, cx),
         }
     }
@@ -487,7 +552,10 @@ impl IsengardApp {
         let Some(tab) = self.tabs.find_mut(|t| t.path == path) else {
             return Ok(());
         };
-        let text = tab.state.read(cx).value();
+        let Some(state) = tab.editor_state() else {
+            return Ok(());
+        };
+        let text = state.read(cx).value();
         document::write_text(&tab.path, &text)?;
         tab.is_modified = false;
         cx.notify();
@@ -823,23 +891,23 @@ impl IsengardApp {
         self.apply_config(window, cx);
     }
 
-    fn on_toggle_markdown_preview(
+    fn on_toggle_preview(
         &mut self,
-        _: &ToggleMarkdownPreview,
+        _: &TogglePreview,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(tab) = self.tabs.active() else {
             return;
         };
-        if tab.language != Language::Markdown {
+        if !tab.supports_rendered_preview() {
             return;
         }
-        let next = !tab.markdown_preview;
-        self.set_markdown_preview(next, window, cx);
+        let next = !tab.rendered_preview();
+        self.set_rendered_preview(next, window, cx);
     }
 
-    fn set_markdown_preview(
+    fn set_rendered_preview(
         &mut self,
         preview: bool,
         window: &mut Window,
@@ -851,10 +919,18 @@ impl IsengardApp {
         let Some(tab) = self.tabs.get_mut(ix) else {
             return;
         };
-        if tab.language != Language::Markdown || tab.markdown_preview == preview {
+        let TabBody::Text {
+            language,
+            rendered_preview,
+            ..
+        } = &mut tab.body
+        else {
+            return;
+        };
+        if !language.supports_rendered_preview() || *rendered_preview == preview {
             return;
         }
-        tab.markdown_preview = preview;
+        *rendered_preview = preview;
         if preview {
             self.focus_handle.focus(window, cx);
         } else {
@@ -977,10 +1053,10 @@ impl IsengardApp {
                     )
             }));
 
-        let is_markdown = active.language == Language::Markdown;
-        let markdown_preview = is_markdown && active.markdown_preview;
-        let md_toolbar = is_markdown.then(|| {
-            let preview = active.markdown_preview;
+        let show_preview_toolbar = active.supports_rendered_preview();
+        let rendered_preview = active.rendered_preview();
+        let preview_toolbar = show_preview_toolbar.then(|| {
+            let preview = rendered_preview;
             h_flex()
                 .w_full()
                 .items_center()
@@ -991,43 +1067,95 @@ impl IsengardApp {
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .child(
-                    ButtonGroup::new("markdown-view-mode")
+                    ButtonGroup::new("rendered-view-mode")
                         .outline()
                         .xsmall()
                         .child(
-                            Button::new("markdown-edit")
+                            Button::new("rendered-edit")
                                 .label("Edit")
                                 .cursor_pointer()
                                 .selected(!preview),
                         )
                         .child(
-                            Button::new("markdown-preview")
+                            Button::new("rendered-preview")
                                 .label("Preview")
                                 .cursor_pointer()
                                 .selected(preview),
                         )
                         .on_click(cx.listener(move |this, selected: &Vec<usize>, window, cx| {
                             let want_preview = selected.contains(&1);
-                            this.set_markdown_preview(want_preview, window, cx);
+                            this.set_rendered_preview(want_preview, window, cx);
                         })),
                 )
         });
 
-        let content = if markdown_preview {
-            let text = active.state.read(cx).value();
-            let id = SharedString::from(format!("md-preview-{}", active.path.display()));
+        let content = if active.is_image() {
+            let path = active.path.clone();
+            let id = SharedString::from(format!("image-preview-{}", path.display()));
             div()
                 .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
                 .p_4()
-                .overflow_hidden()
+                .bg(cx.theme().sidebar)
                 .child(
-                    TextView::markdown(id, text)
-                        .scrollable(true)
-                        .selectable(true),
+                    img(path)
+                        .id(id)
+                        .object_fit(ObjectFit::Contain)
+                        .max_w_full()
+                        .max_h_full(),
                 )
                 .into_any_element()
+        } else if rendered_preview {
+            let language = active.language().expect("text tab");
+            let text = active
+                .editor_state()
+                .expect("text tab")
+                .read(cx)
+                .value();
+            match language {
+                Language::Svg => {
+                    let id = SharedString::from(format!("svg-preview-{}", active.path.display()));
+                    let image = Arc::new(Image::from_bytes(
+                        ImageFormat::Svg,
+                        text.as_bytes().to_vec(),
+                    ));
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .p_4()
+                        .bg(cx.theme().sidebar)
+                        .child(
+                            img(image)
+                                .id(id)
+                                .object_fit(ObjectFit::Contain)
+                                .max_w_full()
+                                .max_h_full(),
+                        )
+                        .into_any_element()
+                }
+                _ => {
+                    // Markdown (and any future TextView-based preview).
+                    let id =
+                        SharedString::from(format!("md-preview-{}", active.path.display()));
+                    div()
+                        .size_full()
+                        .p_4()
+                        .overflow_hidden()
+                        .child(
+                            TextView::markdown(id, text)
+                                .scrollable(true)
+                                .selectable(true),
+                        )
+                        .into_any_element()
+                }
+            }
         } else {
-            Editor::new(&active.state)
+            let state = active.editor_state().expect("text tab");
+            Editor::new(state)
                 .bordered(false)
                 .p_0()
                 .h_full()
@@ -1039,7 +1167,7 @@ impl IsengardApp {
         v_flex()
             .size_full()
             .child(tab_bar)
-            .children(md_toolbar)
+            .children(preview_toolbar)
             .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }
@@ -1048,19 +1176,23 @@ impl IsengardApp {
     fn render_status_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tab = self.tabs.active()?;
         let path = self.workspace.relative_label(&tab.path);
-        let cursor = tab.state.read(cx).cursor_position();
+        let right = if let Some(state) = tab.editor_state() {
+            let cursor = state.read(cx).cursor_position();
+            h_flex()
+                .gap_4()
+                .child(format!(
+                    "Ln {}, Col {}",
+                    cursor.line + 1,
+                    cursor.character + 1
+                ))
+                .child(tab.language().unwrap().display_name())
+                .into_any_element()
+        } else {
+            div().child("Image").into_any_element()
+        };
         let bar = StatusBar::new()
             .left(div().child(path))
-            .right(
-                h_flex()
-                    .gap_4()
-                    .child(format!(
-                        "Ln {}, Col {}",
-                        cursor.line + 1,
-                        cursor.character + 1
-                    ))
-                    .child(tab.language.display_name()),
-            )
+            .right(right)
             .text_xs();
         Some(bar.into_any_element())
     }
@@ -1116,7 +1248,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_increase_font))
             .on_action(cx.listener(Self::on_decrease_font))
             .on_action(cx.listener(Self::on_reset_font))
-            .on_action(cx.listener(Self::on_toggle_markdown_preview))
+            .on_action(cx.listener(Self::on_toggle_preview))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_quit))
             .child(self.render_title_bar(cx))

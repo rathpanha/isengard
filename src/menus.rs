@@ -4,7 +4,7 @@ use gpui_kit::{App, Entity, Menu, MenuItem};
 use crate::app::{
     About, AddFolderToWorkspace, CloseTab, CloseWorkspace, DecreaseFontSize, IncreaseFontSize,
     OpenFile, OpenFolder, OpenWorkspace, Quit, ResetFontSize, Save, SaveAll, SaveWorkspaceAs,
-    ToggleMarkdownPreview,
+    TogglePreview,
 };
 
 /// Installs the native menu bar (macOS) and returns the in-window menu bar
@@ -66,7 +66,7 @@ fn build_menus() -> Vec<Menu> {
         Menu {
             name: "View".into(),
             items: vec![
-                MenuItem::action("Toggle Markdown Preview", ToggleMarkdownPreview),
+                MenuItem::action("Toggle Preview", TogglePreview),
                 MenuItem::separator(),
                 MenuItem::action("Increase Font Size", IncreaseFontSize),
                 MenuItem::action("Decrease Font Size", DecreaseFontSize),
