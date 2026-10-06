@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, h_flex,
+    ActiveTheme as _, h_flex,
     list::ListItem,
     tree::{TreeEvent, TreeItem, TreeState, tree},
     v_flex,
@@ -10,7 +10,7 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::app::RemoveWorkspaceFolder;
-use crate::file_tree::FsNode;
+use crate::file_tree::{FsNode, tree_icon};
 
 /// Separates a directory path from the suffix of its placeholder child's id.
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
@@ -136,20 +136,19 @@ impl FileTreePanel {
                 tree(&self.state, move |ix, entry, _selected, _window, cx| {
                     let item = entry.item();
                     let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
-                    let icon = if is_placeholder {
-                        None
-                    } else if entry.depth() == 0 && entry.is_disabled() {
-                        // A workspace root that no longer exists on disk.
-                        Some(IconName::Folder)
-                    } else if !entry.is_folder() {
-                        Some(IconName::File)
-                    } else if entry.is_expanded() {
-                        Some(IconName::FolderOpen)
-                    } else {
-                        Some(IconName::Folder)
-                    };
-                    let on_open_file = on_open_file.clone();
                     let path = PathBuf::from(item.id.as_ref());
+                    let is_missing_root = entry.depth() == 0 && entry.is_disabled();
+                    let is_dir = entry.is_folder() || is_missing_root;
+                    let icon = (!is_placeholder).then(|| {
+                        tree_icon(
+                            &path,
+                            is_dir,
+                            entry.is_expanded(),
+                            multi_root && entry.depth() == 0,
+                            cx.theme().is_dark(),
+                        )
+                    });
+                    let on_open_file = on_open_file.clone();
                     let is_file = !entry.is_folder() && !is_placeholder;
 
                     ListItem::new(ix)

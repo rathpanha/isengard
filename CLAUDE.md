@@ -65,6 +65,8 @@ tabs, highlighted editor, status bar):
   folders are added/removed.
 - File tree (GPUI Kit `Tree`) only while a workspace is open; lazy directory
   loading; dirs first, case-insensitive sort; hides `.git` and `.DS_Store`.
+  Icons are the full Material Icon Theme set (associations from
+  `material-icons.json`); other UI chrome still uses Lucide via GPUI Kit.
 - Tabs (`TabBar`/`Tab` with a close button), one `EditorState` per tab so each
   keeps its own undo history and cursor. The close button and the welcome screen's
   "remove recent" × are `destructive_icon_button`s: muted at rest, red icon +
@@ -106,7 +108,9 @@ src/
 │   ├── document.rs      read_text (UTF-8 only) / write_text / file_name
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
 │   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
-├── file_tree/node.rs    FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
+├── file_tree/
+│   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
+│   └── icons.rs         Material Icon Theme (full set) → tree_icon(path, …)
 └── ui/
     ├── components.rs    shared compositions encoding DESIGN.md rules
     │                    (destructive_icon_button)
@@ -141,7 +145,9 @@ src/
   a disabled placeholder child (`"Loading…"` / `"(empty)"`) because GPUI Kit's
   `TreeItem::is_folder()` is just "has children". On `TreeEvent::Expanded` the
   node loads its children and the `TreeItem`s are rebuilt via `set_items`
-  (selection is restored by id). Tree item ids are absolute paths.
+  (selection is restored by id). Tree item ids are absolute paths. Row icons
+  come from `file_tree::tree_icon` (full Material Icon Theme via `img()` +
+  `material-icons.json`), not Lucide.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it.
 - **Hover-colored icons**: `Button`'s hover style only changes its background,
@@ -233,6 +239,13 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — File tree: full Material Icon Theme pack (1251 SVGs +
+  `material-icons.json` associations) instead of a curated subset.
+- **2026-10-06** — File tree Material icons rendered with `img()` so colours
+  survive (GPUI `Icon`/`svg()` alpha-masks and tints).
+- **2026-10-06** — File tree icons: curated Material Icon Theme subset
+  (`assets/icons/material/`, MIT) via `file_tree::tree_icon`; Lucide kept
+  for the rest of the UI.
 - **2026-10-06** — View menu: trailing separator so macOS "Enter Full Screen"
   sits in its own section below font-size items.
 - **2026-10-06** — Removed Next/Previous Tab from the View menu (the

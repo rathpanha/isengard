@@ -20,7 +20,8 @@ fix the code (or ask the user before changing the rule).
 - **Color:** only semantic theme colors from `cx.theme()` — `foreground`,
   `muted_foreground`, `background`, `border`, `danger`, `sidebar`, … No raw
   hex/rgb in UI code. Opacity variations of a theme color are fine
-  (e.g. `danger.opacity(0.15)`).
+  (e.g. `danger.opacity(0.15)`). Exception: the file tree uses Material Icon
+  Theme SVGs with their upstream fill colours (see §5).
 - **Light and dark:** every screen must work in both themes; because colors are
   semantic this is automatic — check both when adding something visual.
 
@@ -66,6 +67,11 @@ Add a row here whenever a new shared component is created.
 
 ## 5. Patterns
 
+- **File tree icons:** full Material Icon Theme under
+  `assets/icons/material/` (MIT; see its `LICENSE`) with associations from
+  `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
+  `img()` so upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and
+  re-tints. Do not replace Lucide for other UI chrome.
 - **Keyboard shortcut hints:** one `Kbd` key cap per key with `gap_1`
   (`⌘` `O`, `Ctrl` `O`) — see `welcome::shortcut_keys`. Never a single cap with
   the keys run together.
@@ -99,6 +105,12 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-06** — File tree uses the full Material Icon Theme pack +
+  association JSON (not a curated subset).
+- **2026-10-06** — File tree Material icons via `img()` (keep colours); GPUI
+  `Icon`/`svg()` would alpha-mask them.
+- **2026-10-06** — File tree uses a Material Icon Theme subset (type-specific
+  file/folder icons); other UI stays on Lucide.
 - **2026-10-06** — Pointer cursor on everything clickable.
 - **2026-10-06** — Workspaces before folders: Open Workspace first in Start,
   Recent workspaces above Recent folders.
