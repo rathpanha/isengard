@@ -12,9 +12,8 @@ fully before making changes.
 > Keep it accurate; a stale hand-off doc is worse than none.
 
 > **Design rule (user decision):** all UI must follow [DESIGN.md](DESIGN.md)
-> (block style, font, colors, spacing, destructive-action hover, shared
-> components). Read it before any UI change and add new approved patterns to it
-> in the same commit.
+> (block style, font, colors, spacing, shared components). Read it before any
+> UI change and add new approved patterns to it in the same commit.
 
 > **UI rule (user decision):** the app uses GPUI Kit components only — do not
 > hand-build widgets that the library already provides. Look for a component
@@ -70,9 +69,8 @@ tabs, highlighted editor, status bar):
 - Tabs (`TabBar`/`Tab` with a close button), one `EditorState` per tab so each
   keeps its own undo history and cursor. Tree single-click opens a **preview**
   tab (italic; replaced by the next preview open); double-click the file or the
-  tab (or edit) pins it permanent. The close button and the welcome screen's
-  "remove recent" × are `destructive_icon_button`s: muted at rest, red icon +
-  faint red tint on hover (DESIGN.md §3).
+  tab (or edit) pins it permanent. Tab close and welcome "remove recent" use
+  Kit ghost `Button`s (default hover).
 - Code editor (GPUI Kit `Editor`): tree-sitter highlighting for every language
   GPUI Kit vendors via `tree-sitter-languages` (astro, bash, c/c++/c#, cmake,
   css, diff, ejs, elixir, erb, go, graphql, html, java, javascript, json,
@@ -125,7 +123,7 @@ src/
 │   └── icons.rs         Material Icon Theme (full set) → tree_icon(path, …)
 └── ui/
     ├── components.rs    shared compositions encoding DESIGN.md rules
-    │                    (destructive_icon_button)
+    │                    (center_dialog)
     ├── file_tree.rs     FileTreePanel: FsNode -> TreeItem sync, TreeEvent handling, render
     └── welcome.rs       welcome screen (start actions + recent folders)
 ```
@@ -162,13 +160,9 @@ src/
   `material-icons.json`), not Lucide.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
-  `ui::components::center_dialog` (Kit defaults to top ~10%; we centre).
-- **Hover-colored icons**: `Button`'s hover style only changes its background,
-  and `Icon` resolves its color at render time, so `group_hover`/`.hover` can't
-  recolor an icon. `ui::components::destructive_icon_button` keeps the hovered
-  button's id in `IsengardApp::hovered_destructive` (set from a wrapper's
-  `on_hover`). Callers pass `hovered` in — don't `cx.entity().read(cx)` the view
-  while it is rendering (it is leased and would panic).
+  `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close
+  × buttons (tabs, recent rows, dialogs, toasts) use Kit's default ghost style
+  — no custom red hover.
 - **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
   `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so
@@ -264,6 +258,9 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`; was yellow).
+- **2026-10-07** — Close/remove × use Kit ghost default (removed red-hover
+  `destructive_icon_button` / dialog override).
 - **2026-10-07** — Modal dialogs centred in the window (`center_dialog`; Kit
   default was top ~10%). Context menus unchanged.
 - **2026-10-07** — Unsaved tabs: yellow square indicator (`theme.yellow`).

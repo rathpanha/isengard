@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, TitleBar, WindowExt as _,
+    ActiveTheme as _, IconName, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
@@ -23,7 +23,7 @@ use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::theme;
-use crate::ui::components::{center_dialog, destructive_icon_button};
+use crate::ui::components::center_dialog;
 use crate::ui::file_tree::FileTreePanel;
 use crate::ui::welcome;
 use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
@@ -106,8 +106,6 @@ pub struct IsengardApp {
     file_tree: FileTreePanel,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
-    /// Id of the destructive icon button under the pointer (its icon turns red).
-    hovered_destructive: Option<SharedString>,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
     _subscriptions: Vec<Subscription>,
@@ -143,7 +141,6 @@ impl IsengardApp {
             file_tree,
             tabs: TabList::default(),
             app_menu_bar,
-            hovered_destructive: None,
             allow_quit: false,
             _subscriptions: vec![tree_subscription],
         };
@@ -286,7 +283,6 @@ impl IsengardApp {
 
     fn apply_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs = TabList::default();
-        self.hovered_destructive = None;
         self.workspace = match switch {
             Switch::Folder(folder) => {
                 self.config.add_recent_folder(&folder);
@@ -353,18 +349,6 @@ impl IsengardApp {
         .detach();
     }
 
-    pub(crate) fn is_destructive_hovered(&self, id: &SharedString) -> bool {
-        self.hovered_destructive.as_ref() == Some(id)
-    }
-
-    pub(crate) fn set_destructive_hovered(&mut self, id: SharedString, hovered: bool) {
-        if hovered {
-            self.hovered_destructive = Some(id);
-        } else if self.hovered_destructive.as_ref() == Some(&id) {
-            self.hovered_destructive = None;
-        }
-    }
-
     pub(crate) fn recent_folders(&self) -> &[PathBuf] {
         &self.config.recent_folders
     }
@@ -374,16 +358,12 @@ impl IsengardApp {
     }
 
     pub fn remove_recent_workspace(&mut self, file: &Path, cx: &mut Context<Self>) {
-        // The removed row's button never reports hover-out.
-        self.hovered_destructive = None;
         self.config.remove_recent_workspace(file);
         self.config.save();
         cx.notify();
     }
 
     pub fn remove_recent_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
-        // The removed row's button never reports hover-out.
-        self.hovered_destructive = None;
         self.config.remove_recent_folder(folder);
         self.config.save();
         cx.notify();
@@ -540,8 +520,6 @@ impl IsengardApp {
     fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.tabs.position(|t| t.path == path) {
             self.tabs.remove(ix);
-            // The removed button never reports hover-out.
-            self.hovered_destructive = None;
             self.focus_active_editor(window, cx);
             cx.notify();
         }
@@ -909,10 +887,9 @@ impl IsengardApp {
             .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
                 let path = tab.path.clone();
                 let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
-                let hovered = self.is_destructive_hovered(&id);
                 let preview = tab.preview;
                 let modified = tab.is_modified;
-                let dirty_color = cx.theme().yellow;
+                let dirty_color = cx.theme().blue;
                 Tab::new()
                     .label(tab.label())
                     .cursor_pointer()
@@ -939,14 +916,18 @@ impl IsengardApp {
                                         .bg(dirty_color),
                                 )
                             })
-                            .child(destructive_icon_button(
-                                id,
-                                IconName::Close,
-                                "Close",
-                                hovered,
-                                move |this, window, cx| this.request_close(&path, window, cx),
-                                cx,
-                            )),
+                            .child(
+                                Button::new(id)
+                                    .ghost()
+                                    .cursor_pointer()
+                                    .xsmall()
+                                    .icon(IconName::Close)
+                                    .tooltip("Close")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.request_close(&path, window, cx);
+                                    })),
+                            ),
                     )
             }));
 

@@ -41,12 +41,8 @@ fix the code (or ask the user before changing the rule).
 ## 3. Interaction states
 
 - **Destructive actions** (close, remove, delete, discard):
-  - Icon buttons are **muted** at rest (`muted_foreground` icon, no background).
-  - On **hover** the icon turns `danger` red and the button gets a faint red
-    tint (`danger.opacity(0.15)`); pressed: `danger.opacity(0.25)`.
-  - Never show red at rest — red means "you're about to destroy something".
-  - Always use `components::destructive_icon_button`; never restyle a `Button`
-    by hand for this.
+  - Icon-only close/remove buttons use Kit's default ghost `Button` (no custom
+    red hover). Keep `.cursor_pointer()`, `.xsmall()`, and a tooltip.
   - Destructive commands with data loss ask first, using
     `IsengardApp::open_choice_dialog`: buttons in the order Cancel · secondary
     ("Don't Save") · primary (the safe default, e.g. "Save", "Save All").
@@ -66,14 +62,13 @@ fix the code (or ask the user before changing the rule).
 
 | Component | Use for |
 | --- | --- |
-| `destructive_icon_button(id, icon, tooltip, hovered, on_click, cx)` | Close/remove/delete icon buttons. Pass `hovered` from `IsengardApp::is_destructive_hovered(&id)`. Position it by styling the returned wrapper (e.g. `.mr_2()`). |
 | `center_dialog(dialog, window)` | Wrap every `open_dialog` builder so the modal sits in the middle of the window (GPUI Kit defaults to top ~10%). Not for context menus. |
 
 Add a row here whenever a new shared component is created.
 
 ## 5. Patterns
 
-- **Dirty tabs:** unsaved buffer shows a 6px square in `theme.yellow` before
+- **Dirty tabs:** unsaved buffer shows a 6px square in `theme.blue` before
   the close × (block style — no round “dot”).
 - **Preview tabs:** single-click a file in the tree → italic preview tab
   (only one; the next preview replaces it unless dirty, then it pins).
@@ -118,13 +113,15 @@ Add a row here whenever a new shared component is created.
 - **Recent lists:** one titled section per kind ("Recent workspaces", then
   "Recent folders"); a section is hidden when empty, and when all are empty
   a single "Recent" section says so. Rows: link-style name, muted parent path,
-  `destructive_icon_button` to remove.
+  ghost close × to remove.
 - **Logo:** use `branding::LOGO_MARK` (block "I" + amber cursor) on the dark
   UI; never recolor or round it. Brand colors (logo only, not UI): tile
   `#0b0b0c`, mark `#ececec`, cursor `#f5a524`.
 
 ## Changelog
 
+- **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`).
+- **2026-10-07** — Close/remove × buttons use Kit ghost default (no red hover).
 - **2026-10-07** — Unsaved tab indicator: yellow square (`theme.yellow`).
 - **2026-10-07** — Preview tabs: italic until double-click / edit.
 - **2026-10-07** — Gitignored tree rows: 60% opacity.

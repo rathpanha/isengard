@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName,
+    ActiveTheme as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     kbd::Kbd,
@@ -10,7 +10,6 @@ use gpui_kit::component::{
 use gpui_kit::*;
 
 use crate::app::{IsengardApp, OpenFile, OpenFolder, OpenWorkspace};
-use crate::ui::components::destructive_icon_button;
 
 #[derive(Clone, Copy)]
 enum RecentKind {
@@ -37,7 +36,7 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
         }
         let rows: Vec<AnyElement> = paths
             .iter()
-            .map(|path| render_recent(app, kind, path, muted, cx))
+            .map(|path| render_recent(kind, path, muted, cx))
             .collect();
         recents.push(
             v_flex()
@@ -165,7 +164,6 @@ fn section_title(title: &'static str) -> impl IntoElement {
 }
 
 fn render_recent(
-    app: &IsengardApp,
     kind: RecentKind,
     path: &Path,
     muted: Hsla,
@@ -208,18 +206,19 @@ fn render_recent(
         .child({
             let path = path.to_path_buf();
             let button_id = SharedString::from(format!("{prefix}-remove-{id}"));
-            let hovered = app.is_destructive_hovered(&button_id);
-            destructive_icon_button(
-                button_id,
-                IconName::Close,
-                "Remove from recent",
-                hovered,
-                move |this, _, cx| match kind {
-                    RecentKind::Folder => this.remove_recent_folder(&path, cx),
-                    RecentKind::Workspace => this.remove_recent_workspace(&path, cx),
-                },
-                cx,
-            )
+            Button::new(button_id)
+                .ghost()
+                .cursor_pointer()
+                .xsmall()
+                .icon(IconName::Close)
+                .tooltip("Remove from recent")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    match kind {
+                        RecentKind::Folder => this.remove_recent_folder(&path, cx),
+                        RecentKind::Workspace => this.remove_recent_workspace(&path, cx),
+                    }
+                }))
         })
         .into_any_element()
 }
