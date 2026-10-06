@@ -37,7 +37,7 @@ name = "Isengard"
 identifier = "dev.isengard.editor"
 icon = ["assets/logo/Isengard.icns", "assets/logo/icon-1024.png"]
 category = "public.app-category.developer-tools"
-short_description = "A code editor built with GPUI Kit"
+short_description = "The already configured editor"
 
 [profile.dev.package."*"]
 opt-level = 2

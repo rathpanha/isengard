@@ -266,6 +266,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Slogan "The already configured editor" on welcome, About,
+  and cargo-bundle short_description.
 - **2026-10-07** — Session restore also keeps per-tab cursor (line/col) and
   editor scroll offset.
 - **2026-10-07** — Session restore: multi-root expand respects collapsed roots

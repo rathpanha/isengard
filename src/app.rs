@@ -1073,7 +1073,8 @@ impl IsengardApp {
                 dialog
                     .title("About Isengard")
                     .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
-                    .child("A code editor built with GPUI Kit."),
+                    .child("The already configured editor.")
+                    .child("Dark mode, one font, no preference archaeology."),
                 window,
             )
         });

@@ -136,9 +136,14 @@ Add a row here whenever a new shared component is created.
 - **Logo:** use `branding::LOGO_MARK` (block "I" + amber cursor) on the dark
   UI; never recolor or round it. Brand colors (logo only, not UI): tile
   `#0b0b0c`, mark `#ececec`, cursor `#f5a524`.
+- **Slogan:** welcome subtitle and About / bundle blurb —
+  "The already configured editor" (no settings-panel cosplay). About may add
+  one short supporting line; don't invent a second tagline.
 
 ## Changelog
 
+- **2026-10-07** — Slogan: "The already configured editor" (welcome, About,
+  bundle short_description).
 - **2026-10-07** — Session restore: per-tab cursor + editor scroll.
 - **2026-10-07** — Session restore: multi-root collapsed roots honored on reopen.
 - **2026-10-07** — Session restore for folders/workspaces (tabs + tree expand

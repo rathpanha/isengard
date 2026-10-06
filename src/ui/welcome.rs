@@ -84,7 +84,7 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child("Isengard"),
                         )
-                        .child(div().text_color(muted).child("Code editor")),
+                        .child(div().text_color(muted).child("The already configured editor")),
                 )
                 .child(
                     v_flex()
