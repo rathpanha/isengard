@@ -17,7 +17,6 @@ use crate::file_tree::{FsNode, GitIgnoreIndex, compute_guide_masks, tree_icon};
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
 /// Horizontal space per tree depth level (indent guide column width).
 const INDENT_COL: f32 = 16.;
-const INDENT_BASE: f32 = 8.;
 
 /// The workspace's lazily-loaded folder tree, rendered with GPUI Kit's `Tree`.
 ///
@@ -201,9 +200,11 @@ impl FileTreePanel {
                                 .min_w_0()
                                 .items_center()
                                 .overflow_hidden()
-                                // Indent columns must not shrink — otherwise a narrow
-                                // panel compresses deeper rows and the tree looks skewed.
-                                .child(div().w(px(INDENT_BASE)).flex_shrink_0())
+                                // Depth 0 shares the tree's px_3 with the workspace
+                                // title. Nested rows get one INDENT_COL per depth
+                                // (same step as a single-root folder). Columns must
+                                // not shrink — otherwise a narrow panel compresses
+                                // deeper rows and the tree looks skewed.
                                 .children(guides.into_iter().map(|continues| {
                                     div()
                                         .w(px(INDENT_COL))
@@ -260,7 +261,8 @@ impl FileTreePanel {
                 .min_w_0()
                 .overflow_hidden()
                 .text_sm()
-                .px_1(),
+                // Same as the workspace title above so roots line up with it.
+                .px_3(),
             )
             .into_any_element()
     }

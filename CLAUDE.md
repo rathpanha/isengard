@@ -263,6 +263,9 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — File tree: depth-0 rows align with the workspace title
+  (`px_3`); each nest is one `INDENT_COL` only (no extra `INDENT_BASE`).
+  Multi-root still suppresses only the cross-root rail.
 - **2026-10-07** — SVG Edit/Preview like Markdown (buffer → `Image::from_bytes`);
   View menu "Toggle Preview" covers both. Raster images remain image-only.
 - **2026-10-07** — Image preview tabs (`img(path)` for png/jpg/gif/webp/…).

@@ -90,8 +90,11 @@ Add a row here whenever a new shared component is created.
   re-tints. Do not replace Lucide for other UI chrome.
 - **File tree indent guides:** vertical 1px lines in each depth column
   (`sidebar_border`) when a sibling exists below that level (VS Code–style).
-  Indent columns are fixed-width (`flex_shrink_0`); a narrow panel truncates
-  labels instead of compressing the tree.
+  Multi-root never draws the depth-0 rail (no line linking workspace roots);
+  guides start under each root. Depth-0 rows share the tree/`px_3` inset with
+  the uppercased workspace title; each deeper level adds one fixed-width
+  column (`INDENT_COL`, `flex_shrink_0`) — same step as a single-root folder.
+  A narrow panel truncates labels instead of compressing the tree.
 - **Gitignored entries:** still listed; icon + label at 60% opacity (not
   hidden). Matched via `ignore` + each root's `.gitignore` tree.
 - **Title bar:** macOS shows the centred window title; Windows/Linux show the
@@ -131,6 +134,9 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — File tree: depth-0 rows share `px_3` with the workspace
+  title; one `INDENT_COL` per depth (dropped extra `INDENT_BASE` so the first
+  nest matches a normal folder). Multi-root still suppresses the cross-root rail.
 - **2026-10-07** — SVG Edit/Preview (source + live `img` from buffer); raster
   images stay image-only tabs.
 - **2026-10-07** — Image tabs: open common image types with `img(path)` preview.
