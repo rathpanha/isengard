@@ -6,9 +6,10 @@ to GPUI Kit. Phase 5 (Claude AI panel) has not started.
 Working features (verified by screenshots on macOS: welcome screen, file tree,
 tabs, highlighted editor, status bar):
 
-- **Welcome:** Open Workspace (first), Open Folder, Open File; recent
-  workspaces then recent folders (max 8 each, × to remove; empty lists hidden).
-  Shortcut hints and ordering follow [design.md](design.md).
+- **Welcome:** Start is two columns (workspace | folder/file) with a vertical
+  rule; New File uses `⌘N` / `Ctrl+N`. Recent workspaces then recent folders
+  (max 8 each, × to remove; empty lists hidden). Details in
+  [design.md](design.md).
 - **Workspaces:** multi-root folders in one window; `.isengard-workspace` JSON
   (relative folder paths); Add Folder / Open / Save As / Close; root context
   menu remove; switching closes tabs (unsaved + untitled-workspace prompts).
@@ -42,7 +43,7 @@ shortcuts. Check these first if something is off.
   feature and `#[gpui_kit::test]` — worth adding for tab close, dialogs, tree.
 - Modified flag is set on any edit and not cleared by undoing back to the saved
   text.
-- No New File / Save As / rename / delete; no file watching; no "Open Recent"
+- No Save As / rename / delete; no file watching; no "Open Recent"
   in the native menu (welcome screen only). Gitignore rules refresh on folder
   open / expand, not on every save of `.gitignore`. `.env` / `.gitignore` /
   lockfiles / Dockerfile use Bash/JSON/TOML aliases (no dedicated Dockerfile

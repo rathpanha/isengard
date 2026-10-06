@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-07** — Welcome Start: two columns (workspace | folder/file) with
+  a vertical separator; unique icons per action.
+- **2026-10-07** — Welcome Start: side-by-side rows + unique icons
+  (LayoutDashboard / FolderClosed / FolderOpen / File / FileText).
+- **2026-10-07** — Welcome + File menu Start grouping: Open/New Workspace,
+  separator, then Open Folder / Open File / New File (`⌘N` / `Ctrl+N`).
+- **2026-10-07** — Welcome + File menu: New Workspace… (pick folders, save
+  `.isengard-workspace`) and New File… (`⌘N` / `Ctrl+N`; creates empty file).
 - **2026-10-07** — Added [credits.md](credits.md): recognition for GPUI Kit,
   Zed/GPUI, Lucide, Tree-sitter, Ayu Darker / Ayu, fonts, Material Icon Theme,
   and direct crates.

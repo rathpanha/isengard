@@ -5,11 +5,12 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     kbd::Kbd,
+    separator::Separator,
     v_flex,
 };
 use gpui_kit::*;
 
-use crate::app::{IsengardApp, OpenFile, OpenFolder, OpenWorkspace};
+use crate::app::{IsengardApp, NewFile, NewWorkspace, OpenFile, OpenFolder, OpenWorkspace};
 
 #[derive(Clone, Copy)]
 enum RecentKind {
@@ -67,7 +68,7 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
         .justify_center()
         .child(
             v_flex()
-                .w(rems(30.))
+                .w(rems(40.))
                 .mt(relative(0.15))
                 .gap_8()
                 .child(
@@ -88,40 +89,100 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
                 )
                 .child(
                     v_flex()
-                        .gap_2()
+                        .w_full()
+                        .gap_3()
                         .items_start()
                         .child(section_title("Start"))
-                        .child(
-                            Button::new("welcome-open-workspace")
-                                .link()
-                                .icon(IconName::Folder)
-                                .label("Open Workspace…")
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(OpenWorkspace), cx)
-                                }),
-                        )
+                        // Workspace column | folder & file column.
                         .child(
                             h_flex()
-                                .gap_3()
+                                .w_full()
+                                .items_stretch()
                                 .child(
-                                    Button::new("welcome-open-folder")
-                                        .link()
-                                        .icon(IconName::FolderOpen)
-                                        .label("Open Folder…")
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(Box::new(OpenFolder), cx)
-                                        }),
+                                    v_flex()
+                                        .flex_1()
+                                        .gap_2()
+                                        .items_start()
+                                        .pr_6()
+                                        .child(
+                                            Button::new("welcome-open-workspace")
+                                                .link()
+                                                .icon(IconName::LayoutDashboard)
+                                                .label("Open Workspace…")
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(OpenWorkspace),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("welcome-new-workspace")
+                                                .link()
+                                                .icon(IconName::FolderClosed)
+                                                .label("New Workspace…")
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(NewWorkspace),
+                                                        cx,
+                                                    )
+                                                }),
+                                        ),
                                 )
-                                .child(shortcut_keys("secondary-o")),
-                        )
-                        .child(
-                            Button::new("welcome-open-file")
-                                .link()
-                                .icon(IconName::File)
-                                .label("Open File…")
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(OpenFile), cx)
-                                }),
+                                .child(Separator::vertical())
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .gap_2()
+                                        .items_start()
+                                        .pl_6()
+                                        .child(
+                                            h_flex()
+                                                .gap_3()
+                                                .child(
+                                                    Button::new("welcome-open-folder")
+                                                        .link()
+                                                        .icon(IconName::FolderOpen)
+                                                        .label("Open Folder…")
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                Box::new(OpenFolder),
+                                                                cx,
+                                                            )
+                                                        }),
+                                                )
+                                                .child(shortcut_keys("secondary-o")),
+                                        )
+                                        .child(
+                                            Button::new("welcome-open-file")
+                                                .link()
+                                                .icon(IconName::File)
+                                                .label("Open File…")
+                                                .on_click(|_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(OpenFile),
+                                                        cx,
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .gap_3()
+                                                .child(
+                                                    Button::new("welcome-new-file")
+                                                        .link()
+                                                        .icon(IconName::FileText)
+                                                        .label("New File…")
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                Box::new(NewFile),
+                                                                cx,
+                                                            )
+                                                        }),
+                                                )
+                                                .child(shortcut_keys("secondary-n")),
+                                        ),
+                                ),
                         ),
                 )
                 .children(recents),

@@ -133,8 +133,12 @@ Add a row here whenever a new shared component is created.
     shown disabled as `<name> (missing)` with a folder icon.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`),
     e.g. "Remove Folder from Workspace" on roots.
-- **Welcome "Start" actions,** top to bottom: Open Workspace…, Open Folder…
-  (with its shortcut), Open File….
+- **Welcome "Start" actions:** two columns separated by a vertical
+  `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
+  (`⌘O` / `Ctrl+O`), Open File…, New File… (`⌘N` / `Ctrl+N`). File menu keeps
+  the same order stacked (workspace group, separator, folder/file group).
+  Distinct Kit icons: `LayoutDashboard`, `FolderClosed`, `FolderOpen`, `File`,
+  `FileText`.
 - **Workspaces before folders** wherever both appear (Start actions, recent
   lists, menus).
 - **Recent lists:** one titled section per kind ("Recent workspaces", then

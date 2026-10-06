@@ -35,6 +35,8 @@ use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 actions!(
     isengard,
     [
+        NewFile,
+        NewWorkspace,
         OpenFolder,
         OpenFile,
         OpenWorkspace,
@@ -83,6 +85,7 @@ enum Switch {
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("secondary-n", NewFile, None),
         KeyBinding::new("secondary-o", OpenFolder, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-alt-s", SaveAll, None),
@@ -894,6 +897,121 @@ impl IsengardApp {
 
     // ---- Actions -----------------------------------------------------------
 
+    fn on_new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = self
+            .workspace
+            .folders()
+            .first()
+            .cloned()
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let path = cx.prompt_for_new_path(&dir, Some("untitled.txt"));
+        cx.spawn_in(window, async move |this, window| {
+            let path = path.await.ok()?.ok()??;
+            this.update_in(window, |this, window, cx| {
+                this.create_and_open_file(path, window, cx);
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    /// Creates an empty file if needed, opens its parent folder when nothing is
+    /// open yet, then opens the file in a permanent tab.
+    fn create_and_open_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !path.exists()
+            && let Err(err) = document::write_text(&path, "")
+        {
+            return notify_error(format!("Could not create file: {err:#}"), window, cx);
+        }
+        // From the welcome screen, open the parent folder so the tree appears.
+        if self.workspace.is_empty()
+            && let Some(parent) = path.parent().filter(|p| p.is_dir())
+        {
+            self.apply_switch(Switch::Folder(parent.to_path_buf()), window, cx);
+        }
+        self.open_file(&path, true, window, cx);
+    }
+
+    fn on_new_workspace(
+        &mut self,
+        _: &NewWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+            prompt: Some("Select Folders for Workspace".into()),
+        });
+        cx.spawn_in(window, async move |this, window| {
+            let folders = paths.await.ok()?.ok()??;
+            let folders: Vec<PathBuf> = folders.into_iter().filter(|f| f.is_dir()).collect();
+            if folders.is_empty() {
+                return None;
+            }
+            this.update_in(window, |this, window, cx| {
+                this.prompt_save_new_workspace(folders, window, cx);
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    /// Asks where to write the `.isengard-workspace` file, then opens it.
+    fn prompt_save_new_workspace(
+        &mut self,
+        folders: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = folders
+            .first()
+            .and_then(|folder| folder.parent())
+            .map(Path::to_path_buf)
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let name = folders
+            .first()
+            .map(|folder| format!("{}.{WORKSPACE_EXTENSION}", document::file_name(folder)))
+            .unwrap_or_else(|| format!("Untitled.{WORKSPACE_EXTENSION}"));
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, window| {
+            let path = path.await.ok()?.ok()??;
+            this.update_in(window, |this, window, cx| {
+                let path = if Workspace::is_workspace_file(&path) {
+                    path
+                } else {
+                    path.with_extension(WORKSPACE_EXTENSION)
+                };
+                let mut workspace = Workspace::default();
+                for folder in &folders {
+                    workspace.add_folder(folder);
+                }
+                match workspace.save_as(&path) {
+                    Ok(()) => {
+                        this.request_switch(Switch::Workspace(workspace), window, cx);
+                        window.push_notification(
+                            format!("Created workspace {}", document::file_name(&path)),
+                            cx,
+                        );
+                    }
+                    Err(err) => {
+                        notify_error(format!("Could not create workspace: {err:#}"), window, cx)
+                    }
+                }
+            })
+            .ok()
+        })
+        .detach();
+    }
+
     fn on_open_folder(&mut self, _: &OpenFolder, window: &mut Window, cx: &mut Context<Self>) {
         self.prompt_and_open(true, window, cx);
     }
@@ -1489,6 +1607,8 @@ impl Render for IsengardApp {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .font_family(cx.theme().font_family.clone())
+            .on_action(cx.listener(Self::on_new_file))
+            .on_action(cx.listener(Self::on_new_workspace))
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_open_workspace))
