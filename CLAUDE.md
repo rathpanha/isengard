@@ -71,8 +71,12 @@ tabs, highlighted editor, status bar):
   keeps its own undo history and cursor. The close button and the welcome screen's
   "remove recent" × are `destructive_icon_button`s: muted at rest, red icon +
   faint red tint on hover (DESIGN.md §3).
-- Code editor (GPUI Kit `Editor`): tree-sitter highlighting for JavaScript,
-  TypeScript, TSX, HTML, CSS, JSON; line numbers, indent guides, search.
+- Code editor (GPUI Kit `Editor`): tree-sitter highlighting for every language
+  GPUI Kit vendors via `tree-sitter-languages` (astro, bash, c/c++/c#, cmake,
+  css, diff, ejs, elixir, erb, go, graphql, html, java, javascript, json,
+  kotlin, lua, make, markdown, php, proto, python, ruby, rust, scala, sql,
+  svelte, swift, toml, tsx, typescript, yaml, zig); line numbers, indent
+  guides, search. Unknown extensions stay Plain Text.
 - Save (`•` marks modified tabs), Save All, close-tab confirmation (Save /
   Don't Save / Cancel), quit confirmation when anything is unsaved (window
   close button, Cmd/Ctrl+Q, menu).
@@ -200,9 +204,10 @@ src/
 ### Version pinning
 `gpui-kit = "0.7.1"` pins an exact GPUI snapshot (`gpui-pre =0.3.8`). GPUI's API
 changes between snapshots; upgrade `gpui-kit` as a whole and re-check every
-API used here. Tree-sitter languages are opt-in cargo features of `gpui-kit`
-(`tree-sitter-<lang>`); JSON comes with the base `tree-sitter` feature. To add
-a language: enable the feature, extend `Language` in `editor/language.rs`.
+API used here. Tree-sitter languages come from the `tree-sitter-languages`
+feature (JSON is included via base `tree-sitter`). Detection lives in
+`Language` in `editor/language.rs`. Direct dep `cc = "~1.2.1"` keeps
+`tree-sitter-sequel` (SQL) resolvable against `embed-resource`.
 
 ## Known issues / TODO
 - Interactive flows not yet verified by a human (see Current status).
@@ -239,6 +244,8 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — Enabled all GPUI Kit tree-sitter languages
+  (`tree-sitter-languages`) and expanded `Language` detection accordingly.
 - **2026-10-06** — File tree: full Material Icon Theme pack (1251 SVGs +
   `material-icons.json` associations) instead of a curated subset.
 - **2026-10-06** — File tree Material icons rendered with `img()` so colours
