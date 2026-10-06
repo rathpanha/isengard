@@ -1,434 +1,711 @@
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
 
-use egui::{Key, KeyboardShortcut, Modifiers};
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, IconName, Sizable as _, TitleBar, WindowExt as _,
+    button::{Button, ButtonCustomVariant, ButtonVariants as _},
+    dialog::DialogFooter,
+    h_flex,
+    input::{Editor, EditorState, InputEvent, TabSize},
+    menu::AppMenuBar,
+    notification::Notification,
+    resizable::{h_resizable, resizable_panel},
+    status_bar::StatusBar,
+    tab::{Tab, TabBar},
+    tree::TreeEvent,
+    v_flex,
+};
+use gpui_kit::{prelude::FluentBuilder as _, *};
 
-use crate::config::AppConfig;
-use crate::ui::editor_workspace::EditorWorkspace;
+use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE};
+use crate::editor::document;
+use crate::editor::language::Language;
+use crate::editor::tabs::TabList;
+use crate::theme;
 use crate::ui::file_tree::FileTreePanel;
-use crate::ui::welcome::{self, WelcomeAction};
+use crate::ui::welcome;
 
-const CONFIG_KEY: &str = "isengard_config";
-const STATUS_TIMEOUT: Duration = Duration::from_secs(4);
+actions!(
+    isengard,
+    [
+        OpenFolder,
+        OpenFile,
+        CloseFolder,
+        Save,
+        SaveAll,
+        CloseTab,
+        NextTab,
+        PrevTab,
+        ToggleTheme,
+        IncreaseFontSize,
+        DecreaseFontSize,
+        ResetFontSize,
+        About,
+        Quit,
+    ]
+);
 
-const OPEN_FOLDER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
-const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
-const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
+/// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("secondary-o", OpenFolder, None),
+        KeyBinding::new("secondary-s", Save, None),
+        KeyBinding::new("secondary-alt-s", SaveAll, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PrevTab, None),
+        KeyBinding::new("secondary-=", IncreaseFontSize, None),
+        KeyBinding::new("secondary--", DecreaseFontSize, None),
+        KeyBinding::new("secondary-0", ResetFontSize, None),
+        KeyBinding::new("secondary-q", Quit, None),
+    ]);
+    // Fallback when the app view is not on the focus path (e.g. while a dialog is open).
+    cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+}
+
+struct EditorTab {
+    path: PathBuf,
+    language: Language,
+    state: Entity<EditorState>,
+    is_modified: bool,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EditorTab {
+    fn label(&self) -> String {
+        let name = document::file_name(&self.path);
+        if self.is_modified {
+            format!("{name} •")
+        } else {
+            name
+        }
+    }
+}
 
 pub struct IsengardApp {
     config: AppConfig,
+    focus_handle: FocusHandle,
     file_tree: FileTreePanel,
-    workspace: EditorWorkspace,
-    status: Option<(String, Instant)>,
-    /// Style last applied to the context, to avoid resetting it every frame.
-    applied_style: Option<(bool, u32)>,
-    show_about: bool,
-    show_quit_dialog: bool,
+    tabs: TabList<EditorTab>,
+    app_menu_bar: Entity<AppMenuBar>,
+    /// Tab whose close button is under the pointer (its × turns red).
+    hovered_close: Option<PathBuf>,
+    /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl IsengardApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        install_fonts(&cc.egui_ctx);
-        let config: AppConfig = cc
-            .storage
-            .and_then(|s| eframe::get_value(s, CONFIG_KEY))
-            .unwrap_or_default();
+    pub fn new(
+        config: AppConfig,
+        initial_path: Option<PathBuf>,
+        app_menu_bar: Entity<AppMenuBar>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let file_tree = FileTreePanel::new(cx);
+        let tree_subscription =
+            cx.subscribe(file_tree.state(), |this, _, event: &TreeEvent, cx| {
+                this.file_tree.handle_event(event, cx);
+            });
+
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            weak.update(cx, |this, cx| this.confirm_quit(window, cx))
+                .unwrap_or(true)
+        });
+
+        let focus_handle = cx.focus_handle();
+        focus_handle.focus(window, cx);
 
         let mut app = Self {
             config,
-            file_tree: FileTreePanel::default(),
-            workspace: EditorWorkspace::default(),
-            status: None,
-            applied_style: None,
-            show_about: false,
-            show_quit_dialog: false,
+            focus_handle,
+            file_tree,
+            tabs: TabList::default(),
+            app_menu_bar,
+            hovered_close: None,
             allow_quit: false,
+            _subscriptions: vec![tree_subscription],
         };
 
-        // `isengard <folder>` opens a folder; `isengard <file>` opens its parent and the file.
-        let arg = std::env::args_os().nth(1).map(std::path::PathBuf::from);
-        match arg {
-            Some(path) if path.is_dir() => app.open_folder(&path),
+        // Otherwise start on the welcome screen.
+        match initial_path {
+            Some(path) if path.is_dir() => app.open_folder(&path, window, cx),
             Some(path) if path.is_file() => {
                 if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                    app.open_folder(parent);
+                    app.open_folder(parent, window, cx);
                 }
-                app.open_file(&path);
+                app.open_file(&path, window, cx);
             }
-            // Otherwise start on the welcome screen.
             _ => {}
         }
         app
     }
 
-    fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), Instant::now()));
-    }
+    // ---- Folders and files -------------------------------------------------
 
-    fn open_folder_dialog(&mut self) {
-        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-            self.open_folder(&folder);
-        }
-    }
-
-    fn open_folder(&mut self, folder: &Path) {
+    pub fn open_folder(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if !folder.is_dir() {
-            self.config.remove_recent_folder(folder);
-            self.set_status(format!("Folder not found: {}", folder.display()));
+            self.remove_recent_folder(folder, cx);
+            notify_error(
+                format!("Folder not found: {}", folder.display()),
+                window,
+                cx,
+            );
             return;
         }
-        self.file_tree.open_folder(folder);
+        self.file_tree.open_folder(folder, cx);
         self.config.add_recent_folder(folder);
+        self.config.save();
+        window.set_window_title(&format!("{} — Isengard", document::file_name(folder)));
+        cx.notify();
     }
 
-    fn handle_welcome_action(&mut self, action: WelcomeAction) {
-        match action {
-            WelcomeAction::OpenFolder => self.open_folder_dialog(),
-            WelcomeAction::OpenFile => self.open_file_dialog(),
-            WelcomeAction::OpenRecent(folder) => self.open_folder(&folder),
-            WelcomeAction::RemoveRecent(folder) => self.config.remove_recent_folder(&folder),
-        }
+    pub fn remove_recent_folder(&mut self, folder: &Path, cx: &mut Context<Self>) {
+        self.config.remove_recent_folder(folder);
+        self.config.save();
+        cx.notify();
     }
 
-    fn open_file_dialog(&mut self) {
-        let mut dialog = rfd::FileDialog::new();
-        if let Some(root) = self.file_tree.root_path() {
-            dialog = dialog.set_directory(root);
-        }
-        if let Some(path) = dialog.pick_file() {
-            self.open_file(&path);
-        }
-    }
-
-    fn open_file(&mut self, path: &Path) {
-        match self.workspace.open_file(path) {
-            Ok(()) => self.file_tree.set_selected(Some(path.to_path_buf())),
-            Err(err) => self.set_status(format!("Could not open file: {err:#}")),
-        }
-    }
-
-    fn save_active(&mut self) {
-        match self.workspace.save_active() {
-            Ok(Some(path)) => self.set_status(format!("Saved {}", path.display())),
-            Ok(None) => {}
-            Err(err) => self.set_status(format!("Save failed: {err:#}")),
-        }
-    }
-
-    fn apply_style(&mut self, ctx: &egui::Context) {
-        let wanted = (self.config.dark_mode, self.config.font_size.to_bits());
-        if self.applied_style == Some(wanted) {
+    fn open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.tabs.position(|t| t.path == path) {
+            self.activate_tab(ix, window, cx);
             return;
         }
-        let mut visuals = if self.config.dark_mode {
-            egui::Visuals::dark()
-        } else {
-            egui::Visuals::light()
+        let text = match document::read_text(path) {
+            Ok(text) => text,
+            Err(err) => return notify_error(format!("Could not open file: {err:#}"), window, cx),
         };
-        square_corners(&mut visuals);
-        ctx.set_visuals(visuals);
-        ctx.style_mut(|style| {
-            if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Monospace) {
-                font.size = self.config.font_size;
+
+        let language = Language::from_path(path);
+        let state = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language(language.highlighter_name())
+                .line_number(true)
+                .indent_guides(true)
+                .soft_wrap(false)
+                .tab_size(TabSize {
+                    tab_size: 2,
+                    hard_tabs: false,
+                })
+                .default_value(text)
+        });
+        let subscriptions = vec![
+            cx.subscribe(&state, |this, state, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let id = state.entity_id();
+                    if let Some(tab) = this.tabs.find_mut(|t| t.state.entity_id() == id) {
+                        tab.is_modified = true;
+                    }
+                    cx.notify();
+                }
+            }),
+            // Re-render on cursor moves so the status bar's Ln/Col stays current.
+            cx.observe(&state, |_, _, cx| cx.notify()),
+        ];
+
+        self.tabs.push(EditorTab {
+            path: path.to_path_buf(),
+            language,
+            state,
+            is_modified: false,
+            _subscriptions: subscriptions,
+        });
+        self.file_tree.select_path(path, cx);
+        self.focus_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn activate_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.activate(ix) {
+            if let Some(path) = self.tabs.active().map(|t| t.path.clone()) {
+                self.file_tree.select_path(&path, cx);
             }
-        });
-        self.applied_style = Some(wanted);
+            self.focus_active_editor(window, cx);
+            cx.notify();
+        }
     }
 
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.workspace.is_dialog_open() || self.show_quit_dialog {
+    fn focus_active_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.tabs.active() {
+            Some(tab) => tab.state.update(cx, |state, cx| state.focus(window, cx)),
+            None => self.focus_handle.focus(window, cx),
+        }
+    }
+
+    fn save_tab(&mut self, path: &Path, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let Some(tab) = self.tabs.find_mut(|t| t.path == path) else {
+            return Ok(());
+        };
+        let text = tab.state.read(cx).value();
+        document::write_text(&tab.path, &text)?;
+        tab.is_modified = false;
+        cx.notify();
+        Ok(())
+    }
+
+    fn save_all(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let modified: Vec<PathBuf> = self
+            .tabs
+            .iter()
+            .filter(|t| t.is_modified)
+            .map(|t| t.path.clone())
+            .collect();
+        for path in modified {
+            self.save_tab(&path, cx)?;
+        }
+        Ok(())
+    }
+
+    fn has_unsaved(&self) -> bool {
+        self.tabs.iter().any(|t| t.is_modified)
+    }
+
+    /// Closes the tab for `path`, asking first if it has unsaved changes.
+    fn request_close(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.iter().find(|t| t.path == path) else {
             return;
-        }
-        let (open, save, close, prev, next) = ctx.input_mut(|i| {
-            (
-                i.consume_shortcut(&OPEN_FOLDER),
-                i.consume_shortcut(&SAVE),
-                i.consume_shortcut(&CLOSE_TAB),
-                // Shift+Tab variant first: Ctrl+Tab would also match it.
-                i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab),
-                i.consume_key(Modifiers::CTRL, Key::Tab),
-            )
-        });
-        if open {
-            self.open_folder_dialog();
-        }
-        if save {
-            self.save_active();
-        }
-        if close {
-            self.workspace.request_close_active();
-        }
-        if prev {
-            self.workspace.cycle_tab(false);
-        }
-        if next {
-            self.workspace.cycle_tab(true);
+        };
+        if tab.is_modified {
+            self.confirm_close_tab(path.to_path_buf(), window, cx);
+        } else {
+            self.close_tab(path, window, cx);
         }
     }
 
-    /// Intercepts window close while there are unsaved changes.
-    fn handle_close_request(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested())
-            && !self.allow_quit
-            && self.workspace.has_unsaved()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.show_quit_dialog = true;
+    fn close_tab(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.tabs.position(|t| t.path == path) {
+            self.tabs.remove(ix);
+            // The removed button never reports hover-out.
+            self.hovered_close = None;
+            self.focus_active_editor(window, cx);
+            cx.notify();
         }
     }
 
-    fn menu_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui
-                        .add(egui::Button::new("Open Folder…").shortcut_text(ctx.format_shortcut(&OPEN_FOLDER)))
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        self.open_folder_dialog();
-                    }
-                    if ui.button("Open File…").clicked() {
-                        ui.close_menu();
-                        self.open_file_dialog();
-                    }
-                    ui.add_enabled_ui(!self.config.recent_folders.is_empty(), |ui| {
-                        ui.menu_button("Open Recent", |ui| {
-                            for folder in self.config.recent_folders.clone() {
-                                if ui.button(folder.display().to_string()).clicked() {
-                                    ui.close_menu();
-                                    self.open_folder(&folder);
-                                }
-                            }
-                        });
-                    });
-                    if ui
-                        .add_enabled(self.file_tree.is_open(), egui::Button::new("Close Folder"))
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        self.file_tree.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .add(egui::Button::new("Save").shortcut_text(ctx.format_shortcut(&SAVE)))
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        self.save_active();
-                    }
-                    if ui.button("Save All").clicked() {
-                        ui.close_menu();
-                        match self.workspace.save_all() {
-                            Ok(()) => self.set_status("Saved all files"),
-                            Err(err) => self.set_status(format!("Save failed: {err:#}")),
-                        }
-                    }
-                    if ui
-                        .add(egui::Button::new("Close Tab").shortcut_text(ctx.format_shortcut(&CLOSE_TAB)))
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        self.workspace.request_close_active();
-                    }
-                    ui.separator();
-                    if ui.button("Quit").clicked() {
-                        ui.close_menu();
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                ui.menu_button("View", |ui| {
-                    let theme_label = if self.config.dark_mode { "Light Theme" } else { "Dark Theme" };
-                    if ui.button(theme_label).clicked() {
-                        ui.close_menu();
-                        self.config.dark_mode = !self.config.dark_mode;
-                    }
-                    ui.separator();
-                    if ui.button("Increase Font Size").clicked() {
-                        self.config.change_font_size(1.0);
-                    }
-                    if ui.button("Decrease Font Size").clicked() {
-                        self.config.change_font_size(-1.0);
-                    }
-                    if ui.button("Reset Font Size").clicked() {
-                        self.config.font_size = AppConfig::default().font_size;
-                    }
-                });
-                ui.menu_button("Help", |ui| {
-                    if ui.button("About Isengard").clicked() {
-                        ui.close_menu();
-                        self.show_about = true;
-                    }
-                });
-            });
+    // ---- Dialogs -----------------------------------------------------------
+
+    fn confirm_close_tab(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity().downgrade();
+        let name = document::file_name(&path);
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (app_save, app_discard) = (app.clone(), app.clone());
+            let (path_save, path_discard) = (path.clone(), path.clone());
+            dialog
+                .title("Unsaved changes")
+                .child(format!("Save changes to {name} before closing?"))
+                .footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("close-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("close-discard")
+                                .outline()
+                                .label("Don't Save")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = app_discard.update(cx, |this, cx| {
+                                        this.close_tab(&path_discard, window, cx)
+                                    });
+                                }),
+                        )
+                        .child(Button::new("close-save").primary().label("Save").on_click(
+                            move |_, window, cx| {
+                                window.close_dialog(cx);
+                                _ = app_save.update(cx, |this, cx| {
+                                    match this.save_tab(&path_save, cx) {
+                                        Ok(()) => this.close_tab(&path_save, window, cx),
+                                        Err(err) => notify_error(
+                                            format!("Save failed: {err:#}"),
+                                            window,
+                                            cx,
+                                        ),
+                                    }
+                                });
+                            },
+                        )),
+                )
         });
     }
 
-    fn status_bar(&mut self, ctx: &egui::Context) {
-        if self.status.as_ref().is_some_and(|(_, at)| at.elapsed() > STATUS_TIMEOUT) {
-            self.status = None;
+    /// Returns `true` if the app may close now; otherwise asks the user first.
+    fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.allow_quit || !self.has_unsaved() {
+            return true;
         }
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(tab) = self.workspace.active_tab() {
-                    let path = match self.file_tree.root_path() {
-                        Some(root) => tab.buffer.path.strip_prefix(root).unwrap_or(&tab.buffer.path),
-                        None => &tab.buffer.path,
-                    };
-                    ui.label(path.display().to_string());
-                    if let Some((line, col)) = tab.cursor {
-                        ui.separator();
-                        ui.label(format!("Ln {line}, Col {col}"));
-                    }
-                    ui.separator();
-                    ui.label(tab.buffer.language.display_name());
-                } else {
-                    ui.weak("Ready");
-                }
-                if let Some((msg, _)) = &self.status {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(msg);
-                    });
-                    ctx.request_repaint_after(STATUS_TIMEOUT);
-                }
-            });
+        let app = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (app_save, app_discard) = (app.clone(), app.clone());
+            dialog
+                .title("Quit Isengard?")
+                .child("Some files have unsaved changes.")
+                .footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("quit-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("quit-discard")
+                                .outline()
+                                .label("Quit Without Saving")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = app_discard.update(cx, |this, cx| this.quit(cx));
+                                }),
+                        )
+                        .child(
+                            Button::new("quit-save")
+                                .primary()
+                                .label("Save All & Quit")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = app_save.update(cx, |this, cx| match this.save_all(cx) {
+                                        Ok(()) => this.quit(cx),
+                                        Err(err) => notify_error(
+                                            format!("Save failed: {err:#}"),
+                                            window,
+                                            cx,
+                                        ),
+                                    });
+                                }),
+                        ),
+                )
         });
+        false
     }
 
-    fn quit_dialog(&mut self, ctx: &egui::Context) {
-        if !self.show_quit_dialog {
-            return;
-        }
-        egui::Window::new("Quit Isengard?")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label("Some files have unsaved changes.");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save All & Quit").clicked() {
-                        match self.workspace.save_all() {
-                            Ok(()) => self.quit(ctx),
-                            Err(err) => {
-                                self.show_quit_dialog = false;
-                                self.set_status(format!("Save failed: {err:#}"));
-                            }
-                        }
-                    }
-                    if ui.button("Quit Without Saving").clicked() {
-                        self.quit(ctx);
-                    }
-                    if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
-                        self.show_quit_dialog = false;
-                    }
-                });
-            });
-    }
-
-    /// The welcome screen replaces the whole workspace until a folder or file is open.
-    fn show_welcome(&self) -> bool {
-        !self.file_tree.is_open() && self.workspace.is_empty()
-    }
-
-    fn quit(&mut self, ctx: &egui::Context) {
+    fn quit(&mut self, cx: &mut Context<Self>) {
         self.allow_quit = true;
-        self.show_quit_dialog = false;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        cx.quit();
     }
 
-    fn about_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("About Isengard")
-            .open(&mut self.show_about)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.heading("Isengard");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                ui.label("A small code editor built with egui and tree-sitter.");
-            });
+    // ---- Actions -----------------------------------------------------------
+
+    fn on_open_folder(&mut self, _: &OpenFolder, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_and_open(true, window, cx);
     }
-}
 
-impl eframe::App for IsengardApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.apply_style(ctx);
-        self.handle_close_request(ctx);
-        self.handle_shortcuts(ctx);
+    fn on_open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_and_open(false, window, cx);
+    }
 
-        self.menu_bar(ctx);
-        if !self.show_welcome() {
-            self.status_bar(ctx);
-        }
-
-        let modal_open = self.workspace.is_dialog_open() || self.show_quit_dialog;
-
-        if self.file_tree.is_open() {
-            egui::SidePanel::left("file_tree")
-                .resizable(true)
-                .default_width(240.0)
-                .width_range(140.0..=600.0)
-                .show(ctx, |ui| {
-                    ui.add_enabled_ui(!modal_open, |ui| {
-                        if let Some(path) = self.file_tree.show(ui) {
-                            self.open_file(&path);
-                        }
-                    });
-                });
-        }
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.show_welcome() {
-                let shortcut = ctx.format_shortcut(&OPEN_FOLDER);
-                if let Some(action) = welcome::show(ui, &self.config.recent_folders, &shortcut) {
-                    self.handle_welcome_action(action);
+    fn prompt_and_open(&mut self, directories: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: !directories,
+            directories,
+            multiple: false,
+            prompt: Some(
+                if directories {
+                    "Open Folder"
+                } else {
+                    "Open File"
                 }
-                return;
-            }
-            ui.add_enabled_ui(!modal_open, |ui| {
-                self.workspace.show(ui, self.config.font_size);
-            });
+                .into(),
+            ),
         });
+        cx.spawn_in(window, async move |this, window| {
+            let path = paths.await.ok()?.ok()??.into_iter().next()?;
+            this.update_in(window, |this, window, cx| {
+                if directories {
+                    this.open_folder(&path, window, cx);
+                } else {
+                    this.open_file(&path, window, cx);
+                }
+            })
+            .ok()
+        })
+        .detach();
+    }
 
-        if let Some(err) = self.workspace.show_close_dialog(ctx) {
-            self.set_status(format!("Save failed: {err}"));
+    fn on_close_folder(&mut self, _: &CloseFolder, window: &mut Window, cx: &mut Context<Self>) {
+        self.file_tree.close(cx);
+        window.set_window_title("Isengard");
+        cx.notify();
+    }
+
+    fn on_save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.tabs.active().map(|t| t.path.clone()) else {
+            return;
+        };
+        match self.save_tab(&path, cx) {
+            Ok(()) => window.push_notification(format!("Saved {}", document::file_name(&path)), cx),
+            Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
         }
-        self.quit_dialog(ctx);
-        self.about_window(ctx);
     }
 
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, CONFIG_KEY, &self.config);
+    fn on_save_all(&mut self, _: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
+        match self.save_all(cx) {
+            Ok(()) => window.push_notification("Saved all files", cx),
+            Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+        }
+    }
+
+    fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.tabs.active().map(|t| t.path.clone()) {
+            self.request_close(&path, window, cx);
+        }
+    }
+
+    fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.tabs.cycle(true);
+        self.focus_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn on_prev_tab(&mut self, _: &PrevTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.tabs.cycle(false);
+        self.focus_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
+        self.config.dark_mode = !self.config.dark_mode;
+        self.apply_config(window, cx);
+    }
+
+    fn on_increase_font(
+        &mut self,
+        _: &IncreaseFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.config.change_font_size(1.0);
+        self.apply_config(window, cx);
+    }
+
+    fn on_decrease_font(
+        &mut self,
+        _: &DecreaseFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.config.change_font_size(-1.0);
+        self.apply_config(window, cx);
+    }
+
+    fn on_reset_font(&mut self, _: &ResetFontSize, window: &mut Window, cx: &mut Context<Self>) {
+        self.config.font_size = DEFAULT_EDITOR_FONT_SIZE;
+        self.apply_config(window, cx);
+    }
+
+    fn apply_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        theme::apply(&self.config, Some(window), cx);
+        self.config.save();
+        cx.notify();
+    }
+
+    fn on_about(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
+        window.open_dialog(cx, |dialog, _, _| {
+            dialog
+                .title("About Isengard")
+                .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                .child("A code editor built with GPUI Kit.")
+        });
+    }
+
+    fn on_quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.confirm_quit(window, cx) {
+            self.quit(cx);
+        }
+    }
+
+    // ---- Rendering ---------------------------------------------------------
+
+    /// The welcome screen replaces the workspace until a folder or file is open.
+    fn show_welcome(&self) -> bool {
+        !self.file_tree.is_open() && self.tabs.is_empty()
+    }
+
+    fn render_title_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let title = match self.file_tree.root_path() {
+            Some(root) => format!("{} — Isengard", document::file_name(root)),
+            None => "Isengard".to_owned(),
+        };
+        TitleBar::new()
+            .child(
+                h_flex()
+                    .flex_1()
+                    .when(cfg!(target_os = "macos"), |this| {
+                        // macOS shows the menus in the system menu bar.
+                        this.justify_center()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(title)
+                    })
+                    .when(!cfg!(target_os = "macos"), |this| {
+                        this.child(self.app_menu_bar.clone())
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_editor_area(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(active) = self.tabs.active() else {
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(cx.theme().muted_foreground)
+                .child("Select a file to start editing")
+                .into_any_element();
+        };
+
+        // Muted × that turns destructive (danger red icon + faint red tint) on hover.
+        let danger = cx.theme().danger;
+        let muted = cx.theme().muted_foreground;
+        let close_variant = ButtonCustomVariant::new(cx)
+            .foreground(muted)
+            .hover(danger.opacity(0.15))
+            .active(danger.opacity(0.25));
+
+        let tab_bar = TabBar::new("editor-tabs")
+            .selected_index(self.tabs.active_index().unwrap_or_default())
+            .on_click(
+                cx.listener(|this, ix: &usize, window, cx| this.activate_tab(*ix, window, cx)),
+            )
+            .children(self.tabs.iter().map(|tab| {
+                let path = tab.path.clone();
+                // Button's hover style can only change the background, and an Icon
+                // resolves its color at render time, so the red icon is driven by
+                // hover state tracked on a wrapper.
+                let is_hovered = self.hovered_close.as_deref() == Some(tab.path.as_path());
+                let hover_path = tab.path.clone();
+                Tab::new().label(tab.label()).suffix(
+                    div()
+                        .id(SharedString::from(format!(
+                            "close-tab-hover-{}",
+                            tab.path.display()
+                        )))
+                        // The tab's label padding is 12px; mr_2 plus the button's 4px
+                        // inset puts the × the same 12px from the tab's right border.
+                        .mr_2()
+                        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                            let path = hover_path.clone();
+                            this.hovered_close = hovered.then_some(path);
+                            cx.notify();
+                        }))
+                        .child(
+                            Button::new(SharedString::from(format!(
+                                "close-tab-{}",
+                                tab.path.display()
+                            )))
+                            .custom(close_variant)
+                            .xsmall()
+                            .icon(Icon::new(IconName::Close).text_color(if is_hovered {
+                                danger
+                            } else {
+                                muted
+                            }))
+                            .tooltip("Close")
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.request_close(&path, window, cx);
+                                },
+                            )),
+                        ),
+                )
+            }));
+
+        v_flex()
+            .size_full()
+            .child(tab_bar)
+            .child(
+                div().flex_1().min_h_0().child(
+                    Editor::new(&active.state)
+                        .bordered(false)
+                        .p_0()
+                        .h_full()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(cx.theme().mono_font_size),
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// The status bar describes the active file, so it only exists while one is open.
+    fn render_status_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tab = self.tabs.active()?;
+        let path = match self.file_tree.root_path() {
+            Some(root) => tab.path.strip_prefix(root).unwrap_or(&tab.path),
+            None => &tab.path,
+        };
+        let cursor = tab.state.read(cx).cursor_position();
+        let bar = StatusBar::new()
+            .left(div().child(path.display().to_string()))
+            .right(
+                h_flex()
+                    .gap_4()
+                    .child(format!(
+                        "Ln {}, Col {}",
+                        cursor.line + 1,
+                        cursor.character + 1
+                    ))
+                    .child(tab.language.display_name()),
+            )
+            .text_xs();
+        Some(bar.into_any_element())
     }
 }
 
-/// Block style: no rounded corners on any widget, window, or menu.
-fn square_corners(visuals: &mut egui::Visuals) {
-    visuals.window_rounding = egui::Rounding::ZERO;
-    visuals.menu_rounding = egui::Rounding::ZERO;
-    let widgets = &mut visuals.widgets;
-    for state in [
-        &mut widgets.noninteractive,
-        &mut widgets.inactive,
-        &mut widgets.hovered,
-        &mut widgets.active,
-        &mut widgets.open,
-    ] {
-        state.rounding = egui::Rounding::ZERO;
+impl Render for IsengardApp {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = if self.show_welcome() {
+            welcome::render(&self.config.recent_folders, cx).into_any_element()
+        } else if self.file_tree.is_open() {
+            let app = cx.entity().downgrade();
+            let tree = self.file_tree.render(
+                move |path, window, cx| {
+                    _ = app.update(cx, |this, cx| this.open_file(&path, window, cx));
+                },
+                cx,
+            );
+            h_resizable("main-split")
+                .child(resizable_panel().size(px(260.)).child(tree))
+                .child(resizable_panel().child(self.render_editor_area(cx)))
+                .into_any_element()
+        } else {
+            self.render_editor_area(cx).into_any_element()
+        };
+
+        v_flex()
+            .id("isengard")
+            .key_context("Isengard")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .font_family(cx.theme().font_family.clone())
+            .on_action(cx.listener(Self::on_open_folder))
+            .on_action(cx.listener(Self::on_open_file))
+            .on_action(cx.listener(Self::on_close_folder))
+            .on_action(cx.listener(Self::on_save))
+            .on_action(cx.listener(Self::on_save_all))
+            .on_action(cx.listener(Self::on_close_tab))
+            .on_action(cx.listener(Self::on_next_tab))
+            .on_action(cx.listener(Self::on_prev_tab))
+            .on_action(cx.listener(Self::on_toggle_theme))
+            .on_action(cx.listener(Self::on_increase_font))
+            .on_action(cx.listener(Self::on_decrease_font))
+            .on_action(cx.listener(Self::on_reset_font))
+            .on_action(cx.listener(Self::on_about))
+            .on_action(cx.listener(Self::on_quit))
+            .child(self.render_title_bar(cx))
+            .child(div().flex_1().min_h_0().child(body))
+            .children(self.render_status_bar(cx))
     }
 }
 
-fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "jetbrains_mono".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf")),
-    );
-    fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default()
-        .insert(0, "jetbrains_mono".to_owned());
-    ctx.set_fonts(fonts);
+fn notify_error(message: String, window: &mut Window, cx: &mut App) {
+    window.push_notification(Notification::error(message), cx);
 }

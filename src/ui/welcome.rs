@@ -1,101 +1,164 @@
 use std::path::{Path, PathBuf};
 
-use egui::{Align, Layout, Rect, RichText, Ui, UiBuilder, Vec2};
+use gpui_kit::component::{
+    ActiveTheme as _, IconName, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    kbd::Kbd,
+    v_flex,
+};
+use gpui_kit::*;
 
-pub enum WelcomeAction {
-    OpenFolder,
-    OpenFile,
-    OpenRecent(PathBuf),
-    RemoveRecent(PathBuf),
+use crate::app::{IsengardApp, OpenFile, OpenFolder};
+
+/// Start page shown while no folder or file is open: start actions plus recent folders.
+pub fn render(recent: &[PathBuf], cx: &mut Context<IsengardApp>) -> AnyElement {
+    let theme = cx.theme();
+    let muted = theme.muted_foreground;
+
+    let recent_list = if recent.is_empty() {
+        div()
+            .text_sm()
+            .text_color(muted)
+            .child("No recent folders")
+            .into_any_element()
+    } else {
+        let rows: Vec<AnyElement> = recent
+            .iter()
+            .map(|folder| render_recent(folder, muted, cx))
+            .collect();
+        v_flex().gap_1().children(rows).into_any_element()
+    };
+
+    div()
+        .size_full()
+        .flex()
+        .justify_center()
+        .child(
+            v_flex()
+                .w(rems(30.))
+                .mt(relative(0.15))
+                .gap_8()
+                .child(
+                    v_flex()
+                        .child(
+                            div()
+                                .text_3xl()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child("Isengard"),
+                        )
+                        .child(div().text_color(muted).child("Code editor")),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .items_start()
+                        .child(section_title("Start"))
+                        .child(
+                            h_flex()
+                                .gap_3()
+                                .child(
+                                    Button::new("welcome-open-folder")
+                                        .link()
+                                        .icon(IconName::FolderOpen)
+                                        .label("Open Folder…")
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(OpenFolder), cx)
+                                        }),
+                                )
+                                .child(Kbd::new(
+                                    Keystroke::parse("secondary-o").expect("valid keystroke"),
+                                )),
+                        )
+                        .child(
+                            Button::new("welcome-open-file")
+                                .link()
+                                .icon(IconName::File)
+                                .label("Open File…")
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(OpenFile), cx)
+                                }),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(section_title("Recent"))
+                        .child(recent_list),
+                ),
+        )
+        .into_any_element()
 }
 
-const COLUMN_WIDTH: f32 = 480.0;
-
-/// Start page shown while no folder is open: start actions plus recent folders.
-pub fn show(ui: &mut Ui, recent: &[PathBuf], open_folder_shortcut: &str) -> Option<WelcomeAction> {
-    let mut action = None;
-
-    let full = ui.max_rect();
-    let width = full.width().min(COLUMN_WIDTH);
-    let top = full.top() + full.height() * 0.15;
-    let column = Rect::from_min_size(
-        egui::pos2(full.center().x - width / 2.0, top),
-        Vec2::new(width, full.bottom() - top),
-    );
-
-    ui.allocate_new_ui(UiBuilder::new().max_rect(column), |ui| {
-        ui.label(RichText::new("Isengard").size(34.0).strong());
-        ui.label(RichText::new("Code editor").size(15.0).weak());
-        ui.add_space(32.0);
-
-        section_title(ui, "Start");
-        ui.horizontal(|ui| {
-            if ui.link("Open Folder…").clicked() {
-                action = Some(WelcomeAction::OpenFolder);
-            }
-            ui.weak(open_folder_shortcut);
-        });
-        if ui.link("Open File…").clicked() {
-            action = Some(WelcomeAction::OpenFile);
-        }
-        ui.add_space(28.0);
-
-        section_title(ui, "Recent");
-        if recent.is_empty() {
-            ui.weak("No recent folders");
-            return;
-        }
-        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-            for folder in recent {
-                ui.horizontal(|ui| {
-                    let name = folder
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| folder.display().to_string());
-                    if ui.link(name).on_hover_text(folder.display().to_string()).clicked() {
-                        action = Some(WelcomeAction::OpenRecent(folder.clone()));
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .small_button(RichText::new("×").weak())
-                            .on_hover_text("Remove from recent")
-                            .clicked()
-                        {
-                            action = Some(WelcomeAction::RemoveRecent(folder.clone()));
-                        }
-                        let parent = folder.parent().map(abbreviate_home).unwrap_or_default();
-                        ui.add(egui::Label::new(RichText::new(parent).weak()).truncate());
-                    });
-                });
-            }
-        });
-    });
-
-    action
+fn section_title(title: &'static str) -> impl IntoElement {
+    div()
+        .text_lg()
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(title)
 }
 
-fn section_title(ui: &mut Ui, title: &str) {
-    ui.label(RichText::new(title).size(16.0).strong());
-    ui.add_space(4.0);
+fn render_recent(folder: &Path, muted: Hsla, cx: &mut Context<IsengardApp>) -> AnyElement {
+    let id = folder.to_string_lossy().into_owned();
+    let name = folder
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| id.clone());
+    let parent = folder.parent().map(abbreviate_home).unwrap_or_default();
+
+    h_flex()
+        .gap_3()
+        .child(
+            Button::new(SharedString::from(format!("recent-open-{id}")))
+                .link()
+                .label(name)
+                .tooltip(id.clone())
+                .on_click(cx.listener({
+                    let folder = folder.to_path_buf();
+                    move |this, _, window, cx| this.open_folder(&folder, window, cx)
+                })),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_sm()
+                .text_color(muted)
+                .child(parent),
+        )
+        .child(
+            Button::new(SharedString::from(format!("recent-remove-{id}")))
+                .ghost()
+                .xsmall()
+                .icon(IconName::Close)
+                .tooltip("Remove from recent")
+                .on_click(cx.listener({
+                    let folder = folder.to_path_buf();
+                    move |this, _, _, cx| this.remove_recent_folder(&folder, cx)
+                })),
+        )
+        .into_any_element()
 }
 
 /// Shows paths under the home directory as `~/...`.
 fn abbreviate_home(path: &Path) -> String {
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        if let Ok(rest) = path.strip_prefix(&home) {
-            return Path::new("~").join(rest).display().to_string();
-        }
+    if let Some(home) = dirs::home_dir()
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return Path::new("~").join(rest).display().to_string();
     }
     path.display().to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Not `super::*`: that would bring in gpui's `test` macro, which shadows the built-in one.
+    use super::abbreviate_home;
+    use std::path::Path;
 
     #[test]
     fn abbreviates_home_directory() {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        let home = dirs::home_dir().unwrap();
         assert_eq!(abbreviate_home(&home.join("code/app")), "~/code/app");
         assert_eq!(abbreviate_home(Path::new("/tmp/x")), "/tmp/x");
     }

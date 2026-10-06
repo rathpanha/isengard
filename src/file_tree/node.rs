@@ -78,27 +78,55 @@ impl FsNode {
 
     /// Loads children if this is a directory that has not been read yet.
     pub fn ensure_loaded(&mut self) {
-        if let FsNode::Dir { path, children, .. } = self {
-            if children.is_none() {
-                *children = Some(Self::load_one_level(path).unwrap_or_else(|err| {
-                    log::warn!("failed to read {}: {err}", path.display());
-                    Vec::new()
-                }));
-            }
+        if let FsNode::Dir { path, children, .. } = self
+            && children.is_none()
+        {
+            *children = Some(Self::load_one_level(path).unwrap_or_else(|err| {
+                log::warn!("failed to read {}: {err}", path.display());
+                Vec::new()
+            }));
         }
     }
 
-    /// Flips the expanded state of a directory, loading its children on first expand.
-    pub fn toggle_expand(&mut self) {
-        if let FsNode::Dir { expanded, .. } = self {
-            *expanded = !*expanded;
-        }
-        if self.is_expanded() {
+    /// Sets a directory's expanded state. Returns `true` if this loaded its children
+    /// for the first time (so a view built from the tree must be rebuilt).
+    pub fn set_expanded(&mut self, value: bool) -> bool {
+        let FsNode::Dir {
+            expanded, children, ..
+        } = self
+        else {
+            return false;
+        };
+        *expanded = value;
+        let needs_load = value && children.is_none();
+        if needs_load {
             self.ensure_loaded();
         }
+        needs_load
     }
 
-    pub fn is_expanded(&self) -> bool {
+    /// Finds the node for `path` among this node and its loaded descendants.
+    pub fn find_mut(&mut self, path: &Path) -> Option<&mut FsNode> {
+        if self.path() == path {
+            return Some(self);
+        }
+        if !path.starts_with(self.path()) {
+            return None;
+        }
+        self.children_mut()?
+            .iter_mut()
+            .find_map(|child| child.find_mut(path))
+    }
+
+    pub fn children(&self) -> Option<&[FsNode]> {
+        match self {
+            FsNode::Dir { children, .. } => children.as_deref(),
+            FsNode::File { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn is_expanded(&self) -> bool {
         matches!(self, FsNode::Dir { expanded: true, .. })
     }
 
@@ -125,7 +153,7 @@ mod tests {
         let mut root = FsNode::from_path(tmp.path());
         assert!(root.children_mut().is_none(), "children load lazily");
 
-        root.toggle_expand();
+        root.set_expanded(true);
         assert!(root.is_expanded());
         let names: Vec<_> = root
             .children_mut()
@@ -135,7 +163,24 @@ mod tests {
             .collect();
         assert_eq!(names, ["zeta", "A.json", "b.js"]);
 
-        root.toggle_expand();
+        root.set_expanded(false);
         assert!(!root.is_expanded());
+    }
+
+    #[test]
+    fn set_expanded_reports_first_load_and_find_mut_locates_nodes() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src/ui")).unwrap();
+        std::fs::write(tmp.path().join("src/ui/app.js"), "").unwrap();
+
+        let mut root = FsNode::from_path(tmp.path());
+        assert!(root.set_expanded(true), "first expand loads children");
+        assert!(!root.set_expanded(true), "already loaded");
+
+        let src = root.find_mut(&tmp.path().join("src")).unwrap();
+        assert!(src.set_expanded(true));
+        let ui = root.find_mut(&tmp.path().join("src/ui")).unwrap();
+        assert!(ui.is_dir());
+        assert!(root.find_mut(Path::new("/elsewhere")).is_none());
     }
 }

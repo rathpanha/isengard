@@ -1,4 +1,3 @@
-pub mod buffer;
-pub mod highlight;
-pub mod highlight_theme;
+pub mod document;
 pub mod language;
+pub mod tabs;

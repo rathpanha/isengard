@@ -2,22 +2,48 @@ mod app;
 mod config;
 mod editor;
 mod file_tree;
+mod menus;
+mod theme;
 mod ui;
 
-fn main() -> eframe::Result<()> {
+use std::path::PathBuf;
+
+use gpui_kit::component::TitleBar;
+use gpui_kit::*;
+
+use crate::app::IsengardApp;
+use crate::config::AppConfig;
+
+fn main() {
     env_logger::init();
+    // `isengard <folder>` opens a folder; `isengard <file>` opens its parent and the file.
+    let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Isengard")
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0]),
-        ..Default::default()
-    };
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .with_quit_mode(QuitMode::LastWindowClosed)
+        .run(move |cx| {
+            gpui_kit::init(cx); // must come before any component is used
+            theme::load_fonts(cx);
+            let config = AppConfig::load();
+            theme::apply(&config, None, cx);
+            app::init(cx);
+            let app_menu_bar = menus::init(cx);
 
-    eframe::run_native(
-        "Isengard",
-        options,
-        Box::new(|cc| Ok(Box::new(app::IsengardApp::new(cc)))),
-    )
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(1280.), px(800.)),
+                    cx,
+                ))),
+                window_min_size: Some(size(px(640.), px(400.))),
+                ..TitleBar::window_options()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                window.set_window_title("Isengard");
+                cx.new(|cx| IsengardApp::new(config, initial_path, app_menu_bar, window, cx))
+            })
+            .expect("failed to open window");
+            cx.activate(true);
+        });
 }

@@ -29,16 +29,16 @@ impl Language {
         }
     }
 
-    /// Resolves an injection language name (e.g. from `<script>` in HTML).
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
-            "javascript" | "js" => Some(Language::JavaScript),
-            "typescript" | "ts" => Some(Language::TypeScript),
-            "tsx" => Some(Language::Tsx),
-            "html" => Some(Language::Html),
-            "css" => Some(Language::Css),
-            "json" => Some(Language::Json),
-            _ => None,
+    /// Language name understood by the GPUI Kit editor's tree-sitter highlighter.
+    pub fn highlighter_name(self) -> &'static str {
+        match self {
+            Language::JavaScript => "javascript",
+            Language::TypeScript => "typescript",
+            Language::Tsx => "tsx",
+            Language::Html => "html",
+            Language::Css => "css",
+            Language::Json => "json",
+            Language::PlainText => "text",
         }
     }
 
@@ -61,9 +61,15 @@ mod tests {
 
     #[test]
     fn detects_language_from_extension() {
-        assert_eq!(Language::from_path(Path::new("a/app.JS")), Language::JavaScript);
+        assert_eq!(
+            Language::from_path(Path::new("a/app.JS")),
+            Language::JavaScript
+        );
         assert_eq!(Language::from_path(Path::new("x.tsx")), Language::Tsx);
         assert_eq!(Language::from_path(Path::new("index.html")), Language::Html);
-        assert_eq!(Language::from_path(Path::new("Makefile")), Language::PlainText);
+        assert_eq!(
+            Language::from_path(Path::new("Makefile")),
+            Language::PlainText
+        );
     }
 }
