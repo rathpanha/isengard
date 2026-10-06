@@ -19,13 +19,6 @@ pub fn is_image(path: &Path) -> bool {
         })
 }
 
-/// True for `.svg` — edited as text, optionally rendered like Markdown preview.
-pub fn is_svg(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"))
-}
-
 /// Reads a file for editing. Fails for files that are not valid UTF-8 text.
 pub fn read_text(path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
@@ -68,9 +61,8 @@ mod tests {
     fn detects_image_extensions() {
         assert!(is_image(Path::new("shot.PNG")));
         assert!(is_image(Path::new("a/b/photo.jpeg")));
+        // SVG is text + preview (Language::Svg), not a raster image tab.
         assert!(!is_image(Path::new("icon.svg")));
-        assert!(is_svg(Path::new("icon.svg")));
-        assert!(is_svg(Path::new("Logo.SVG")));
         assert!(!is_image(Path::new("readme.md")));
         assert!(!is_image(Path::new("blob.bin")));
     }

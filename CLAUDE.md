@@ -263,6 +263,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Dropped unused `document::is_svg` (SVG via `Language::Svg`).
 - **2026-10-07** — File tree: depth-0 rows align with the workspace title
   (`px_3`); each nest is one `INDENT_COL` only (no extra `INDENT_BASE`).
   Multi-root still suppresses only the cross-root rail.
