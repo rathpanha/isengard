@@ -119,13 +119,12 @@ impl FileTreePanel {
         });
     }
 
-    /// Renders the header (`title`, upper-cased) and the tree. `on_open_file` is
-    /// called when a file is clicked. In a multi-root workspace, right-clicking a
-    /// root offers "Remove Folder from Workspace".
+    /// Renders the header (`title`, upper-cased) and the tree.
+    /// `on_open_file(path, permanent, …)` — `permanent` is true on double-click.
     pub fn render(
         &self,
         title: &str,
-        on_open_file: impl Fn(PathBuf, &mut Window, &mut App) + 'static,
+        on_open_file: impl Fn(PathBuf, bool, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> AnyElement {
         let theme = cx.theme();
@@ -239,9 +238,9 @@ impl FileTreePanel {
                                         ),
                                 ),
                         )
-                        .on_click(move |_, window, cx| {
+                        .on_click(move |ev: &ClickEvent, window, cx| {
                             if is_file {
-                                on_open_file(path.clone(), window, cx);
+                                on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
                             }
                         })
                 })

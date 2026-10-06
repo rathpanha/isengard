@@ -69,6 +69,10 @@ Add a row here whenever a new shared component is created.
 
 ## 5. Patterns
 
+- **Preview tabs:** single-click a file in the tree → italic preview tab
+  (only one; the next preview replaces it unless dirty, then it pins). 
+  Double-click the file or the tab, or edit the buffer → permanent. File >
+  Open File / CLI opens permanent.
 - **File tree icons:** full Material Icon Theme under
   `assets/icons/material/` (MIT; see its `LICENSE`) with associations from
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
@@ -115,10 +119,8 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
-- **2026-10-07** — File tree: narrow panel keeps indent alignment (no flex
-  shrink on guide columns; truncate labels).
-- **2026-10-07** — File tree: indent guide lines + gitignored rows dimmed
-  (still visible; `ignore` crate).
+- **2026-10-07** — Preview tabs: italic until double-click / edit.
+- **2026-10-07** — Gitignored tree rows: 60% opacity.
 - **2026-10-07** — Editor background matches file-tree sidebar; Dockerfile
   language alias (Bash highlighter).
 - **2026-10-07** — Project GPL-3.0-only; CONTRIBUTING: no PRs.

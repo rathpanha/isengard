@@ -38,6 +38,14 @@ impl<T> TabList<T> {
         self.items.iter_mut().find(|t| pred(t))
     }
 
+    pub fn get(&self, index: usize) -> Option<&T> {
+        self.items.get(index)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.items.get_mut(index)
+    }
+
     /// Appends a tab and makes it active.
     pub fn push(&mut self, item: T) {
         self.items.push(item);

@@ -68,7 +68,9 @@ tabs, highlighted editor, status bar):
   Icons are the full Material Icon Theme set (associations from
   `material-icons.json`); other UI chrome still uses Lucide via GPUI Kit.
 - Tabs (`TabBar`/`Tab` with a close button), one `EditorState` per tab so each
-  keeps its own undo history and cursor. The close button and the welcome screen's
+  keeps its own undo history and cursor. Tree single-click opens a **preview**
+  tab (italic; replaced by the next preview open); double-click the file or the
+  tab (or edit) pins it permanent. The close button and the welcome screen's
   "remove recent" × are `destructive_icon_button`s: muted at rest, red icon +
   faint red tint on hover (DESIGN.md §3).
 - Code editor (GPUI Kit `Editor`): tree-sitter highlighting for every language
@@ -261,6 +263,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Preview tabs (VS Code-style): tree single-click = preview,
+  double-click file/tab or edit = pin.
 - **2026-10-07** — Gitignored tree rows: 60% opacity.
 - **2026-10-07** — File tree: indent columns don't shrink on narrow panels
   (labels truncate instead).

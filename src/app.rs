@@ -15,7 +15,7 @@ use gpui_kit::component::{
     tree::TreeEvent,
     v_flex,
 };
-use gpui_kit::*;
+use gpui_kit::{prelude::FluentBuilder as _, *};
 use serde::Deserialize;
 
 use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE};
@@ -87,6 +87,8 @@ struct EditorTab {
     language: Language,
     state: Entity<EditorState>,
     is_modified: bool,
+    /// VS Code–style preview: replaced by the next single-click open until pinned.
+    preview: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -161,7 +163,7 @@ impl IsengardApp {
                 if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                     app.open_folder(parent, window, cx);
                 }
-                app.open_file(&path, window, cx);
+                app.open_file(&path, true, window, cx);
             }
             _ => {}
         }
@@ -392,11 +394,28 @@ impl IsengardApp {
         cx.notify();
     }
 
-    fn open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens `path` in a tab. `permanent == false` is a preview tab (italic);
+    /// another preview open replaces it. Double-click / edit / `permanent`
+    /// pins the tab.
+    fn open_file(
+        &mut self,
+        path: &Path,
+        permanent: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ix) = self.tabs.position(|t| t.path == path) {
+            if permanent {
+                self.pin_tab(ix, cx);
+            }
             self.activate_tab(ix, window, cx);
             return;
         }
+
+        if !permanent {
+            self.retire_preview_tab(window, cx);
+        }
+
         let text = match document::read_text(path) {
             Ok(text) => text,
             Err(err) => return notify_error(format!("Could not open file: {err:#}"), window, cx),
@@ -421,6 +440,8 @@ impl IsengardApp {
                     let id = state.entity_id();
                     if let Some(tab) = this.tabs.find_mut(|t| t.state.entity_id() == id) {
                         tab.is_modified = true;
+                        // Editing pins a preview tab (VS Code behaviour).
+                        tab.preview = false;
                     }
                     cx.notify();
                 }
@@ -434,11 +455,34 @@ impl IsengardApp {
             language,
             state,
             is_modified: false,
+            preview: !permanent,
             _subscriptions: subscriptions,
         });
         self.file_tree.select_path(path, cx);
         self.focus_active_editor(window, cx);
         cx.notify();
+    }
+
+    fn pin_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(ix)
+            && tab.preview
+        {
+            tab.preview = false;
+            cx.notify();
+        }
+    }
+
+    /// Drops a clean preview tab, or pins it if dirty, before opening another preview.
+    fn retire_preview_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.tabs.position(|t| t.preview) else {
+            return;
+        };
+        let dirty = self.tabs.get(ix).is_some_and(|t| t.is_modified);
+        if dirty {
+            self.pin_tab(ix, cx);
+        } else if let Some(path) = self.tabs.get(ix).map(|t| t.path.clone()) {
+            self.close_tab(&path, window, cx);
+        }
     }
 
     fn activate_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -644,7 +688,7 @@ impl IsengardApp {
                 } else if Workspace::is_workspace_file(&path) {
                     this.open_workspace_file(&path, window, cx);
                 } else {
-                    this.open_file(&path, window, cx);
+                    this.open_file(&path, true, window, cx);
                 }
             })
             .ok()
@@ -860,26 +904,35 @@ impl IsengardApp {
 
         let tab_bar = TabBar::new("editor-tabs")
             .selected_index(self.tabs.active_index().unwrap_or_default())
-            .on_click(
-                cx.listener(|this, ix: &usize, window, cx| this.activate_tab(*ix, window, cx)),
-            )
-            .children(self.tabs.iter().map(|tab| {
+            .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
                 let path = tab.path.clone();
                 let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
                 let hovered = self.is_destructive_hovered(&id);
-                Tab::new().label(tab.label()).cursor_pointer().suffix(
-                    destructive_icon_button(
-                        id,
-                        IconName::Close,
-                        "Close",
-                        hovered,
-                        move |this, window, cx| this.request_close(&path, window, cx),
-                        cx,
+                let preview = tab.preview;
+                Tab::new()
+                    .label(tab.label())
+                    .cursor_pointer()
+                    .when(preview, |tab| tab.italic())
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        // Double-click the tab pins a preview (VS Code).
+                        if ev.click_count() >= 2 {
+                            this.pin_tab(ix, cx);
+                        }
+                        this.activate_tab(ix, window, cx);
+                    }))
+                    .suffix(
+                        destructive_icon_button(
+                            id,
+                            IconName::Close,
+                            "Close",
+                            hovered,
+                            move |this, window, cx| this.request_close(&path, window, cx),
+                            cx,
+                        )
+                        // Same 12px from the tab's right border as the label's left padding:
+                        // mr_2 (8px) plus the xsmall icon button's 4px inset.
+                        .mr_2(),
                     )
-                    // Same 12px from the tab's right border as the label's left padding:
-                    // mr_2 (8px) plus the xsmall icon button's 4px inset.
-                    .mr_2(),
-                )
             }));
 
         v_flex()
@@ -928,8 +981,10 @@ impl Render for IsengardApp {
             let app = cx.entity().downgrade();
             let tree = self.file_tree.render(
                 &self.workspace.title(),
-                move |path, window, cx| {
-                    _ = app.update(cx, |this, cx| this.open_file(&path, window, cx));
+                move |path, permanent, window, cx| {
+                    _ = app.update(cx, |this, cx| {
+                        this.open_file(&path, permanent, window, cx)
+                    });
                 },
                 cx,
             );
