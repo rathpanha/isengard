@@ -105,6 +105,54 @@ impl FsNode {
         needs_load
     }
 
+    /// Collects paths of directories that are currently expanded.
+    /// Stops at a collapsed directory — nested expand flags are not visible.
+    pub fn collect_expanded(&self, out: &mut Vec<PathBuf>) {
+        if let FsNode::Dir {
+            path,
+            expanded,
+            children,
+            ..
+        } = self
+        {
+            if !*expanded {
+                return;
+            }
+            out.push(path.clone());
+            if let Some(children) = children {
+                for child in children {
+                    child.collect_expanded(out);
+                }
+            }
+        }
+    }
+
+    /// Expands every ancestor directory along `path` (inclusive if `path` is a dir),
+    /// loading children as needed so nested targets become reachable.
+    pub fn expand_toward(&mut self, path: &Path) {
+        if !path.starts_with(self.path()) && path != self.path() {
+            return;
+        }
+        if self.path() == path {
+            if self.is_dir() {
+                self.set_expanded(true);
+            }
+            return;
+        }
+        if !self.is_dir() {
+            return;
+        }
+        self.set_expanded(true);
+        if let Some(children) = self.children_mut() {
+            for child in children {
+                if path.starts_with(child.path()) {
+                    child.expand_toward(path);
+                    break;
+                }
+            }
+        }
+    }
+
     /// Finds the node for `path` among this node and its loaded descendants.
     pub fn find_mut(&mut self, path: &Path) -> Option<&mut FsNode> {
         if self.path() == path {
@@ -141,6 +189,38 @@ impl FsNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collect_expanded_skips_under_collapsed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src/ui")).unwrap();
+
+        let mut root = FsNode::from_path(tmp.path());
+        root.expand_toward(&tmp.path().join("src/ui"));
+        root.set_expanded(false); // collapse root; nested flags remain true internally
+
+        let mut expanded = Vec::new();
+        root.collect_expanded(&mut expanded);
+        assert!(
+            expanded.is_empty(),
+            "collapsed root must not report nested expands: {expanded:?}"
+        );
+    }
+
+    #[test]
+    fn collect_expanded_and_expand_toward() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src/ui")).unwrap();
+        std::fs::write(tmp.path().join("src/ui/app.js"), "").unwrap();
+
+        let mut root = FsNode::from_path(tmp.path());
+        root.expand_toward(&tmp.path().join("src/ui"));
+        let mut expanded = Vec::new();
+        root.collect_expanded(&mut expanded);
+        assert!(expanded.contains(&tmp.path().to_path_buf()));
+        assert!(expanded.contains(&tmp.path().join("src")));
+        assert!(expanded.contains(&tmp.path().join("src/ui")));
+    }
 
     #[test]
     fn lazy_load_sorts_dirs_first_and_skips_ignored() {

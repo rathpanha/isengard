@@ -20,7 +20,7 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 use serde::Deserialize;
 
-use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE};
+use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE, WorkspaceSession};
 use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
@@ -153,6 +153,8 @@ pub struct IsengardApp {
     app_menu_bar: Entity<AppMenuBar>,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
+    /// Suppresses session writes while batch-restoring tabs.
+    restoring_session: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -168,12 +170,16 @@ impl IsengardApp {
         let tree_subscription =
             cx.subscribe(file_tree.state(), |this, _, event: &TreeEvent, cx| {
                 this.file_tree.handle_event(event, cx);
+                this.persist_session();
             });
 
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
-            weak.update(cx, |this, cx| this.confirm_quit(window, cx))
-                .unwrap_or(true)
+            weak.update(cx, |this, cx| {
+                this.persist_session();
+                this.confirm_quit(window, cx)
+            })
+            .unwrap_or(true)
         });
 
         let focus_handle = cx.focus_handle();
@@ -187,6 +193,7 @@ impl IsengardApp {
             tabs: TabList::default(),
             app_menu_bar,
             allow_quit: false,
+            restoring_session: false,
             _subscriptions: vec![tree_subscription],
         };
 
@@ -258,6 +265,7 @@ impl IsengardApp {
         }
         self.persist_workspace(window, cx);
         self.workspace_changed(window, cx);
+        self.persist_session();
     }
 
     /// Re-writes the workspace file after a folder change, if there is one.
@@ -327,6 +335,7 @@ impl IsengardApp {
     }
 
     fn apply_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
+        self.persist_session();
         self.tabs = TabList::default();
         self.workspace = match switch {
             Switch::Folder(folder) => {
@@ -344,6 +353,49 @@ impl IsengardApp {
         self.config.save();
         self.focus_handle.focus(window, cx);
         self.workspace_changed(window, cx);
+        self.restore_session(window, cx);
+    }
+
+    /// Writes the current tabs + expanded dirs under this workspace's session key.
+    fn persist_session(&mut self) {
+        if self.restoring_session {
+            return;
+        }
+        let Some(key) = self.workspace.session_key() else {
+            return;
+        };
+        let session = WorkspaceSession {
+            open_files: self.tabs.iter().map(|t| t.path.clone()).collect(),
+            active: self.tabs.active().map(|t| t.path.clone()),
+            expanded: self.file_tree.expanded_paths(),
+        };
+        self.config.put_session(key, session);
+        self.config.save();
+    }
+
+    /// Reopens saved tabs and expands dirs for the current workspace key.
+    fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = self.workspace.session_key() else {
+            return;
+        };
+        let Some(session) = self.config.session(&key).cloned() else {
+            return;
+        };
+
+        self.restoring_session = true;
+        self.file_tree.expand_paths(&session.expanded, cx);
+        for path in &session.open_files {
+            if path.is_file() {
+                self.open_file(path, true, window, cx);
+            }
+        }
+        if let Some(active) = &session.active
+            && let Some(ix) = self.tabs.position(|t| t.path == *active)
+        {
+            self.activate_tab(ix, window, cx);
+        }
+        self.restoring_session = false;
+        self.persist_session();
     }
 
     /// Asks where to save the workspace file, saves it, then continues with `next`.
@@ -452,6 +504,7 @@ impl IsengardApp {
             });
             self.file_tree.select_path(path, cx);
             self.focus_handle.focus(window, cx);
+            self.persist_session();
             cx.notify();
             return;
         }
@@ -506,6 +559,7 @@ impl IsengardApp {
         });
         self.file_tree.select_path(path, cx);
         self.focus_active_editor(window, cx);
+        self.persist_session();
         cx.notify();
     }
 
@@ -537,6 +591,7 @@ impl IsengardApp {
                 self.file_tree.select_path(&path, cx);
             }
             self.focus_active_editor(window, cx);
+            self.persist_session();
             cx.notify();
         }
     }
@@ -595,6 +650,7 @@ impl IsengardApp {
         if let Some(ix) = self.tabs.position(|t| t.path == path) {
             self.tabs.remove(ix);
             self.focus_active_editor(window, cx);
+            self.persist_session();
             cx.notify();
         }
     }
@@ -684,6 +740,7 @@ impl IsengardApp {
     /// Returns `true` if the app may close now; otherwise asks the user first.
     fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.allow_quit || !self.has_unsaved() {
+            self.persist_session();
             return true;
         }
         self.open_choice_dialog(
@@ -703,6 +760,7 @@ impl IsengardApp {
     }
 
     fn quit(&mut self, cx: &mut Context<Self>) {
+        self.persist_session();
         self.allow_quit = true;
         cx.quit();
     }
@@ -817,6 +875,7 @@ impl IsengardApp {
         if self.workspace.remove_folder(&action.0) {
             self.persist_workspace(window, cx);
             self.workspace_changed(window, cx);
+            self.persist_session();
         }
     }
 
@@ -857,12 +916,14 @@ impl IsengardApp {
     fn on_next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.cycle(true);
         self.focus_active_editor(window, cx);
+        self.persist_session();
         cx.notify();
     }
 
     fn on_prev_tab(&mut self, _: &PrevTab, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.cycle(false);
         self.focus_active_editor(window, cx);
+        self.persist_session();
         cx.notify();
     }
 

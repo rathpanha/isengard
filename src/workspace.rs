@@ -113,6 +113,29 @@ impl Workspace {
         }
     }
 
+    /// Stable key for persisting open tabs / tree expand in [`crate::config::AppConfig`].
+    ///
+    /// Workspace file → that file's path; single folder → folder path; untitled
+    /// multi-root → `untitled:` + sorted folder paths joined by `\n`.
+    pub fn session_key(&self) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        if let Some(file) = &self.file {
+            return Some(file.to_string_lossy().into_owned());
+        }
+        if self.folders.len() == 1 {
+            return Some(self.folders[0].to_string_lossy().into_owned());
+        }
+        let mut folders: Vec<String> = self
+            .folders
+            .iter()
+            .map(|f| f.to_string_lossy().into_owned())
+            .collect();
+        folders.sort();
+        Some(format!("untitled:{}", folders.join("\n")))
+    }
+
     /// The root folder containing `path` (the longest match, for nested roots).
     pub fn root_for(&self, path: &Path) -> Option<&Path> {
         self.folders
@@ -242,6 +265,26 @@ mod tests {
             w.add_folder(Path::new(f));
         }
         w
+    }
+
+    #[test]
+    fn session_keys() {
+        assert_eq!(Workspace::default().session_key(), None);
+        assert_eq!(
+            ws(&["/code/app"]).session_key().as_deref(),
+            Some("/code/app")
+        );
+        let mut named = ws(&["/code/a", "/code/b"]);
+        named.file = Some(PathBuf::from("/code/demo.isengard-workspace"));
+        assert_eq!(
+            named.session_key().as_deref(),
+            Some("/code/demo.isengard-workspace")
+        );
+        // Untitled multi-root: sorted folder paths.
+        assert_eq!(
+            ws(&["/code/b", "/code/a"]).session_key().as_deref(),
+            Some("untitled:/code/a\n/code/b")
+        );
     }
 
     #[test]

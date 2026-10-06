@@ -39,13 +39,10 @@ fn guide_active(depths: &[usize], ix: usize, col: usize, multi_root: bool) -> bo
     }
     // Multi-root col 0: keep the rail only while more content remains under
     // this root; a following depth-0 row is the next workspace folder.
-    for &depth in &depths[ix + 1..] {
-        if depth == 0 {
-            return false;
-        }
-        return true;
+    match depths.get(ix + 1).copied() {
+        Some(0) | None => false,
+        Some(_) => true,
     }
-    false
 }
 
 #[cfg(test)]

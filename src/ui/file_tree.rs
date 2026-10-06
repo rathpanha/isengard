@@ -47,6 +47,8 @@ impl FileTreePanel {
     }
 
     /// Replaces the roots, keeping the loaded/expanded state of roots that remain.
+    /// New roots start expanded (single-root needs that so children show; multi-root
+    /// first open expands all). Session restore then calls [`Self::expand_paths`].
     pub fn set_folders(&mut self, folders: &[PathBuf], cx: &mut App) {
         let mut previous = std::mem::take(&mut self.roots);
         self.roots = folders
@@ -62,6 +64,38 @@ impl FileTreePanel {
                 },
             )
             .collect();
+        self.refresh_gitignores();
+        self.sync(cx);
+    }
+
+    /// Paths of directories that are currently expanded (nested under collapsed
+    /// ancestors are omitted — they are not visible).
+    pub fn expanded_paths(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        for root in &self.roots {
+            root.collect_expanded(&mut out);
+        }
+        out
+    }
+
+    /// Applies saved expand state: multi-root roots not listed stay collapsed;
+    /// each path (and its ancestors) is expanded and loaded, then the tree syncs.
+    pub fn expand_paths(&mut self, paths: &[PathBuf], cx: &mut App) {
+        let want: HashSet<PathBuf> = paths.iter().cloned().collect();
+        if self.roots.len() > 1 {
+            for root in &mut self.roots {
+                let expand = want.contains(root.path());
+                root.set_expanded(expand);
+            }
+        }
+        for path in paths {
+            for root in &mut self.roots {
+                if path.starts_with(root.path()) {
+                    root.expand_toward(path);
+                    break;
+                }
+            }
+        }
         self.refresh_gitignores();
         self.sync(cx);
     }

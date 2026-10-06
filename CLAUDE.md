@@ -112,7 +112,7 @@ src/
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo image for the UI + macOS Dock icon (objc2 AppKit)
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
-├── config.rs            AppConfig (serde JSON file) + recent folders/workspaces
+├── config.rs            AppConfig (serde JSON) + recents + workspace sessions
 ├── workspace.rs         Workspace (root folders + optional file): naming,
 │                        root_for/relative_label, load/save .isengard-workspace
 ├── editor/
@@ -150,7 +150,8 @@ src/
   `FileTreePanel::set_folders` and the titles) and `persist_workspace` (writes
   the file if there is one). Switching goes through `request_switch(Switch)` →
   optional "save untitled workspace" dialog → `confirm_unsaved_then` →
-  `apply_switch` (closes tabs, records recents). Confirmations use
+  `apply_switch` (persists session, closes tabs, records recents, restores
+  the new workspace's session). Confirmations use
   `open_choice_dialog` (Cancel / secondary / primary).
   `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
@@ -237,8 +238,9 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
   root context menu, switch dialogs. Quitting with an untitled multi-root
   workspace does not offer to save it (only switching does). Workspace
-  `settings` are stored but not applied. Session restore (reopening tabs) is
-  not implemented.
+  `settings` are stored but not applied. Session restore reopens tabs and
+  expanded tree folders per workspace/folder (from config `sessions`); does
+  not restore unsaved buffer text or auto-open last workspace on launch.
 - Save All stops at the first failing file.
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
 - Windows icon embedding (`build.rs`) and the Linux X11 window icon are
@@ -263,6 +265,12 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Session restore: multi-root expand respects collapsed roots
+  (`expand_paths` applies the saved set; nested expands under a collapsed
+  parent are not persisted).
+- **2026-10-07** — Session restore: open tabs + expanded tree dirs persisted
+  per folder/workspace in `config.json` (`sessions`); restored when reopening
+  from welcome / Open / CLI. No dirty-buffer or cold-start auto-open.
 - **2026-10-07** — File tree hover full-bleed (no tree `px`; inset on row content).
 - **2026-10-07** — Dropped the file-tree header label (name lives in the title bar).
 - **2026-10-07** — Indent guides: paint every ancestor column through all

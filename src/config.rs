@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,17 @@ pub const MIN_FONT_SIZE: f32 = 9.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
 /// Cap for each recent list (folders and workspaces).
 pub const MAX_RECENT: usize = 8;
+/// Cap for persisted workspace sessions (tabs + tree expand).
+pub const MAX_SESSIONS: usize = 16;
+
+/// Open tabs and expanded folders for one workspace / folder key.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspaceSession {
+    pub open_files: Vec<PathBuf>,
+    pub active: Option<PathBuf>,
+    pub expanded: Vec<PathBuf>,
+}
 
 /// User-facing settings, persisted as JSON in the platform config directory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -20,6 +32,8 @@ pub struct AppConfig {
     pub recent_folders: Vec<PathBuf>,
     /// `.isengard-workspace` files, most recently opened first.
     pub recent_workspaces: Vec<PathBuf>,
+    /// Last tabs + expanded dirs, keyed by [`crate::workspace::Workspace::session_key`].
+    pub sessions: BTreeMap<String, WorkspaceSession>,
 }
 
 impl Default for AppConfig {
@@ -29,6 +43,7 @@ impl Default for AppConfig {
             model: "claude-sonnet-4-5".to_owned(),
             recent_folders: Vec::new(),
             recent_workspaces: Vec::new(),
+            sessions: BTreeMap::new(),
         }
     }
 }
@@ -82,6 +97,7 @@ impl AppConfig {
 
     pub fn remove_recent_folder(&mut self, folder: &Path) {
         self.recent_folders.retain(|p| p != folder);
+        self.remove_session_for_path(folder);
     }
 
     pub fn add_recent_workspace(&mut self, file: &Path) {
@@ -90,6 +106,48 @@ impl AppConfig {
 
     pub fn remove_recent_workspace(&mut self, file: &Path) {
         self.recent_workspaces.retain(|p| p != file);
+        self.remove_session_for_path(file);
+    }
+
+    pub fn put_session(&mut self, key: String, session: WorkspaceSession) {
+        if key.is_empty() {
+            return;
+        }
+        self.sessions.insert(key.clone(), session);
+        while self.sessions.len() > MAX_SESSIONS {
+            let victim = self
+                .sessions
+                .keys()
+                .filter(|k| *k != &key)
+                .find(|k| {
+                    let p = Path::new(k.as_str());
+                    !self.recent_folders.iter().any(|f| f == p)
+                        && !self.recent_workspaces.iter().any(|f| f == p)
+                        && !k.starts_with("untitled:")
+                })
+                .cloned()
+                .or_else(|| {
+                    self.sessions
+                        .keys()
+                        .find(|k| *k != &key)
+                        .cloned()
+                });
+            // ponytail: prefer evicting keys not in recent lists; never the one just written.
+            if let Some(k) = victim {
+                self.sessions.remove(&k);
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub fn session(&self, key: &str) -> Option<&WorkspaceSession> {
+        self.sessions.get(key)
+    }
+
+    fn remove_session_for_path(&mut self, path: &Path) {
+        let key = path.to_string_lossy().into_owned();
+        self.sessions.remove(&key);
     }
 }
 
@@ -145,6 +203,51 @@ mod tests {
         );
         config.remove_recent_workspace(Path::new("/code/other.isengard-workspace"));
         assert_eq!(config.recent_workspaces.len(), 1);
+        assert!(!config
+            .sessions
+            .contains_key("/code/other.isengard-workspace"));
+    }
+
+    #[test]
+    fn sessions_roundtrip_and_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut config = AppConfig::default();
+        for i in 0..MAX_SESSIONS + 3 {
+            config.put_session(
+                format!("/extra/{i:02}"),
+                WorkspaceSession {
+                    open_files: vec![PathBuf::from(format!("/extra/{i:02}/f"))],
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(config.sessions.len(), MAX_SESSIONS);
+        config.put_session(
+            "/code/app".into(),
+            WorkspaceSession {
+                open_files: vec![PathBuf::from("/code/app/main.rs")],
+                active: Some(PathBuf::from("/code/app/main.rs")),
+                expanded: vec![PathBuf::from("/code/app/src")],
+            },
+        );
+        assert!(config.sessions.len() <= MAX_SESSIONS);
+        assert!(config.session("/code/app").is_some());
+        config.save_to(&path).unwrap();
+        let loaded = AppConfig::load_from(&path);
+        assert_eq!(
+            loaded.session("/code/app").map(|s| s.open_files.clone()),
+            Some(vec![PathBuf::from("/code/app/main.rs")])
+        );
+    }
+
+    #[test]
+    fn remove_recent_drops_session() {
+        let mut config = AppConfig::default();
+        config.add_recent_folder(Path::new("/code/app"));
+        config.put_session("/code/app".into(), WorkspaceSession::default());
+        config.remove_recent_folder(Path::new("/code/app"));
+        assert!(config.session("/code/app").is_none());
     }
 
     #[test]
