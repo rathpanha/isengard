@@ -88,13 +88,14 @@ Add a row here whenever a new shared component is created.
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
   `img()` so upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and
   re-tints. Do not replace Lucide for other UI chrome.
-- **File tree indent guides:** vertical 1px lines in each depth column
-  (`sidebar_border`) when a sibling exists below that level (VS Code–style).
-  Multi-root never draws the depth-0 rail (no line linking workspace roots);
-  guides start under each root. Depth-0 rows share the tree/`px_3` inset with
-  the uppercased workspace title; each deeper level adds one fixed-width
-  column (`INDENT_COL`, `flex_shrink_0`) — same step as a single-root folder.
-  A narrow panel truncates labels instead of compressing the tree.
+- **File tree indent guides:** vertical 1px lines in each ancestor column
+  (`sidebar_border`) through every descendant row (including the last child),
+  so a folder's rail runs the full height of its contents. Multi-root: col 0
+  stops before the next workspace root (no line between roots). Depth-0 rows
+  share `px_3` with the workspace title; each deeper level adds one
+  `INDENT_COL`. Guide segments use a 1px vertical overlap; ListItem `py_0`/
+  `px_0` override Kit defaults. A narrow panel truncates labels instead of
+  compressing the tree.
 - **Gitignored entries:** still listed; icon + label at 60% opacity (not
   hidden). Matched via `ignore` + each root's `.gitignore` tree.
 - **Title bar:** macOS shows the centred window title; Windows/Linux show the
@@ -134,6 +135,8 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Indent guides run through every descendant (including last
+  child); 1px segment overlap; multi-root still skips the cross-root rail.
 - **2026-10-07** — File tree: depth-0 rows share `px_3` with the workspace
   title; one `INDENT_COL` per depth (dropped extra `INDENT_BASE` so the first
   nest matches a normal folder). Multi-root still suppresses the cross-root rail.

@@ -190,31 +190,36 @@ impl FileTreePanel {
                     ListItem::new(ix)
                         .w_full()
                         .min_w_0()
-                        .overflow_hidden()
+                        // Kit's ListItem defaults to py_1 — that padding sits
+                        // between rows and breaks indent guides. Zero it; vertical
+                        // spacing lives on the label cluster only.
+                        .py_0()
+                        // Tree already applies px_3 (aligned with the workspace title).
+                        .px_0()
                         .when(!entry.is_disabled(), |item| item.cursor_pointer())
                         .rounded(cx.theme().radius)
-                        .py_0p5()
                         .child(
                             h_flex()
                                 .w_full()
                                 .min_w_0()
-                                .items_center()
-                                .overflow_hidden()
-                                // Depth 0 shares the tree's px_3 with the workspace
-                                // title. Nested rows get one INDENT_COL per depth
-                                // (same step as a single-root folder). Columns must
-                                // not shrink — otherwise a narrow panel compresses
-                                // deeper rows and the tree looks skewed.
+                                .items_stretch()
+                                // Do not overflow_hidden here — guide lines extend
+                                // 1px past the row to meet the next segment.
                                 .children(guides.into_iter().map(|continues| {
+                                    // Absolute line with 1px overlap so segments
+                                    // still meet if ListItem/list leaves a hairline gap.
                                     div()
+                                        .relative()
                                         .w(px(INDENT_COL))
-                                        .h(px(22.))
                                         .flex_shrink_0()
-                                        .flex()
-                                        .justify_center()
-                                        .items_center()
                                         .children(continues.then(|| {
-                                            div().w(px(1.)).h_full().bg(guide_color)
+                                            div()
+                                                .absolute()
+                                                .top(px(-1.))
+                                                .bottom(px(-1.))
+                                                .left(px((INDENT_COL - 1.) / 2.))
+                                                .w(px(1.))
+                                                .bg(guide_color)
                                         }))
                                 }))
                                 .child(
@@ -224,6 +229,7 @@ impl FileTreePanel {
                                         .min_w_0()
                                         .flex_1()
                                         .overflow_hidden()
+                                        .py_0p5()
                                         .when(git_ignored, |this| this.opacity(0.6))
                                         .children(icon)
                                         .child(
