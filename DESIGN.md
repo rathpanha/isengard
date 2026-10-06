@@ -91,11 +91,10 @@ Add a row here whenever a new shared component is created.
 - **File tree indent guides:** vertical 1px lines in each ancestor column
   (`sidebar_border`) through every descendant row (including the last child),
   so a folder's rail runs the full height of its contents. Multi-root: col 0
-  stops before the next workspace root (no line between roots). Depth-0 rows
-  share `px_3` with the workspace title; each deeper level adds one
-  `INDENT_COL`. Guide segments use a 1px vertical overlap; ListItem `py_0`/
-  `px_0` override Kit defaults. A narrow panel truncates labels instead of
-  compressing the tree.
+  stops before the next workspace root (no line between roots). Each deeper
+  level adds one `INDENT_COL`. Guide segments use a 1px vertical overlap;
+  ListItem `py_0`/`px_0` so hover is full-bleed to the panel edge; row content
+  keeps `px_3`. A narrow panel truncates labels instead of compressing the tree.
 - **Gitignored entries:** still listed; icon + label at 60% opacity (not
   hidden). Matched via `ignore` + each root's `.gitignore` tree.
 - **Title bar:** macOS shows the centred window title; Windows/Linux show the
@@ -115,8 +114,8 @@ Add a row here whenever a new shared component is created.
   size (`text_sm`/`text_xs`).
 - **Workspaces:**
   - Naming: a single folder shows its name; a workspace file or several folders
-    show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). The
-    same text is used for the window title and, upper-cased, the tree header.
+    show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). Used
+    for the window / title-bar title only (no duplicate label above the tree).
   - Multi-root tree: each root is a top-level item; a root missing on disk is
     shown disabled as `<name> (missing)` with a folder icon.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`),
@@ -135,6 +134,10 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — File tree: no tree `px` — hover full-bleed; content keeps
+  `px_3` inside the row.
+- **2026-10-07** — Removed the uppercased workspace/folder label above the
+  file tree (title bar already shows it).
 - **2026-10-07** — Indent guides run through every descendant (including last
   child); 1px segment overlap; multi-root still skips the cross-root rail.
 - **2026-10-07** — File tree: depth-0 rows share `px_3` with the workspace

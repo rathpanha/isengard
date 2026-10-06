@@ -263,6 +263,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — File tree hover full-bleed (no tree `px`; inset on row content).
+- **2026-10-07** — Dropped the file-tree header label (name lives in the title bar).
 - **2026-10-07** — Indent guides: paint every ancestor column through all
   descendants (incl. last child) + 1px overlap; multi-root skips only the
   cross-root rail.

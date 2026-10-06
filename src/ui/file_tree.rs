@@ -6,7 +6,6 @@ use gpui_kit::component::{
     ActiveTheme as _, h_flex,
     list::ListItem,
     tree::{TreeEvent, TreeItem, TreeState, tree},
-    v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
@@ -118,16 +117,14 @@ impl FileTreePanel {
         });
     }
 
-    /// Renders the header (`title`, upper-cased) and the tree.
+    /// Renders the file tree.
     /// `on_open_file(path, permanent, …)` — `permanent` is true on double-click.
     pub fn render(
         &self,
-        title: &str,
         on_open_file: impl Fn(PathBuf, bool, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> AnyElement {
         let theme = cx.theme();
-        let name = title.to_uppercase();
         let multi_root = self.roots.len() > 1;
         let on_open_file = Rc::new(on_open_file);
         let guide_masks = Rc::new(compute_guide_masks(self.state.read(cx)));
@@ -147,25 +144,7 @@ impl FileTreePanel {
             set
         });
 
-        v_flex()
-            .size_full()
-            .min_w_0()
-            .overflow_hidden()
-            .bg(theme.sidebar)
-            .text_color(theme.sidebar_foreground)
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.muted_foreground)
-                    .truncate()
-                    .child(name),
-            )
-            .child(
-                tree(&self.state, move |ix, entry, _selected, _window, cx| {
+        tree(&self.state, move |ix, entry, _selected, _window, cx| {
                     let item = entry.item();
                     let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
                     let path = PathBuf::from(item.id.as_ref());
@@ -190,11 +169,10 @@ impl FileTreePanel {
                     ListItem::new(ix)
                         .w_full()
                         .min_w_0()
-                        // Kit's ListItem defaults to py_1 — that padding sits
-                        // between rows and breaks indent guides. Zero it; vertical
-                        // spacing lives on the label cluster only.
+                        // Kit's ListItem defaults to py_1 / px_3 — py gaps break
+                        // guides; px would inset the hover. Zero both; inset the
+                        // row content instead so hover is full-bleed.
                         .py_0()
-                        // Tree already applies px_3 (aligned with the workspace title).
                         .px_0()
                         .when(!entry.is_disabled(), |item| item.cursor_pointer())
                         .rounded(cx.theme().radius)
@@ -203,6 +181,7 @@ impl FileTreePanel {
                                 .w_full()
                                 .min_w_0()
                                 .items_stretch()
+                                .px_3()
                                 // Do not overflow_hidden here — guide lines extend
                                 // 1px past the row to meet the next segment.
                                 .children(guides.into_iter().map(|continues| {
@@ -263,14 +242,13 @@ impl FileTreePanel {
                         )
                     })
                 })
-                .flex_1()
+                .size_full()
                 .min_w_0()
                 .overflow_hidden()
+                .bg(theme.sidebar)
+                .text_color(theme.sidebar_foreground)
                 .text_sm()
-                // Same as the workspace title above so roots line up with it.
-                .px_3(),
-            )
-            .into_any_element()
+                .into_any_element()
     }
 }
 

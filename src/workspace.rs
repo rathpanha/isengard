@@ -104,7 +104,7 @@ impl Workspace {
             .unwrap_or_default()
     }
 
-    /// Title shown in the window title and tree header, e.g. `app` or `demo (Workspace)`.
+    /// Title shown in the window / title bar, e.g. `app` or `demo (Workspace)`.
     pub fn title(&self) -> String {
         if self.is_named_workspace() {
             format!("{} (Workspace)", self.display_name())

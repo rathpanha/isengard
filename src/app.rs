@@ -1205,7 +1205,6 @@ impl Render for IsengardApp {
         } else if self.file_tree.is_open() {
             let app = cx.entity().downgrade();
             let tree = self.file_tree.render(
-                &self.workspace.title(),
                 move |path, permanent, window, cx| {
                     _ = app.update(cx, |this, cx| {
                         this.open_file(&path, permanent, window, cx)
