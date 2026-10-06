@@ -89,7 +89,8 @@ tabs, highlighted editor, status bar):
   the app icon: Dock icon at runtime on macOS, embedded .exe icon on Windows,
   `cargo bundle` metadata for a macOS .app / Linux .deb.
 - JetBrains Mono Nerd Font everywhere (UI + editor); square corners
-  (`theme.radius = 0`); dark/light theme toggle; editor font size zoom.
+  (`theme.radius = 0`); dark/light theme toggle (View menu + title-bar
+  sun/moon icon); editor font size zoom.
   Editor/syntax colours are our GitHub Dark / GitHub Light highlight themes
   (`assets/themes/github-*-highlight.json`); tree-sitter grammars unchanged.
 
@@ -247,6 +248,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — Title-bar sun/moon icon toggles light/dark (same as View
+  menu); macOS title stays centred.
 - **2026-10-06** — Editor/syntax colours: GitHub Dark + GitHub Light highlight
   themes (token colours only; editor chrome unchanged).
 - **2026-10-06** — Enabled all GPUI Kit tree-sitter languages

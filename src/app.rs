@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, TitleBar, WindowExt as _,
+    ActiveTheme as _, IconName, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
@@ -15,7 +15,7 @@ use gpui_kit::component::{
     tree::TreeEvent,
     v_flex,
 };
-use gpui_kit::{prelude::FluentBuilder as _, *};
+use gpui_kit::*;
 use serde::Deserialize;
 
 use crate::config::{AppConfig, DEFAULT_EDITOR_FONT_SIZE};
@@ -832,22 +832,50 @@ impl IsengardApp {
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> AnyElement {
         let title = self.window_title();
-        TitleBar::new()
-            .child(
-                h_flex()
-                    .flex_1()
-                    .when(cfg!(target_os = "macos"), |this| {
-                        // macOS shows the menus in the system menu bar.
-                        this.justify_center()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(title)
-                    })
-                    .when(!cfg!(target_os = "macos"), |this| {
-                        this.child(self.app_menu_bar.clone())
-                    }),
-            )
-            .into_any_element()
+        let dark = self.config.dark_mode;
+        // Show the destination mode: sun → switch to light, moon → switch to dark.
+        let (icon, tooltip) = if dark {
+            (IconName::Sun, "Switch to light theme")
+        } else {
+            (IconName::Moon, "Switch to dark theme")
+        };
+        // Factory so each cfg branch owns its own Button (if/else both type-check).
+        let theme_toggle = |cx: &mut Context<Self>| {
+            Button::new("title-theme-toggle")
+                .ghost()
+                .cursor_pointer()
+                .xsmall()
+                .mr_2()
+                .icon(icon)
+                .tooltip(tooltip)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.on_toggle_theme(&ToggleTheme, window, cx);
+                }))
+        };
+
+        let bar = if cfg!(target_os = "macos") {
+            h_flex()
+                .flex_1()
+                .items_center()
+                // Left/right flex_1 keeps the title centred despite the trailing control.
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(title),
+                )
+                .child(h_flex().flex_1().justify_end().child(theme_toggle(cx)))
+        } else {
+            h_flex()
+                .flex_1()
+                .items_center()
+                .child(h_flex().flex_1().child(self.app_menu_bar.clone()))
+                .child(theme_toggle(cx))
+        };
+
+        TitleBar::new().child(bar).into_any_element()
     }
 
     fn render_editor_area(&self, cx: &mut Context<Self>) -> AnyElement {

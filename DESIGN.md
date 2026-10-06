@@ -74,6 +74,10 @@ Add a row here whenever a new shared component is created.
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
   `img()` so upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and
   re-tints. Do not replace Lucide for other UI chrome.
+- **Title bar:** trailing ghost icon button toggles light/dark (sun in dark
+  mode, moon in light). Same action as View > Toggle Light/Dark Theme. Keep
+  the macOS window title optically centred (flex spacers), and leave `mr_2`
+  before the OS window controls / right edge.
 - **Keyboard shortcut hints:** one `Kbd` key cap per key with `gap_1`
   (`⌘` `O`, `Ctrl` `O`) — see `welcome::shortcut_keys`. Never a single cap with
   the keys run together.
@@ -107,6 +111,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-06** — Title-bar sun/moon icon toggles light/dark theme.
 - **2026-10-06** — Editor syntax: GitHub Dark / Light token colours only
   (no editor background override).
 - **2026-10-06** — File tree uses the full Material Icon Theme pack +
