@@ -86,7 +86,7 @@ tabs, highlighted editor, status bar):
   Windows/Linux. Menus: Isengard (About, Quit), File, Edit, View.
 - Status bar: relative path, Ln/Col, language — rendered only while a file
   tab is active (hidden on the welcome screen and with a folder but no file).
-  Notifications for saves/errors.
+  Notifications for saves/errors (bottom-right; Kit default is top-right).
 - Logo (block "I" with battlements + amber cursor) on the welcome screen and as
   the app icon: Dock icon at runtime on macOS, embedded .exe icon on Windows,
   `cargo bundle` metadata for a macOS .app / Linux .deb.
@@ -168,7 +168,8 @@ src/
 - **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
   `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so
-  it matches the file tree). Re-run it after any font-size change.
+  it matches the file tree), and `notification.placement = BottomRight`. Re-run
+  it after any font-size change.
   `theme.font_size` (14px) is the rem base for the whole UI;
   `mono_font_size` is the editor size from config.
 - **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,
@@ -260,6 +261,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Notifications bottom-right (`theme.notification.placement`).
 - **2026-10-07** — Markdown Edit/Preview toggle via Kit `TextView::markdown`
   (toolbar + View menu + `⌘⇧V` / `Ctrl+Shift+V`). Not the same as preview tabs.
 - **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`; was yellow).

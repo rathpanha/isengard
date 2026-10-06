@@ -97,6 +97,8 @@ Add a row here whenever a new shared component is created.
 - **Empty states:** don't show chrome that has nothing to say. The status bar
   exists only while a file tab is active; the file tree only while a folder is
   open; the welcome screen replaces the workspace when nothing is open.
+- **Notifications:** bottom-right (`theme.notification.placement =
+  BottomRight` in `theme::apply`). Don't set placement per toast.
 - **Links vs buttons:** navigation-like actions on the welcome screen
   (Open Folder, recent folders) are `Button::link()`; commands in dialogs are
   regular buttons with one `primary`.
@@ -124,6 +126,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Notifications bottom-right.
 - **2026-10-07** — Markdown Edit/Preview toggle (`TextView::markdown`).
 - **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`).
 - **2026-10-07** — Close/remove × buttons use Kit ghost default (no red hover).

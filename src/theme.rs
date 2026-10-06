@@ -73,6 +73,7 @@ pub fn apply(config: &AppConfig, window: Option<&mut Window>, cx: &mut App) {
         theme.mono_font_size = px(config.font_size);
         theme.radius = px(0.);
         theme.radius_lg = px(0.);
+        theme.notification.placement = Anchor::BottomRight;
         let mut highlight = (*ayu_darker_highlight()).clone();
         highlight.style.editor_background = Some(theme.sidebar);
         highlight.style.editor_gutter_background = Some(theme.sidebar);
