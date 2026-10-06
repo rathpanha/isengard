@@ -24,7 +24,8 @@ fix the code (or ask the user before changing the rule).
   Theme SVGs with their upstream fill colours (see §5).
 - **Dark only:** the app is dark mode permanently — no light theme, no toggle.
   Editor syntax colours come from `assets/themes/ayu-darker-highlight.json`
-  (GPL-3.0; not raw hex in UI chrome).
+  (GPL-3.0); editor/gutter background is forced to `theme.sidebar` (same as the
+  file tree).
 
 ## 2. Spacing
 
@@ -108,6 +109,8 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Editor background matches file-tree sidebar; Dockerfile
+  language alias (Bash highlighter).
 - **2026-10-07** — Project GPL-3.0-only; CONTRIBUTING: no PRs.
 - **2026-10-07** — Syntax tokens: Ayu Darker from
   k4yt3x/zed-theme-ayu-darker (GPL-3.0); `assets/themes/LICENSE` is GPL.

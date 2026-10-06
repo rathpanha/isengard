@@ -27,6 +27,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx); // must come before any component is used
+            editor::highlights::init();
             branding::set_dock_icon();
             theme::load_fonts(cx);
             let config = AppConfig::load();

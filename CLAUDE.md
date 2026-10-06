@@ -114,6 +114,7 @@ src/
 ├── editor/
 │   ├── document.rs      read_text (UTF-8 only) / write_text / file_name
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
+│   ├── highlights.rs    patches empty GPUI Kit highlight queries (GraphQL)
 │   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
 ├── file_tree/
 │   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
@@ -165,7 +166,8 @@ src/
   while it is rendering (it is leased and would panic).
 - **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
-  `highlight_theme` (Ayu Darker). Re-run it after any font-size change.
+  `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so
+  it matches the file tree). Re-run it after any font-size change.
   `theme.font_size` (14px) is the rem base for the whole UI;
   `mono_font_size` is the editor size from config.
 - **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,
@@ -223,7 +225,10 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
   text.
 - No New File / Save As / rename / delete; no file watching; `.gitignore` is not
   respected in the tree; no "Open Recent" in the native menu (welcome screen
-  only).
+  only). `.env` / `.gitignore` / lockfiles / Dockerfile use Bash/JSON/TOML
+  aliases (no dedicated Dockerfile grammar compatible with GPUI's tree-sitter);
+  GraphQL highlights are patched in `editor::highlights` because GPUI Kit ships
+  an empty query.
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
   root context menu, switch dialogs. Quitting with an untitled multi-root
   workspace does not offer to save it (only switching does). Workspace
@@ -253,6 +258,12 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Editor/gutter background = sidebar (matches file tree);
+  Dockerfile/Containerfile detected (Bash grammar alias; status shows
+  "Dockerfile"); `.dockerignore` → Bash.
+- **2026-10-07** — Language aliases: `.env*` / ignore files → Bash; lockfiles →
+  JSON/TOML/YAML; GraphQL highlight query patch (`assets/highlights/graphql.scm`)
+  so `.gql`/`.graphql` are not plain white (kit ships empty highlights).
 - **2026-10-07** — Project licensed GPL-3.0-only (`LICENSE`, `Cargo.toml`);
   `CONTRIBUTING.md` states forks OK, PRs not accepted.
 - **2026-10-07** — Syntax tokens: Ayu Darker from

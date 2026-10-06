@@ -4,6 +4,10 @@ use std::path::Path;
 /// feature (plus JSON from the base `tree-sitter` feature). `PlainText` is the
 /// fallback when nothing matches. Injection-only grammars (e.g. markdown_inline,
 /// jsdoc) are enabled in the crate but not opened as top-level file languages.
+///
+/// Dotfiles and lockfiles often have no useful `Path::extension`; those are
+/// matched by basename and aliased to the closest built-in grammar (no dotenv /
+/// gitignore grammars in the kit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     Astro,
@@ -14,6 +18,7 @@ pub enum Language {
     Cpp,
     Css,
     Diff,
+    Dockerfile,
     Ejs,
     Elixir,
     Erb,
@@ -55,7 +60,22 @@ impl Language {
         match file_name.as_str() {
             "makefile" | "gnumakefile" => return Language::Make,
             "cmakelists.txt" => return Language::CMake,
+            "dockerfile" | "containerfile" => return Language::Dockerfile,
+            // Dotfiles: `Path::extension` is None for `.env` / `.gitignore`.
+            ".gitignore" | ".ignore" | ".fdignore" | ".prettierignore" | ".eslintignore"
+            | ".dockerignore" => {
+                return Language::Bash;
+            }
+            "cargo.lock" => return Language::Toml,
+            "bun.lock" | "package-lock.json" | "composer.lock" => return Language::Json,
+            "pnpm-lock.yaml" | "pnpm-lock.yml" => return Language::Yaml,
+            "yarn.lock" => return Language::Bash,
             _ => {}
+        }
+
+        // `.env`, `.env.local`, `.env.development`, …
+        if file_name == ".env" || file_name.starts_with(".env.") {
+            return Language::Bash;
         }
 
         let ext = path
@@ -78,15 +98,18 @@ impl Language {
             "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" | "h++" | "c++" => Language::Cpp,
             "css" | "scss" => Language::Css,
             "diff" | "patch" => Language::Diff,
+            "dockerfile" => Language::Dockerfile,
             "ejs" => Language::Ejs,
             "ex" | "exs" => Language::Elixir,
             "erb" => Language::Erb,
             "go" => Language::Go,
-            "graphql" | "gql" => Language::GraphQL,
+            "graphql" | "gql" | "graphqls" => Language::GraphQL,
             "html" | "htm" => Language::Html,
             "java" => Language::Java,
             "js" | "mjs" | "cjs" | "jsx" => Language::JavaScript,
             "json" | "jsonc" | "json5" => Language::Json,
+            // Generic `*.lock` (e.g. some tooling); named lockfiles handled above.
+            "lock" => Language::Json,
             "kt" | "kts" | "ktm" => Language::Kotlin,
             "lua" => Language::Lua,
             "mk" | "mak" => Language::Make,
@@ -120,6 +143,8 @@ impl Language {
             Language::Cpp => "cpp",
             Language::Css => "css",
             Language::Diff => "diff",
+            // No Dockerfile grammar in GPUI Kit (crates still on tree-sitter 0.20).
+            Language::Dockerfile => "bash",
             Language::Ejs => "ejs",
             Language::Elixir => "elixir",
             Language::Erb => "erb",
@@ -161,6 +186,7 @@ impl Language {
             Language::Cpp => "C++",
             Language::Css => "CSS",
             Language::Diff => "Diff",
+            Language::Dockerfile => "Dockerfile",
             Language::Ejs => "EJS",
             Language::Elixir => "Elixir",
             Language::Erb => "ERB",
@@ -214,5 +240,27 @@ mod tests {
         assert_eq!(Language::from_path(Path::new("Makefile")), Language::Make);
         assert_eq!(Language::from_path(Path::new("CMakeLists.txt")), Language::CMake);
         assert_eq!(Language::from_path(Path::new("notes.xyz")), Language::PlainText);
+        assert_eq!(Language::from_path(Path::new("schema.gql")), Language::GraphQL);
+        assert_eq!(Language::from_path(Path::new("schema.graphql")), Language::GraphQL);
+    }
+
+    #[test]
+    fn detects_dotfiles_and_lockfiles_by_basename() {
+        assert_eq!(Language::from_path(Path::new(".env")), Language::Bash);
+        assert_eq!(Language::from_path(Path::new(".env.local")), Language::Bash);
+        assert_eq!(Language::from_path(Path::new(".gitignore")), Language::Bash);
+        assert_eq!(Language::from_path(Path::new("Cargo.lock")), Language::Toml);
+        assert_eq!(Language::from_path(Path::new("bun.lock")), Language::Json);
+        assert_eq!(Language::from_path(Path::new("pnpm-lock.yaml")), Language::Yaml);
+        assert_eq!(Language::from_path(Path::new("yarn.lock")), Language::Bash);
+        assert_eq!(Language::from_path(Path::new("foo.lock")), Language::Json);
+        assert_eq!(Language::from_path(Path::new("Dockerfile")), Language::Dockerfile);
+        assert_eq!(Language::from_path(Path::new("app.dockerfile")), Language::Dockerfile);
+        assert_eq!(Language::from_path(Path::new("Containerfile")), Language::Dockerfile);
+        assert_eq!(Language::from_path(Path::new(".dockerignore")), Language::Bash);
+        assert_eq!(
+            Language::from_path(Path::new("Dockerfile")).highlighter_name(),
+            "bash"
+        );
     }
 }

@@ -60,9 +60,9 @@ pub fn load_fonts(cx: &mut App) {
 
 /// Applies dark mode, the Nerd Font everywhere, the editor font size, and
 /// square corners (radius 0 squares every component, including pills).
-/// Editor/syntax colours use Ayu Darker (tree-sitter scopes unchanged).
-/// Only token colours are overridden — editor background/gutter stay on the
-/// GPUI Kit theme.
+/// Editor/syntax colours use Ayu Darker. Editor + gutter backgrounds match
+/// the file-tree sidebar (`theme.sidebar`) so the pane isn't a lighter
+/// `input` grey.
 pub fn apply(config: &AppConfig, window: Option<&mut Window>, cx: &mut App) {
     // `change` reloads the mode's theme config, so the overrides below must come after it.
     Theme::change(ThemeMode::Dark, window, cx);
@@ -73,7 +73,10 @@ pub fn apply(config: &AppConfig, window: Option<&mut Window>, cx: &mut App) {
         theme.mono_font_size = px(config.font_size);
         theme.radius = px(0.);
         theme.radius_lg = px(0.);
-        theme.highlight_theme = ayu_darker_highlight();
+        let mut highlight = (*ayu_darker_highlight()).clone();
+        highlight.style.editor_background = Some(theme.sidebar);
+        highlight.style.editor_gutter_background = Some(theme.sidebar);
+        theme.highlight_theme = Arc::new(highlight);
     });
 }
 
