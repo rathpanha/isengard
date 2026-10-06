@@ -1,0 +1,132 @@
+{
+  "syntax": {
+    "attribute": {
+      "color": "#79b8ff"
+    },
+    "boolean": {
+      "color": "#79b8ff"
+    },
+    "comment": {
+      "color": "#6a737d"
+    },
+    "comment.doc": {
+      "color": "#6a737d"
+    },
+    "constant": {
+      "color": "#79b8ff"
+    },
+    "constructor": {
+      "color": "#b392f0"
+    },
+    "embedded": {
+      "color": "#e1e4e8"
+    },
+    "emphasis": {
+      "color": "#e1e4e8",
+      "font_style": "italic"
+    },
+    "emphasis.strong": {
+      "color": "#e1e4e8",
+      "font_weight": 700
+    },
+    "enum": {
+      "color": "#b392f0"
+    },
+    "function": {
+      "color": "#b392f0"
+    },
+    "hint": {
+      "color": "#6a737d"
+    },
+    "keyword": {
+      "color": "#f97583"
+    },
+    "label": {
+      "color": "#79b8ff"
+    },
+    "link_text": {
+      "color": "#dbedff",
+      "font_style": "italic"
+    },
+    "link_uri": {
+      "color": "#dbedff"
+    },
+    "number": {
+      "color": "#79b8ff"
+    },
+    "operator": {
+      "color": "#f97583"
+    },
+    "predictive": {
+      "color": "#6a737d",
+      "font_style": "italic"
+    },
+    "preproc": {
+      "color": "#f97583"
+    },
+    "primary": {
+      "color": "#e1e4e8"
+    },
+    "property": {
+      "color": "#79b8ff"
+    },
+    "punctuation": {
+      "color": "#d1d5da"
+    },
+    "punctuation.bracket": {
+      "color": "#d1d5da"
+    },
+    "punctuation.delimiter": {
+      "color": "#d1d5da"
+    },
+    "punctuation.list_marker": {
+      "color": "#ffab70"
+    },
+    "punctuation.special": {
+      "color": "#79b8ff"
+    },
+    "string": {
+      "color": "#9ecbff"
+    },
+    "string.escape": {
+      "color": "#85e89d"
+    },
+    "string.regex": {
+      "color": "#dbedff"
+    },
+    "string.special": {
+      "color": "#9ecbff"
+    },
+    "string.special.symbol": {
+      "color": "#79b8ff"
+    },
+    "tag": {
+      "color": "#85e89d"
+    },
+    "tag.doctype": {
+      "color": "#f97583"
+    },
+    "text.code.span": {
+      "color": "#79b8ff"
+    },
+    "text.literal": {
+      "color": "#79b8ff"
+    },
+    "title": {
+      "color": "#79b8ff",
+      "font_weight": 700
+    },
+    "type": {
+      "color": "#b392f0"
+    },
+    "variable": {
+      "color": "#ffab70"
+    },
+    "variable.special": {
+      "color": "#79b8ff"
+    },
+    "variant": {
+      "color": "#b392f0"
+    }
+  }
+}

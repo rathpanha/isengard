@@ -90,6 +90,8 @@ tabs, highlighted editor, status bar):
   `cargo bundle` metadata for a macOS .app / Linux .deb.
 - JetBrains Mono Nerd Font everywhere (UI + editor); square corners
   (`theme.radius = 0`); dark/light theme toggle; editor font size zoom.
+  Editor/syntax colours are our GitHub Dark / GitHub Light highlight themes
+  (`assets/themes/github-*-highlight.json`); tree-sitter grammars unchanged.
 
 Not yet verified interactively (no clicking was possible during the port):
 tree expand/collapse, clicking files, tab switching/closing, dialogs,
@@ -161,9 +163,10 @@ src/
   `on_hover`). Callers pass `hovered` in — don't `cx.entity().read(cx)` the view
   while it is rendering (it is leased and would panic).
 - **Theme**: `theme::apply` calls `Theme::change(mode)` first (it reloads the
-  theme config) and then overrides fonts, sizes and `radius`/`radius_lg = 0`.
-  Re-run it after any theme/font change. `theme.font_size` (14px) is the rem
-  base for the whole UI; `mono_font_size` is the editor size from config.
+  theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
+  `highlight_theme` (GitHub Dark or Light). Re-run it after any theme/font
+  change. `theme.font_size` (14px) is the rem base for the whole UI;
+  `mono_font_size` is the editor size from config.
 - **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,
   near-black tile). `logo-mark.svg` is the shapes only (welcome screen,
   `branding::LOGO_MARK`). `icon-macos.svg` puts the tile on Apple's 824px grid
@@ -244,6 +247,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — Editor/syntax colours: GitHub Dark + GitHub Light highlight
+  themes (token colours only; editor chrome unchanged).
 - **2026-10-06** — Enabled all GPUI Kit tree-sitter languages
   (`tree-sitter-languages`) and expanded `Language` detection accordingly.
 - **2026-10-06** — File tree: full Material Icon Theme pack (1251 SVGs +

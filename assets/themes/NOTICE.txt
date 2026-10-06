@@ -1,0 +1,11 @@
+GitHub Dark / Light syntax highlight colours
+--------------------------------------------
+Token colours adapted from the classic GitHub theme used by
+github-vscode-theme / Shiki (`github-dark`, `github-light`).
+
+Upstream: https://github.com/primer/github-vscode-theme (MIT)
+Shiki copy: https://github.com/shikijs/textmate-grammars-themes
+
+These JSON files are HighlightThemeStyle maps for GPUI Kit: syntax token
+colours only (no editor.background / gutter / line-number overrides).
+Tree-sitter scopes stay the same; only colours change.

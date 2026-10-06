@@ -23,7 +23,9 @@ fix the code (or ask the user before changing the rule).
   (e.g. `danger.opacity(0.15)`). Exception: the file tree uses Material Icon
   Theme SVGs with their upstream fill colours (see §5).
 - **Light and dark:** every screen must work in both themes; because colors are
-  semantic this is automatic — check both when adding something visual.
+  semantic this is automatic — check both when adding something visual. Editor
+  syntax colours come from `assets/themes/github-*-highlight.json` (not raw
+  hex in UI chrome).
 
 ## 2. Spacing
 
@@ -105,6 +107,8 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-06** — Editor syntax: GitHub Dark / Light token colours only
+  (no editor background override).
 - **2026-10-06** — File tree uses the full Material Icon Theme pack +
   association JSON (not a curated subset).
 - **2026-10-06** — File tree Material icons via `img()` (keep colours); GPUI
