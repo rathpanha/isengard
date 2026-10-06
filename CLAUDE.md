@@ -70,7 +70,9 @@ tabs, highlighted editor, status bar):
   keeps its own undo history and cursor. Tree single-click opens a **preview**
   tab (italic; replaced by the next preview open); double-click the file or the
   tab (or edit) pins it permanent. Tab close and welcome "remove recent" use
-  Kit ghost `Button`s (default hover).
+  Kit ghost `Button`s (default hover). Markdown files get an Edit / Preview
+  toolbar (`TextView::markdown`); View > Toggle Markdown Preview or
+  `⌘⇧V` / `Ctrl+Shift+V`.
 - Code editor (GPUI Kit `Editor`): tree-sitter highlighting for every language
   GPUI Kit vendors via `tree-sitter-languages` (astro, bash, c/c++/c#, cmake,
   css, diff, ejs, elixir, erb, go, graphql, html, java, javascript, json,
@@ -258,6 +260,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Markdown Edit/Preview toggle via Kit `TextView::markdown`
+  (toolbar + View menu + `⌘⇧V` / `Ctrl+Shift+V`). Not the same as preview tabs.
 - **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`; was yellow).
 - **2026-10-07** — Close/remove × use Kit ghost default (removed red-hover
   `destructive_icon_button` / dialog override).

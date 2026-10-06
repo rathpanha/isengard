@@ -70,6 +70,10 @@ Add a row here whenever a new shared component is created.
 
 - **Dirty tabs:** unsaved buffer shows a 6px square in `theme.blue` before
   the close × (block style — no round “dot”).
+- **Markdown preview:** `.md` tabs show an Edit / Preview `ButtonGroup` under
+  the tab bar. Preview uses GPUI Kit `TextView::markdown` (not a separate
+  crate). Distinct from **preview tabs** (italic, temporary). Toggle also via
+  View > Toggle Markdown Preview or `⌘⇧V` / `Ctrl+Shift+V`.
 - **Preview tabs:** single-click a file in the tree → italic preview tab
   (only one; the next preview replaces it unless dirty, then it pins).
   Double-click the file or the tab, or edit the buffer → permanent. File >
@@ -120,6 +124,7 @@ Add a row here whenever a new shared component is created.
 
 ## Changelog
 
+- **2026-10-07** — Markdown Edit/Preview toggle (`TextView::markdown`).
 - **2026-10-07** — Unsaved tab indicator: blue square (`theme.blue`).
 - **2026-10-07** — Close/remove × buttons use Kit ghost default (no red hover).
 - **2026-10-07** — Unsaved tab indicator: yellow square (`theme.yellow`).

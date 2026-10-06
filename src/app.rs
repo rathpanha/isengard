@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _, TitleBar, WindowExt as _,
-    button::{Button, ButtonVariants as _},
+    ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
+    button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
     input::{Editor, EditorState, InputEvent, TabSize},
@@ -12,6 +12,7 @@ use gpui_kit::component::{
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
+    text::TextView,
     tree::TreeEvent,
     v_flex,
 };
@@ -45,6 +46,7 @@ actions!(
         IncreaseFontSize,
         DecreaseFontSize,
         ResetFontSize,
+        ToggleMarkdownPreview,
         About,
         Quit,
     ]
@@ -76,6 +78,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-=", IncreaseFontSize, None),
         KeyBinding::new("secondary--", DecreaseFontSize, None),
         KeyBinding::new("secondary-0", ResetFontSize, None),
+        KeyBinding::new("secondary-shift-v", ToggleMarkdownPreview, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     // Fallback when the app view is not on the focus path (e.g. while a dialog is open).
@@ -89,6 +92,8 @@ struct EditorTab {
     is_modified: bool,
     /// VS Code–style preview: replaced by the next single-click open until pinned.
     preview: bool,
+    /// Render Markdown with `TextView` instead of the source editor.
+    markdown_preview: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -431,6 +436,7 @@ impl IsengardApp {
             state,
             is_modified: false,
             preview: !permanent,
+            markdown_preview: false,
             _subscriptions: subscriptions,
         });
         self.file_tree.select_path(path, cx);
@@ -817,6 +823,46 @@ impl IsengardApp {
         self.apply_config(window, cx);
     }
 
+    fn on_toggle_markdown_preview(
+        &mut self,
+        _: &ToggleMarkdownPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        if tab.language != Language::Markdown {
+            return;
+        }
+        let next = !tab.markdown_preview;
+        self.set_markdown_preview(next, window, cx);
+    }
+
+    fn set_markdown_preview(
+        &mut self,
+        preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.tabs.active_index() else {
+            return;
+        };
+        let Some(tab) = self.tabs.get_mut(ix) else {
+            return;
+        };
+        if tab.language != Language::Markdown || tab.markdown_preview == preview {
+            return;
+        }
+        tab.markdown_preview = preview;
+        if preview {
+            self.focus_handle.focus(window, cx);
+        } else {
+            self.focus_active_editor(window, cx);
+        }
+        cx.notify();
+    }
+
     fn apply_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         theme::apply(&self.config, Some(window), cx);
         self.config.save();
@@ -931,19 +977,70 @@ impl IsengardApp {
                     )
             }));
 
+        let is_markdown = active.language == Language::Markdown;
+        let markdown_preview = is_markdown && active.markdown_preview;
+        let md_toolbar = is_markdown.then(|| {
+            let preview = active.markdown_preview;
+            h_flex()
+                .w_full()
+                .items_center()
+                .justify_end()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(
+                    ButtonGroup::new("markdown-view-mode")
+                        .outline()
+                        .xsmall()
+                        .child(
+                            Button::new("markdown-edit")
+                                .label("Edit")
+                                .cursor_pointer()
+                                .selected(!preview),
+                        )
+                        .child(
+                            Button::new("markdown-preview")
+                                .label("Preview")
+                                .cursor_pointer()
+                                .selected(preview),
+                        )
+                        .on_click(cx.listener(move |this, selected: &Vec<usize>, window, cx| {
+                            let want_preview = selected.contains(&1);
+                            this.set_markdown_preview(want_preview, window, cx);
+                        })),
+                )
+        });
+
+        let content = if markdown_preview {
+            let text = active.state.read(cx).value();
+            let id = SharedString::from(format!("md-preview-{}", active.path.display()));
+            div()
+                .size_full()
+                .p_4()
+                .overflow_hidden()
+                .child(
+                    TextView::markdown(id, text)
+                        .scrollable(true)
+                        .selectable(true),
+                )
+                .into_any_element()
+        } else {
+            Editor::new(&active.state)
+                .bordered(false)
+                .p_0()
+                .h_full()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_size(cx.theme().mono_font_size)
+                .into_any_element()
+        };
+
         v_flex()
             .size_full()
             .child(tab_bar)
-            .child(
-                div().flex_1().min_h_0().child(
-                    Editor::new(&active.state)
-                        .bordered(false)
-                        .p_0()
-                        .h_full()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_size(cx.theme().mono_font_size),
-                ),
-            )
+            .children(md_toolbar)
+            .child(div().flex_1().min_h_0().child(content))
             .into_any_element()
     }
 
@@ -1019,6 +1116,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_increase_font))
             .on_action(cx.listener(Self::on_decrease_font))
             .on_action(cx.listener(Self::on_reset_font))
+            .on_action(cx.listener(Self::on_toggle_markdown_preview))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_quit))
             .child(self.render_title_bar(cx))
