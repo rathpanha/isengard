@@ -71,6 +71,8 @@ fn build_menus() -> Vec<Menu> {
                 MenuItem::action("Increase Font Size", IncreaseFontSize),
                 MenuItem::action("Decrease Font Size", DecreaseFontSize),
                 MenuItem::action("Reset Font Size", ResetFontSize),
+                // Trailing separator so macOS-injected "Enter Full Screen" sits alone.
+                MenuItem::separator(),
             ],
             disabled: false,
         },

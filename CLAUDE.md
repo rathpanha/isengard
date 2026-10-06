@@ -233,6 +233,8 @@ a language: enable the feature, extend `Language` in `editor/language.rs`.
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-06** — View menu: trailing separator so macOS "Enter Full Screen"
+  sits in its own section below font-size items.
 - **2026-10-06** — Removed Next/Previous Tab from the View menu (the
   Ctrl+Tab / Ctrl+Shift+Tab shortcuts still work).
 - **2026-10-06** — Pointer cursor on all clickable elements (dialog buttons,
