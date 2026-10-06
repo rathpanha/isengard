@@ -23,7 +23,7 @@ use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::theme;
-use crate::ui::components::destructive_icon_button;
+use crate::ui::components::{center_dialog, destructive_icon_button};
 use crate::ui::file_tree::FileTreePanel;
 use crate::ui::welcome;
 use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
@@ -567,40 +567,44 @@ impl IsengardApp {
         let message: SharedString = message.into();
         let on_secondary = Rc::new(on_secondary);
         let on_primary = Rc::new(on_primary);
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, window, _| {
             let (app_secondary, app_primary) = (app.clone(), app.clone());
             let (on_secondary, on_primary) = (on_secondary.clone(), on_primary.clone());
-            dialog.title(title).child(message.clone()).footer(
-                DialogFooter::new()
-                    .gap_2()
-                    .child(
-                        Button::new("dialog-cancel")
-                            .cursor_pointer()
-                            .outline()
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("dialog-secondary")
-                            .cursor_pointer()
-                            .outline()
-                            .label(secondary_label)
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                _ = app_secondary
-                                    .update(cx, |this, cx| on_secondary(this, window, cx));
-                            }),
-                    )
-                    .child(
-                        Button::new("dialog-primary")
-                            .cursor_pointer()
-                            .primary()
-                            .label(primary_label)
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                _ = app_primary.update(cx, |this, cx| on_primary(this, window, cx));
-                            }),
-                    ),
+            center_dialog(
+                dialog.title(title).child(message.clone()).footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("dialog-cancel")
+                                .cursor_pointer()
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("dialog-secondary")
+                                .cursor_pointer()
+                                .outline()
+                                .label(secondary_label)
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = app_secondary
+                                        .update(cx, |this, cx| on_secondary(this, window, cx));
+                                }),
+                        )
+                        .child(
+                            Button::new("dialog-primary")
+                                .cursor_pointer()
+                                .primary()
+                                .label(primary_label)
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = app_primary
+                                        .update(cx, |this, cx| on_primary(this, window, cx));
+                                }),
+                        ),
+                ),
+                window,
             )
         });
     }
@@ -842,11 +846,14 @@ impl IsengardApp {
     }
 
     fn on_about(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
-        window.open_dialog(cx, |dialog, _, _| {
-            dialog
-                .title("About Isengard")
-                .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
-                .child("A code editor built with GPUI Kit.")
+        window.open_dialog(cx, |dialog, window, _| {
+            center_dialog(
+                dialog
+                    .title("About Isengard")
+                    .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                    .child("A code editor built with GPUI Kit."),
+                window,
+            )
         });
     }
 

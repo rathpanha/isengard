@@ -50,6 +50,9 @@ fix the code (or ask the user before changing the rule).
   - Destructive commands with data loss ask first, using
     `IsengardApp::open_choice_dialog`: buttons in the order Cancel · secondary
     ("Don't Save") · primary (the safe default, e.g. "Save", "Save All").
+- **Modal dialogs** sit in the middle of the window — wrap every
+  `open_dialog` with `components::center_dialog`. Context menus stay
+  click-anchored.
 - **Pointer cursor** on everything clickable (buttons, tabs, tree/list rows,
   links); disabled items and plain text keep the default arrow, text areas the
   I-beam. GPUI Kit only does this itself for `link()`/`text()` buttons, so add
@@ -64,6 +67,7 @@ fix the code (or ask the user before changing the rule).
 | Component | Use for |
 | --- | --- |
 | `destructive_icon_button(id, icon, tooltip, hovered, on_click, cx)` | Close/remove/delete icon buttons. Pass `hovered` from `IsengardApp::is_destructive_hovered(&id)`. Position it by styling the returned wrapper (e.g. `.mr_2()`). |
+| `center_dialog(dialog, window)` | Wrap every `open_dialog` builder so the modal sits in the middle of the window (GPUI Kit defaults to top ~10%). Not for context menus. |
 
 Add a row here whenever a new shared component is created.
 

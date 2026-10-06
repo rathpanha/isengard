@@ -161,7 +161,8 @@ src/
   come from `file_tree::tree_icon` (full Material Icon Theme via `img()` +
   `material-icons.json`), not Lucide.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
-  capture a `WeakEntity<IsengardApp>` and call back into it.
+  capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
+  `ui::components::center_dialog` (Kit defaults to top ~10%; we centre).
 - **Hover-colored icons**: `Button`'s hover style only changes its background,
   and `Icon` resolves its color at render time, so `group_hover`/`.hover` can't
   recolor an icon. `ui::components::destructive_icon_button` keeps the hovered
@@ -263,6 +264,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 ## Changelog
 Newest first. Add an entry for every change.
 
+- **2026-10-07** — Modal dialogs centred in the window (`center_dialog`; Kit
+  default was top ~10%). Context menus unchanged.
 - **2026-10-07** — Unsaved tabs: yellow square indicator (`theme.yellow`).
 - **2026-10-07** — Preview tabs (VS Code-style): tree single-click = preview,
   double-click file/tab or edit = pin.
