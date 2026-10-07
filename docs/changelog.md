@@ -3,8 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
-- **2026-10-07** — No UI animation: `cx.set_reduce_motion(true)` at bootstrap;
-  design rule forbids adding motion.
+- **2026-10-07** — Notifications clear the status bar (`margins.bottom` =
+  status-bar height + 16px).
+- **2026-10-07** — Reverted no-animation experiment; Kit dialog/toast motion
+  is default again (`reduce_motion` left off).
 - **2026-10-07** — Cross-platform Development setup in architecture (macOS /
   Linux / Windows) + app-icon matrix; `scripts/install-dev-icon.sh` /
   `.ps1` entrypoints (Windows `.exe` icon already via `build.rs`).

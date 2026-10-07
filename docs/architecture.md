@@ -91,8 +91,8 @@ prints that nothing is needed (macOS / Git Bash on Windows).
 
 ```
 src/
-├── main.rs              app bootstrap: gpui_kit::init, reduce_motion, fonts, theme,
-│                        key bindings, menus, window (QuitMode::LastWindowClosed)
+├── main.rs              app bootstrap: gpui_kit::init, fonts, theme, key bindings,
+│                        menus, window (QuitMode::LastWindowClosed)
 ├── app.rs               IsengardApp view: actions, tabs, dialogs, layout, status bar
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
@@ -130,9 +130,6 @@ src/
 
 - `gpui_kit::open_window` wraps `IsengardApp` in a `Root` (needed for dialogs,
   notifications, tooltips, menus). Never add a second Root.
-- **No motion:** `main` calls `cx.set_reduce_motion(true)` so Kit
-  `with_animation` (dialogs, notifications, …) paints the end frame only.
-  Design forbids adding app-level animation.
 - **Actions**: declared with `actions!(isengard, [...])` in `app.rs`, bound in
   `app::init` (`secondary-*` = Cmd on macOS, Ctrl elsewhere), handled by
   `.on_action(cx.listener(..))` on the root div, which `track_focus`es
@@ -183,8 +180,9 @@ src/
 - **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
   `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so
-  it matches the file tree), and `notification.placement = BottomRight`. Re-run
-  it after any font-size change.
+  it matches the file tree), `notification.placement = BottomRight`, and
+  `notification.margins.bottom` above the status bar. Re-run it after any
+  font-size change.
   `theme.font_size` (14px) is the rem base for the whole UI;
   `mono_font_size` is the editor size from config.
 - **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,

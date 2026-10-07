@@ -13,6 +13,13 @@ pub const FONT_FAMILY: &str = "JetBrainsMono Nerd Font";
 /// Base UI font size; the theme uses it as the rem size for the whole UI scale.
 const UI_FONT_SIZE: f32 = 14.0;
 
+/// Kit notification edge inset (matches `NotificationSettings` default).
+const NOTIFICATION_EDGE: f32 = 16.0;
+
+/// Approx. `StatusBar` height: `py_1` + xsmall (`h_5`) + top border. Used so
+/// bottom-right toasts sit above the footer, not on top of it.
+const STATUS_BAR_HEIGHT: f32 = 28.0;
+
 fn load_highlight(name: &str, json: &str) -> Arc<HighlightTheme> {
     let style: HighlightThemeStyle =
         serde_json::from_str(json).unwrap_or_else(|err| panic!("{name} highlight theme: {err}"));
@@ -74,6 +81,8 @@ pub fn apply(config: &AppConfig, window: Option<&mut Window>, cx: &mut App) {
         theme.radius = px(0.);
         theme.radius_lg = px(0.);
         theme.notification.placement = Anchor::BottomRight;
+        // Default bottom margin is only 16px — overlaps our status bar.
+        theme.notification.margins.bottom = px(STATUS_BAR_HEIGHT + NOTIFICATION_EDGE);
         let mut highlight = (*ayu_darker_highlight()).clone();
         highlight.style.editor_background = Some(theme.sidebar);
         highlight.style.editor_gutter_background = Some(theme.sidebar);

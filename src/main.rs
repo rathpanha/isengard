@@ -29,9 +29,6 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx); // must come before any component is used
-            // Kit dialogs/toasts/tabs animate via `with_animation`; this freezes
-            // them on the end frame (design: no motion). See docs/design.md §1.
-            cx.set_reduce_motion(true);
             editor::highlights::init();
             branding::set_dock_icon();
             cx.set_app_identity(branding::APP_ID, "Isengard");
