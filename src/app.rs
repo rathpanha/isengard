@@ -232,6 +232,8 @@ struct EditorTab {
     is_modified: bool,
     /// VS Code–style preview: replaced by the next single-click open until pinned.
     preview: bool,
+    /// Default folder when saving an in-memory tab (workspace New File).
+    untitled_save_dir: Option<PathBuf>,
 }
 
 enum TabBody {
@@ -247,7 +249,7 @@ enum TabBody {
 
 impl EditorTab {
     fn label(&self) -> String {
-        document::file_name(&self.path)
+        document::tab_label(&self.path)
     }
 
     fn language(&self) -> Option<Language> {
@@ -478,9 +480,13 @@ impl IsengardApp {
             "Don't Save",
             "Save All",
             move |this, window, cx| this.apply_switch(after_discard.clone(), window, cx),
-            move |this, window, cx| match this.save_all(cx) {
-                Ok(()) => this.apply_switch(switch.clone(), window, cx),
-                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            move |this, window, cx| {
+                let switch = switch.clone();
+                this.request_save_all(
+                    move |this, window, cx| this.apply_switch(switch.clone(), window, cx),
+                    window,
+                    cx,
+                );
             },
             window,
             cx,
@@ -534,6 +540,7 @@ impl IsengardApp {
         let open_files = self
             .tabs
             .iter()
+            .filter(|tab| !document::is_untitled(&tab.path))
             .map(|tab| {
                 let view = tab
                     .editor_state()
@@ -553,9 +560,14 @@ impl IsengardApp {
             })
             .collect();
         let terminal = self.terminal.read(cx);
+        let active = self
+            .tabs
+            .active()
+            .filter(|t| !document::is_untitled(&t.path))
+            .map(|t| t.path.clone());
         let session = WorkspaceSession {
             open_files,
-            active: self.tabs.active().map(|t| t.path.clone()),
+            active,
             expanded: self.file_tree.expanded_paths(),
             terminal_cwds: terminal.session_cwds(),
             terminal_active: terminal.active_index(),
@@ -762,6 +774,7 @@ impl IsengardApp {
                 body: TabBody::Image,
                 is_modified: false,
                 preview: !permanent,
+                untitled_save_dir: None,
             });
             self.file_tree.select_path(path, cx);
             self.focus_handle.focus(window, cx);
@@ -817,6 +830,7 @@ impl IsengardApp {
             },
             is_modified: false,
             preview: !permanent,
+            untitled_save_dir: None,
         });
         self.file_tree.select_path(path, cx);
         self.focus_active_editor(window, cx);
@@ -864,7 +878,11 @@ impl IsengardApp {
         }
     }
 
+    /// Writes an on-disk tab. Untitled buffers must go through [`Self::request_save`].
     fn save_tab(&mut self, path: &Path, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        if document::is_untitled(path) {
+            anyhow::bail!("untitled buffer needs a path");
+        }
         let Some(tab) = self.tabs.find_mut(|t| t.path == path) else {
             return Ok(());
         };
@@ -878,17 +896,170 @@ impl IsengardApp {
         Ok(())
     }
 
-    fn save_all(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
-        let modified: Vec<PathBuf> = self
+    /// Saves `path`, prompting for a location when the buffer is untitled.
+    /// `after` runs with the final on-disk path on success.
+    fn request_save(
+        &mut self,
+        path: PathBuf,
+        after: impl Fn(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if document::is_untitled(&path) {
+            self.prompt_save_untitled(path, Rc::new(after), window, cx);
+            return;
+        }
+        match self.save_tab(&path, cx) {
+            Ok(()) => after(self, path, window, cx),
+            Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+        }
+    }
+
+    fn prompt_save_untitled(
+        &mut self,
+        old_path: PathBuf,
+        after: Rc<dyn Fn(&mut Self, PathBuf, &mut Window, &mut Context<Self>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab = self.tabs.iter().find(|t| t.path == old_path);
+        let dir = tab
+            .and_then(|t| t.untitled_save_dir.clone())
+            .or_else(|| self.new_file_directory(cx))
+            .or_else(|| self.workspace.folders().first().cloned())
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let suggested = if tab.is_some_and(|t| t.untitled_save_dir.is_some()) {
+            document::unique_new_file_path(&dir)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("{}.txt", document::tab_label(&old_path)))
+        } else {
+            format!("{}.txt", document::tab_label(&old_path))
+        };
+        let prompt = cx.prompt_for_new_path(&dir, Some(&suggested));
+        cx.spawn_in(window, async move |this, window| {
+            let new_path = prompt.await.ok()?.ok()??;
+            this.update_in(window, |this, window, cx| {
+                match this.materialize_untitled(&old_path, new_path.clone(), window, cx) {
+                    Ok(()) => after(this, new_path, window, cx),
+                    Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+                }
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    /// Writes an untitled buffer to `new_path` and rebinds the tab.
+    fn materialize_untitled(
+        &mut self,
+        old_path: &Path,
+        new_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let text = {
+            let Some(tab) = self.tabs.iter().find(|t| t.path == *old_path) else {
+                anyhow::bail!("tab was closed");
+            };
+            let Some(state) = tab.editor_state() else {
+                anyhow::bail!("not a text tab");
+            };
+            state.read(cx).value()
+        };
+        document::write_text(&new_path, &text)?;
+
+        if let Some(existing) = self.tabs.position(|t| t.path == new_path) {
+            if let Some(old_ix) = self.tabs.position(|t| t.path == *old_path) {
+                self.tabs.remove(old_ix);
+            }
+            let ix = self
+                .tabs
+                .position(|t| t.path == new_path)
+                .unwrap_or(existing);
+            self.activate_tab(ix, window, cx);
+        } else if let Some(tab) = self.tabs.find_mut(|t| t.path == *old_path) {
+            tab.path = new_path.clone();
+            tab.is_modified = false;
+            tab.untitled_save_dir = None;
+            if let TabBody::Text {
+                language, state, ..
+            } = &mut tab.body
+            {
+                let lang = Language::from_path(&new_path);
+                *language = lang;
+                let name = lang.highlighter_name();
+                state.update(cx, |state, cx| {
+                    state.set_highlighter(name, cx);
+                });
+            }
+        }
+
+        if self.workspace.is_empty()
+            && let Some(parent) = new_path.parent().filter(|p| p.is_dir())
+        {
+            self.add_folders(&[parent.to_path_buf()], window, cx);
+        } else if let Some(parent) = new_path.parent() {
+            self.file_tree.refresh_dir(parent, cx);
+        }
+        self.file_tree.select_path(&new_path, cx);
+        self.persist_session(cx);
+        cx.notify();
+        Ok(())
+    }
+
+    /// Saves every dirty tab (prompts for each untitled), then runs `after`.
+    fn request_save_all(
+        &mut self,
+        after: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dirty: Vec<PathBuf> = self
             .tabs
             .iter()
             .filter(|t| t.is_modified)
             .map(|t| t.path.clone())
             .collect();
-        for path in modified {
-            self.save_tab(&path, cx)?;
+        self.request_save_queue(dirty, Rc::new(after), window, cx);
+    }
+
+    fn request_save_queue(
+        &mut self,
+        mut paths: Vec<PathBuf>,
+        after: Rc<dyn Fn(&mut Self, &mut Window, &mut Context<Self>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        while let Some(path) = paths.first().cloned() {
+            let still_dirty = self
+                .tabs
+                .iter()
+                .any(|t| t.path == path && t.is_modified);
+            if !still_dirty {
+                paths.remove(0);
+                continue;
+            }
+            if document::is_untitled(&path) {
+                let rest = paths[1..].to_vec();
+                let after = after.clone();
+                self.prompt_save_untitled(
+                    path,
+                    Rc::new(move |this, _, window, cx| {
+                        this.request_save_queue(rest.clone(), after.clone(), window, cx);
+                    }),
+                    window,
+                    cx,
+                );
+                return;
+            }
+            if let Err(err) = self.save_tab(&path, cx) {
+                return notify_error(format!("Save failed: {err:#}"), window, cx);
+            }
+            paths.remove(0);
         }
-        Ok(())
+        after(self, window, cx);
     }
 
     fn has_unsaved(&self) -> bool {
@@ -934,17 +1105,12 @@ impl IsengardApp {
             "Save All",
             move |this, window, cx| this.close_tabs(&paths_discard, window, cx),
             move |this, window, cx| {
-                for path in &paths {
-                    if this
-                        .tabs
-                        .iter()
-                        .any(|t| t.path == *path && t.is_modified)
-                        && let Err(err) = this.save_tab(path, cx)
-                    {
-                        return notify_error(format!("Save failed: {err:#}"), window, cx);
-                    }
-                }
-                this.close_tabs(&paths, window, cx);
+                let paths = paths.clone();
+                this.request_save_all(
+                    move |this, window, cx| this.close_tabs(&paths, window, cx),
+                    window,
+                    cx,
+                );
             },
             window,
             cx,
@@ -1039,14 +1205,18 @@ impl IsengardApp {
             "Unsaved changes",
             format!(
                 "Save changes to {} before closing?",
-                document::file_name(&path)
+                document::tab_label(&path)
             ),
             "Don't Save",
             "Save",
             move |this, window, cx| this.close_tab(&path_discard, window, cx),
-            move |this, window, cx| match this.save_tab(&path, cx) {
-                Ok(()) => this.close_tab(&path, window, cx),
-                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            move |this, window, cx| {
+                this.request_save(
+                    path.clone(),
+                    |this, saved, window, cx| this.close_tab(&saved, window, cx),
+                    window,
+                    cx,
+                );
             },
             window,
             cx,
@@ -1065,9 +1235,8 @@ impl IsengardApp {
             "Quit Without Saving",
             "Save All & Quit",
             |this, _, cx| this.quit(cx),
-            |this, window, cx| match this.save_all(cx) {
-                Ok(()) => this.quit(cx),
-                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            |this, window, cx| {
+                this.request_save_all(|this, _, cx| this.quit(cx), window, cx);
             },
             window,
             cx,
@@ -1084,44 +1253,129 @@ impl IsengardApp {
     // ---- Actions -----------------------------------------------------------
 
     fn on_new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
-        let dir = self
-            .workspace
-            .folders()
-            .first()
-            .cloned()
-            .or_else(dirs::home_dir)
-            .unwrap_or_default();
-        let path = cx.prompt_for_new_path(&dir, Some("untitled.txt"));
-        cx.spawn_in(window, async move |this, window| {
-            let path = path.await.ok()?.ok()??;
-            this.update_in(window, |this, window, cx| {
-                this.create_and_open_file(path, window, cx);
-            })
-            .ok()
-        })
-        .detach();
+        let save_dir = if self.workspace.is_empty() {
+            None
+        } else {
+            match self.new_file_directory(cx) {
+                Some(dir) => Some(dir),
+                None => {
+                    return notify_error(
+                        "No folder available for a new file.".into(),
+                        window,
+                        cx,
+                    );
+                }
+            }
+        };
+        self.open_untitled(save_dir, window, cx);
     }
 
-    /// Creates an empty file if needed, opens its parent folder when nothing is
-    /// open yet, then opens the file in a permanent tab.
-    fn create_and_open_file(
+    /// In-memory buffer until Save; `save_dir` seeds the save dialog in a workspace.
+    fn open_untitled(
         &mut self,
-        path: PathBuf,
+        save_dir: Option<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !path.exists()
-            && let Err(err) = document::write_text(&path, "")
-        {
-            return notify_error(format!("Could not create file: {err:#}"), window, cx);
+        let mut id = 1u64;
+        let path = loop {
+            let candidate = document::untitled_path(id);
+            if !self.tabs.iter().any(|t| t.path == candidate) {
+                break candidate;
+            }
+            id += 1;
+        };
+        let language = Language::from_path(Path::new("untitled.txt"));
+        let state = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language(language.highlighter_name())
+                .line_number(true)
+                .indent_guides(true)
+                .soft_wrap(false)
+                .tab_size(TabSize {
+                    tab_size: 2,
+                    hard_tabs: false,
+                })
+                .default_value("")
+        });
+        let subscriptions = vec![
+            cx.subscribe(&state, |this, state, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let entity_id = state.entity_id();
+                    if let Some(tab) = this.tabs.find_mut(|t| {
+                        t.editor_state()
+                            .is_some_and(|s| s.entity_id() == entity_id)
+                    }) {
+                        tab.is_modified = true;
+                        tab.preview = false;
+                    }
+                    cx.notify();
+                }
+            }),
+            cx.observe(&state, |_, _, cx| cx.notify()),
+        ];
+        self.tabs.push(EditorTab {
+            path,
+            body: TabBody::Text {
+                language,
+                state,
+                rendered_preview: false,
+                _subscriptions: subscriptions,
+            },
+            is_modified: false,
+            preview: false,
+            untitled_save_dir: save_dir,
+        });
+        self.focus_active_editor(window, cx);
+        cx.notify();
+    }
+
+    /// Directory for a new file on Save: tree selection (or its parent), else the
+    /// active root (multi-root) / sole root.
+    fn new_file_directory(&self, cx: &App) -> Option<PathBuf> {
+        let folders = self.workspace.folders();
+        if folders.is_empty() {
+            return None;
         }
-        // From the welcome screen, open the parent folder so the tree appears.
-        if self.workspace.is_empty()
-            && let Some(parent) = path.parent().filter(|p| p.is_dir())
-        {
-            self.apply_switch(Switch::Folder(parent.to_path_buf()), window, cx);
+        if let Some(selected) = self.file_tree.selected_path(cx) {
+            let dir = if selected.is_dir() {
+                selected
+            } else {
+                selected
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+                    .unwrap_or(selected)
+            };
+            if folders.iter().any(|root| dir.starts_with(root)) {
+                return Some(dir);
+            }
         }
-        self.open_file(&path, true, window, cx);
+        if let Some(path) = self.tabs.active().map(|t| &t.path)
+            && !document::is_untitled(path)
+            && let Some(parent) = path.parent()
+            && folders.iter().any(|root| parent.starts_with(root))
+        {
+            return Some(parent.to_path_buf());
+        }
+        self.active_root(cx)
+    }
+
+    /// Root that contains the tree selection or active file; otherwise the first root.
+    fn active_root(&self, cx: &App) -> Option<PathBuf> {
+        let folders = self.workspace.folders();
+        let hint = self.file_tree.selected_path(cx).or_else(|| {
+            self.tabs
+                .active()
+                .map(|t| t.path.clone())
+                .filter(|p| !document::is_untitled(p))
+        });
+        if let Some(hint) = hint {
+            if let Some(root) = folders.iter().find(|r| hint.starts_with(r)) {
+                return Some(root.clone());
+            }
+        }
+        folders.first().cloned()
     }
 
     fn on_new_workspace(
@@ -1325,17 +1579,14 @@ impl IsengardApp {
         let Some(path) = self.tabs.active().map(|t| t.path.clone()) else {
             return;
         };
-        match self.save_tab(&path, cx) {
-            Ok(()) => window.push_notification(format!("Saved {}", document::file_name(&path)), cx),
-            Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
-        }
+        self.request_save(path, |_, _, _, _| {}, window, cx);
     }
 
     fn on_save_all(&mut self, _: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
-        match self.save_all(cx) {
-            Ok(()) => window.push_notification("Saved all files", cx),
-            Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+        if !self.has_unsaved() {
+            return;
         }
+        self.request_save_all(|_, _, _| {}, window, cx);
     }
 
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -1704,7 +1955,16 @@ impl IsengardApp {
                 .items_center()
                 .child(h_flex().flex_1().child(self.app_menu_bar.clone()))
         };
-        TitleBar::new().child(bar).into_any_element()
+        TitleBar::new()
+            // Linux CSD close calls `remove_window()` unless we handle it here
+            // (`on_window_should_close` is not invoked for that button).
+            .on_close_window(cx.listener(|this, _, window, cx| {
+                if this.confirm_quit(window, cx) {
+                    this.quit(cx);
+                }
+            }))
+            .child(bar)
+            .into_any_element()
     }
 
     fn render_editor_area(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1963,7 +2223,11 @@ impl IsengardApp {
                 )
             })
             .when_some(self.tabs.active(), |this, tab| {
-                this.child(self.workspace.relative_label(&tab.path))
+                this.child(if document::is_untitled(&tab.path) {
+                    tab.label()
+                } else {
+                    self.workspace.relative_label(&tab.path)
+                })
             });
 
         let right = h_flex()

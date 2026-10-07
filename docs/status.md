@@ -7,9 +7,9 @@ Working features (verified by screenshots on macOS: welcome screen, file tree,
 tabs, highlighted editor, status bar):
 
 - **Welcome:** Start is two columns (workspace | folder/file) with a vertical
-  rule; New File uses `⌘N` / `Ctrl+N`. Recent workspaces then recent folders
-  (max 8 each, × to remove; empty lists hidden). Details in
-  [design.md](design.md).
+  rule; New File (`⌘N` / `Ctrl+N`) opens an untitled buffer (save dialog only
+  on Save / dirty close). Recent workspaces then recent folders (max 8 each,
+  × to remove; empty lists hidden). Details in [design.md](design.md).
 - **Workspaces:** multi-root folders in one window; `.isengard-workspace` JSON
   (relative folder paths); Add Folder / Open / Save As / Close; root context
   menu remove; switching closes tabs (unsaved + untitled-workspace prompts).
@@ -38,7 +38,8 @@ tabs, highlighted editor, status bar):
   Toggle Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility
   persist per workspace session.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
-  unsaved.
+  unsaved (New File is buffer-only until Save; save dialog uses active tree
+  dir / root). Linux in-window close × confirms unsaved changes.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard / File / Edit / View). Status bar while a workspace is open
   (panel toggles; path / Ln·Col when a file tab is active). Notifications

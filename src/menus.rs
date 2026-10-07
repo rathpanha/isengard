@@ -38,7 +38,7 @@ fn build_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Open Folder…", OpenFolder),
                 MenuItem::action("Open File…", OpenFile),
-                MenuItem::action("New File…", NewFile),
+                MenuItem::action("New File", NewFile),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Workspace…", AddFolderToWorkspace),
                 MenuItem::action("Save Workspace As…", SaveWorkspaceAs),

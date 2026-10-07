@@ -88,6 +88,17 @@ impl FsNode {
         }
     }
 
+    /// Re-reads directory children from disk (keeps expand flag).
+    pub fn reload_children(&mut self) {
+        let FsNode::Dir { path, children, .. } = self else {
+            return;
+        };
+        *children = Some(Self::load_one_level(path).unwrap_or_else(|err| {
+            log::warn!("failed to read {}: {err}", path.display());
+            Vec::new()
+        }));
+    }
+
     /// Sets a directory's expanded state. Returns `true` if this loaded its children
     /// for the first time (so a view built from the tree must be rebuilt).
     pub fn set_expanded(&mut self, value: bool) -> bool {

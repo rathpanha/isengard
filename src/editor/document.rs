@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 
@@ -7,6 +7,9 @@ use anyhow::Context as _;
 const IMAGE_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff",
 ];
+
+/// In-memory buffer id prefix (`untitled:1`, `untitled:2`, …). Not a real path.
+const UNTITLED_PREFIX: &str = "untitled:";
 
 /// True when `path` should open as an image preview instead of a text editor.
 pub fn is_image(path: &Path) -> bool {
@@ -34,6 +37,47 @@ pub fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// True for welcome-screen buffers that have no path on disk yet.
+pub fn is_untitled(path: &Path) -> bool {
+    path.to_string_lossy().starts_with(UNTITLED_PREFIX)
+}
+
+/// Virtual path for an unsaved buffer (`untitled:1`).
+pub fn untitled_path(id: u64) -> PathBuf {
+    PathBuf::from(format!("{UNTITLED_PREFIX}{id}"))
+}
+
+/// Tab / status label: `Untitled-1` for virtual buffers, else the file name.
+pub fn tab_label(path: &Path) -> String {
+    match untitled_id(path) {
+        Some(id) => format!("Untitled-{id}"),
+        None => file_name(path),
+    }
+}
+
+fn untitled_id(path: &Path) -> Option<u64> {
+    path.to_string_lossy()
+        .strip_prefix(UNTITLED_PREFIX)?
+        .parse()
+        .ok()
+}
+
+/// Next free `untitled.txt` / `untitled1.txt` / … under `dir`.
+pub fn unique_new_file_path(dir: &Path) -> PathBuf {
+    let first = dir.join("untitled.txt");
+    if !first.exists() {
+        return first;
+    }
+    let mut n = 1u32;
+    loop {
+        let path = dir.join(format!("untitled{n}.txt"));
+        if !path.exists() {
+            return path;
+        }
+        n += 1;
+    }
 }
 
 #[cfg(test)]
@@ -65,5 +109,25 @@ mod tests {
         assert!(!is_image(Path::new("icon.svg")));
         assert!(!is_image(Path::new("readme.md")));
         assert!(!is_image(Path::new("blob.bin")));
+    }
+
+    #[test]
+    fn untitled_helpers() {
+        let p = untitled_path(3);
+        assert!(is_untitled(&p));
+        assert!(!is_untitled(Path::new("/tmp/x.txt")));
+        assert_eq!(tab_label(&p), "Untitled-3");
+        assert_eq!(tab_label(Path::new("/tmp/x.txt")), "x.txt");
+    }
+
+    #[test]
+    fn unique_new_file_skips_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        assert_eq!(unique_new_file_path(dir), dir.join("untitled.txt"));
+        std::fs::write(dir.join("untitled.txt"), "").unwrap();
+        assert_eq!(unique_new_file_path(dir), dir.join("untitled1.txt"));
+        std::fs::write(dir.join("untitled1.txt"), "").unwrap();
+        assert_eq!(unique_new_file_path(dir), dir.join("untitled2.txt"));
     }
 }

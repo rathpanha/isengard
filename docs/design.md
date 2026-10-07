@@ -168,10 +168,14 @@ Add a row here whenever a new shared component is created.
     e.g. "Remove Folder from Workspace" on roots.
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
-  (`⌘O` / `Ctrl+O`), Open File…, New File… (`⌘N` / `Ctrl+N`). File menu keeps
+  (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps
   the same order stacked (workspace group, separator, folder/file group).
   Distinct Kit icons: `LayoutDashboard`, `FolderClosed`, `FolderOpen`, `File`,
   `FileText`.
+- **New File:** opens an in-memory `Untitled-N` tab (welcome or workspace); no
+  file on disk until Save. Save dialog defaults to the workspace target dir
+  (tree selection, else active root). Close tab / quit asks Save / Don't Save
+  when dirty. Linux title-bar × runs the same quit confirmation as the WM close.
 - **Workspaces before folders** wherever both appear (Start actions, recent
   lists, menus).
 - **Recent lists:** one titled section per kind ("Recent workspaces", then

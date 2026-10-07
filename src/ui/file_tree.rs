@@ -126,6 +126,31 @@ impl FileTreePanel {
         });
     }
 
+    /// Currently selected tree path, if any (placeholder rows resolve to their dir).
+    pub fn selected_path(&self, cx: &App) -> Option<PathBuf> {
+        let id = self.state.read(cx).selected_item()?.id.clone();
+        let raw = id.as_ref();
+        let path = raw
+            .strip_suffix(PLACEHOLDER_SUFFIX)
+            .unwrap_or(raw);
+        Some(PathBuf::from(path))
+    }
+
+    /// Expands `dir`, reloads its children from disk, and syncs the Kit tree.
+    pub fn refresh_dir(&mut self, dir: &Path, cx: &mut App) {
+        for root in &mut self.roots {
+            if dir == root.path() || dir.starts_with(root.path()) {
+                root.expand_toward(dir);
+                if let Some(node) = root.find_mut(dir) {
+                    node.reload_children();
+                }
+                break;
+            }
+        }
+        self.refresh_gitignores();
+        self.sync(cx);
+    }
+
     fn refresh_gitignores(&mut self) {
         let roots: Vec<PathBuf> = self.roots.iter().map(|r| r.path().to_path_buf()).collect();
         self.gitignores.rebuild(&roots);

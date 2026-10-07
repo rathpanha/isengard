@@ -172,7 +172,7 @@ pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
                                                     Button::new("welcome-new-file")
                                                         .link()
                                                         .icon(IconName::FileText)
-                                                        .label("New File…")
+                                                        .label("New File")
                                                         .on_click(|_, window, cx| {
                                                             window.dispatch_action(
                                                                 Box::new(NewFile),

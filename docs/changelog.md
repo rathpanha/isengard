@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-07** — New File in workspace stays in-memory until Save; Linux
+  title-bar close runs unsaved-changes quit dialog.
+- **2026-10-07** — Save / Save All no longer show a toast on success.
+- **2026-10-07** — New File: welcome opens untitled buffer (save on demand);
+  with a folder/workspace, auto-creates under active tree dir / root.
 - **2026-10-07** — Terminal copy shows a "Copied" toast; URL hover underline
   sits farther under the glyphs (`font_size` + 5px).
 - **2026-10-07** — Terminal paste: `TogglePreview` no longer steals
