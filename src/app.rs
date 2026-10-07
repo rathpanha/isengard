@@ -28,6 +28,7 @@ use crate::config::{
 use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
+use crate::file_tree::tree_icon;
 use crate::terminal::TerminalPanel;
 use crate::theme;
 use crate::ui::components::center_dialog;
@@ -1753,7 +1754,24 @@ impl IsengardApp {
                     })
                     .child(
                         Tab::new()
-                            .label(tab.label())
+                            // Icon+label as children (not Tab::prefix): Kit's
+                            // inner left pad insets the icon; prefix would sit
+                            // outside that pad and leave a 12px gap before the name.
+                            .aria_label(tab.label())
+                            .child(
+                                // Same icon↔label gap as file-tree rows.
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(tree_icon(
+                                        &path,
+                                        false,
+                                        false,
+                                        false,
+                                        cx.theme().is_dark(),
+                                    ))
+                                    .child(tab.label()),
+                            )
                             .selected(selected)
                             .cursor_pointer()
                             .when(preview, |tab| tab.italic())

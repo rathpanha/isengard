@@ -19,8 +19,9 @@ tabs, highlighted editor, status bar):
   case-insensitive; hides `.git` / `.DS_Store`; full Material Icon Theme;
   gitignored rows shown muted; indent guides (design owns the pixel rules).
 - **Tabs:** Kit `Tab`s in `h_flex` (not `TabBar` — needed for per-tab
-  `ContextMenu`); Close / Close Others / Close All; preview tabs; dirty mark;
-  Markdown/SVG Edit–Preview; raster image preview tabs. Details in design.
+  `ContextMenu`); Material file icon + name as tab children; Close / Close
+  Others / Close All; preview tabs; dirty mark; Markdown/SVG Edit–Preview;
+  raster image preview tabs. Details in design.
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
   `tree-sitter-languages`; line numbers, indent guides, search; unknown
   extensions stay Plain Text. Syntax: Ayu Darker; editor/gutter bg = sidebar.

@@ -38,8 +38,9 @@ section here.
   except for documented physical sizes.
 - **Edge symmetry:** an element at the trailing edge of a container sits the
   same distance from that edge as the content at the leading edge. Example: the
-  tab's close × is 12px from the tab's right border, matching the label's 12px
-  left padding.
+  tab's close × is `mr_2` from the right border; the Material file icon lives
+  inside the tab's padded content (not `Tab::prefix`) so Kit's 12px left pad
+  insets it the same distance.
 - Related controls in a row: `gap_3`; tightly grouped items (e.g. key caps):
   `gap_1`; sections on a page: `gap_8`.
 
@@ -93,11 +94,13 @@ Add a row here whenever a new shared component is created.
   for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not
   `TabBar`) because `TabBar::children` requires bare `Tab` and cannot host
   `ContextMenu`.
-- **File tree icons:** full Material Icon Theme under
+- **File icons (tree + editor tabs):** full Material Icon Theme under
   `assets/icons/material/` (MIT; see its `LICENSE`) with associations from
-  `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Render with
-  `img()` so upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and
-  re-tints. Do not replace Lucide for other UI chrome.
+  `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Same helper
+  for tree rows and open editor tabs (icon + name as `Tab` children with
+  `gap_2`, same as tree rows). Render with `img()` so upstream fills survive —
+  GPUI Kit `Icon`/`svg()` alpha-masks and re-tints. Do not replace Lucide for
+  other UI chrome.
 - **File tree indent guides:** vertical 1px lines in each ancestor column
   (`sidebar_border`) through every descendant row (including the last child),
   so a folder's rail runs the full height of its contents. Multi-root: col 0
