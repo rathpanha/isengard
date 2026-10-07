@@ -65,6 +65,7 @@ use crate::terminal::colors::ColorPalette;
 use crate::terminal::event::GpuiEventProxy;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::color::Colors;
@@ -300,6 +301,7 @@ impl TerminalRenderer {
         row: usize,
         cells: impl Iterator<Item = (usize, Cell)>,
         colors: &Colors,
+        selection: Option<&SelectionRange>,
     ) -> (Vec<BackgroundRect>, Vec<BatchedTextRun>) {
         let mut backgrounds = Vec::new();
         let mut text_runs = Vec::new();
@@ -314,8 +316,12 @@ impl TerminalRenderer {
             }
 
             // Extract cell styling
-            let fg_color = self.palette.resolve(cell.fg, colors);
-            let bg_color = self.palette.resolve(cell.bg, colors);
+            let mut fg_color = self.palette.resolve(cell.fg, colors);
+            let mut bg_color = self.palette.resolve(cell.bg, colors);
+            let point = AlacPoint::new(Line(row as i32), Column(col));
+            if selection.is_some_and(|range| range.contains(point)) {
+                std::mem::swap(&mut fg_color, &mut bg_color);
+            }
             let bold = cell.flags.contains(Flags::BOLD);
             let italic = cell.flags.contains(Flags::ITALIC);
             let underline = cell.flags.contains(Flags::UNDERLINE);
@@ -455,6 +461,8 @@ impl TerminalRenderer {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         term: &Term<GpuiEventProxy>,
+        // Hovered URL underline: `(line, start_col, end_col_exclusive)`.
+        hovered_link: Option<(i32, usize, usize)>,
         window: &mut Window,
         _cx: &mut App,
     ) {
@@ -486,6 +494,11 @@ impl TerminalRenderer {
             y: bounds.origin.y + padding.top,
         };
 
+        let selection_range = term
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.to_range(term));
+
         // Iterate over visible lines
         for line_idx in 0..num_lines {
             let line = Line(line_idx as i32);
@@ -500,8 +513,13 @@ impl TerminalRenderer {
                 })
                 .collect();
 
-            // Layout the row for backgrounds
-            let (backgrounds, _) = self.layout_row(line_idx, cells.iter().cloned(), colors);
+            // Layout the row for backgrounds (selection swaps fg/bg)
+            let (backgrounds, _) = self.layout_row(
+                line_idx,
+                cells.iter().cloned(),
+                colors,
+                selection_range.as_ref(),
+            );
 
             // Paint backgrounds
             for bg_rect in backgrounds {
@@ -611,7 +629,14 @@ impl TerminalRenderer {
                 }
 
                 let x = origin.x + self.cell_width * (*col_idx as f32);
-                let fg_color = self.palette.resolve(cell.fg, colors);
+                let point = AlacPoint::new(line, Column(*col_idx));
+                let selected = selection_range
+                    .as_ref()
+                    .is_some_and(|range| range.contains(point));
+                let mut fg_color = self.palette.resolve(cell.fg, colors);
+                if selected {
+                    fg_color = self.palette.resolve(cell.bg, colors);
+                }
 
                 if box_drawing::is_box_drawing_char(ch) {
                     let cell_bounds = Bounds {
@@ -655,8 +680,14 @@ impl TerminalRenderer {
                 }
 
                 let x = origin.x + self.cell_width * (*col_idx as f32);
-                let fg_color = self.palette.resolve(cell.fg, colors);
-
+                let point = AlacPoint::new(line, Column(*col_idx));
+                let selected = selection_range
+                    .as_ref()
+                    .is_some_and(|range| range.contains(point));
+                let mut fg_color = self.palette.resolve(cell.fg, colors);
+                if selected {
+                    fg_color = self.palette.resolve(cell.bg, colors);
+                }
                 // For regular text, apply vertical offset for centering
                 let y = y_base + vertical_offset;
 
@@ -664,6 +695,7 @@ impl TerminalRenderer {
                 let flags = cell.flags;
                 let bold = flags.contains(alacritty_terminal::term::cell::Flags::BOLD);
                 let italic = flags.contains(alacritty_terminal::term::cell::Flags::ITALIC);
+                // Hover URL underline is a continuous quad below (glyph underlines gap).
                 let underline = flags.contains(alacritty_terminal::term::cell::Flags::UNDERLINE);
 
                 // Create font with styling
@@ -719,6 +751,44 @@ impl TerminalRenderer {
                     _cx,
                 );
             }
+        }
+
+        // Continuous hover underline under the URL span (clear air below glyphs).
+        if let Some((hl, start, end)) = hovered_link
+            && end > start
+        {
+            let thickness = px(1.0);
+            let gap_below_text = px(5.0);
+            let base_height = self.cell_height / self.line_height_multiplier;
+            let vertical_offset = (self.cell_height - base_height) / 2.0;
+            // Sit just under the em box, not against the glyph bottoms.
+            let y = origin.y
+                + self.cell_height * (hl as f32)
+                + vertical_offset
+                + self.font_size
+                + gap_below_text;
+            let link_color = {
+                let cell = &grid[AlacPoint::new(Line(hl), Column(start))];
+                self.palette.resolve(cell.fg, colors)
+            };
+            let underline_bounds = Bounds {
+                origin: Point {
+                    x: origin.x + self.cell_width * (start as f32),
+                    y,
+                },
+                size: Size {
+                    width: self.cell_width * ((end - start) as f32),
+                    height: thickness,
+                },
+            };
+            window.paint_quad(quad(
+                underline_bounds,
+                px(0.0),
+                link_color,
+                Edges::<Pixels>::default(),
+                transparent_black(),
+                Default::default(),
+            ));
         }
 
         // Paint cursor

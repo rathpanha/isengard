@@ -75,7 +75,7 @@
 
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
 use alacritty_terminal::term::TermMode;
-use gpui_kit::{MouseButton, Pixels, Point};
+use gpui_kit::{MouseButton, Pixels, Point, px};
 
 /// Type of text selection in the terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +187,41 @@ pub fn pixel_to_cell(
     let row = row.max(0.0) as i32;
 
     AlacPoint::new(Line(row), Column(col))
+}
+
+/// Pixel → cell + left/right half, clamped to the visible grid.
+///
+/// Returns `None` when the point is outside the content area.
+pub fn pixel_to_cell_and_side(
+    position: Point<Pixels>,
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    cell_height: Pixels,
+    cols: usize,
+    rows: usize,
+) -> Option<(AlacPoint, alacritty_terminal::index::Side)> {
+    use alacritty_terminal::index::Side;
+
+    if cell_width <= px(0.) || cell_height <= px(0.) || cols == 0 || rows == 0 {
+        return None;
+    }
+    let rel_x: f32 = (position.x - origin.x).into();
+    let rel_y: f32 = (position.y - origin.y).into();
+    if rel_x < 0. || rel_y < 0. {
+        return None;
+    }
+    let cw: f32 = cell_width.into();
+    let ch: f32 = cell_height.into();
+    let col_f = rel_x / cw;
+    let row_f = rel_y / ch;
+    let col = col_f.floor() as usize;
+    let row = row_f.floor() as i32;
+    if col >= cols || row < 0 || (row as usize) >= rows {
+        return None;
+    }
+    let frac = col_f - col as f32;
+    let side = if frac < 0.5 { Side::Left } else { Side::Right };
+    Some((AlacPoint::new(Line(row), Column(col)), side))
 }
 
 /// Determine the selection type based on the number of clicks.

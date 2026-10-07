@@ -80,7 +80,8 @@ Add a row here whenever a new shared component is created.
   `ButtonGroup` under the tab bar. Markdown preview uses
   `TextView::markdown`; SVG preview renders the buffer via
   `Image::from_bytes(Svg)` (live, including unsaved edits). Toggle also via
-  View > Toggle Preview or `⌘⇧V` / `Ctrl+Shift+V`. Distinct from **preview
+  View > Toggle Preview or `⌘⇧V` / `Ctrl+Shift+V` (disabled while the
+  terminal has focus so paste keeps that chord). Distinct from **preview
   tabs** (italic, temporary).
 - **Image preview:** raster images (png/jpg/gif/webp/…) open as a centred
   `img(path)` pane (no text editor). Status bar shows "Image". SVG is not in
@@ -126,6 +127,14 @@ Add a row here whenever a new shared component is created.
   the sidebar is hidden, under the full editor body. Requires an open
   folder/workspace (not available on welcome). Open/closed + height remembered
   in `config.terminal_visible` / `terminal_height` (default closed, 200px).
+  Text selection: drag (double-click word, triple-click line); inverted
+  fg/bg highlight. Copy/paste match OS terminals: macOS `⌘C` / `⌘V`;
+  Linux/Windows `Ctrl+Shift+C` / `Ctrl+Shift+V` (plain `Ctrl+C` still goes
+  to the PTY; `Ctrl+Shift+V` wins over Toggle Preview while the terminal is
+  focused). Successful copy toasts "Copied". Hovering a URL shows a continuous
+  underline clear of the glyphs (`font_size` + 5px) + pointer cursor;
+  Ctrl/Cmd+click opens `http(s)://` / `www.` / OSC-8 links in the system
+  browser.
   Header: tab strip (title = folder name) + `Plus` (new) + `Minus` (minimize).
   Toggle (`Ctrl+\`` / status-bar) shows/hides without spawning; if no sessions
   yet, creates the first. **New Terminal** (`Ctrl+Shift+\`` / `Plus` / View menu)

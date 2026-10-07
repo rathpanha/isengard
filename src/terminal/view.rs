@@ -50,13 +50,41 @@
 use crate::terminal::colors::ColorPalette;
 use crate::terminal::event::{GpuiEventProxy, TerminalEvent};
 use crate::terminal::input::keystroke_to_bytes;
+use crate::terminal::links::{self, find_url_span_at};
+use crate::terminal::mouse::pixel_to_cell_and_side;
 use crate::terminal::render::TerminalRenderer;
 use crate::terminal::state::TerminalState;
-use gpui_kit::{Edges, *};
+use alacritty_terminal::grid::Dimensions as _;
+use alacritty_terminal::index::{Column, Point as AlacPoint};
+use alacritty_terminal::selection::{Selection as AlacSelection, SelectionType as AlacSelectionType};
+use alacritty_terminal::term::TermMode;
+use gpui_kit::component::input::{Copy as EditCopy, Paste as EditPaste};
+use gpui_kit::component::WindowExt as _;
+use gpui_kit::{ClipboardItem, Edges, prelude::FluentBuilder as _, *};
+use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+
+/// Last painted content metrics for mouse hit-testing (window coords).
+#[derive(Clone, Copy, Debug)]
+struct TermHitLayout {
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    cell_height: Pixels,
+    cols: usize,
+    rows: usize,
+}
+
+/// Hovered hyperlink span for underline + pointer cursor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HoveredLink {
+    line: i32,
+    start_col: usize,
+    end_col: usize,
+    url: String,
+}
 
 /// Configuration for terminal creation and runtime updates.
 ///
@@ -411,6 +439,15 @@ pub struct TerminalView {
 
     /// Callback for terminal exit events
     exit_callback: Option<ExitCallback>,
+
+    /// Content metrics from the last paint (for mouse → cell).
+    hit_layout: Arc<Mutex<Option<TermHitLayout>>>,
+
+    /// True while the left button is held for a drag selection.
+    selecting: bool,
+
+    /// URL under the mouse (underline + pointing-hand cursor).
+    hovered_link: Option<HoveredLink>,
 }
 
 impl TerminalView {
@@ -532,6 +569,9 @@ impl TerminalView {
             title_callback: None,
             clipboard_store_callback: None,
             exit_callback: None,
+            hit_layout: Arc::new(Mutex::new(None)),
+            selecting: false,
+            hovered_link: None,
         }
     }
 
@@ -715,7 +755,10 @@ impl TerminalView {
     /// Converts GPUI keystrokes to terminal escape sequences and writes them
     /// to the stdin writer. If a key handler is set and returns true, the event
     /// is consumed and not sent to the terminal.
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, _cx: &mut Context<Self>) {
+    ///
+    /// Copy/paste follow OS terminal chords: macOS `⌘C`/`⌘V`, Linux/Windows
+    /// `Ctrl+Shift+C`/`Ctrl+Shift+V`. Plain Ctrl+C still reaches the PTY.
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Check if key handler wants to consume this event
         if let Some(ref handler) = self.key_handler
             && handler(event)
@@ -723,58 +766,231 @@ impl TerminalView {
             return; // Event consumed by handler
         }
 
+        let key = event.keystroke.key.as_str();
+        let mods = &event.keystroke.modifiers;
+
+        if links::is_copy_shortcut(mods, key) {
+            if self.copy_selection(window, cx) {
+                return;
+            }
+            // macOS ⌘C with no selection: do not send to PTY.
+            #[cfg(target_os = "macos")]
+            return;
+        }
+
+        if links::is_paste_shortcut(mods, key) {
+            self.paste_clipboard(cx);
+            return;
+        }
+
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke, self.state.mode()) {
+            self.clear_selection(cx);
             let mut writer = self.stdin_writer.lock();
             let _ = writer.write_all(&bytes);
             let _ = writer.flush();
         }
     }
 
-    /// Handle mouse down events.
-    ///
-    /// Currently a placeholder for future mouse selection and interaction support.
     fn on_mouse_down(
         &mut self,
-        _event: &MouseDownEvent,
+        event: &MouseDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Request focus when clicking the terminal
         window.focus(&self.focus_handle, cx);
-        cx.notify();
 
-        // TODO: Implement mouse selection
-        // - Convert pixel coordinates to cell coordinates
-        // - Start selection at clicked cell
-        // - Send mouse reports if mouse tracking is enabled
+        let Some((point, side)) = self.hit_test(event.position) else {
+            cx.notify();
+            return;
+        };
+
+        // Ctrl/Cmd+click opens a URL under the cursor when present.
+        if event.modifiers.secondary() {
+            if let Some(link) = self.link_at(point) {
+                if let Err(err) = links::open_url(&link.url) {
+                    log::warn!("terminal: open URL failed: {err}");
+                }
+                cx.notify();
+                return;
+            }
+        }
+
+        let ty = match event.click_count {
+            2 => AlacSelectionType::Semantic,
+            n if n >= 3 => AlacSelectionType::Lines,
+            _ => AlacSelectionType::Simple,
+        };
+
+        self.state.with_term_mut(|term| {
+            term.selection = Some(AlacSelection::new(ty, point, side));
+        });
+        self.selecting = true;
+        cx.notify();
     }
 
-    /// Handle mouse up events.
-    ///
-    /// Currently a placeholder for future mouse selection support.
     fn on_mouse_up(
         &mut self,
-        _event: &MouseUpEvent,
+        event: &MouseUpEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // TODO: Implement mouse selection
-        // - End selection at released cell
-        // - Copy selection to clipboard if configured
+        if !self.selecting {
+            return;
+        }
+        if let Some((point, side)) = self.hit_test(event.position) {
+            self.state.with_term_mut(|term| {
+                if let Some(selection) = term.selection.as_mut() {
+                    selection.update(point, side);
+                }
+            });
+        }
+        self.selecting = false;
+        // Seed the primary selection (middle-click paste on Linux X11).
+        if let Some(text) = self.selection_text()
+            && !text.is_empty()
+        {
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
+        cx.notify();
     }
 
-    /// Handle mouse move events.
-    ///
-    /// Currently a placeholder for future mouse selection support.
     fn on_mouse_move(
         &mut self,
-        _event: &MouseMoveEvent,
+        event: &MouseMoveEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        // TODO: Implement mouse selection
-        // - Update selection range while dragging
-        // - Send mouse motion reports if mouse tracking is enabled
+        if self.selecting && event.pressed_button == Some(MouseButton::Left) {
+            if let Some((point, side)) = self.hit_test(event.position) {
+                self.state.with_term_mut(|term| {
+                    if let Some(selection) = term.selection.as_mut() {
+                        selection.update(point, side);
+                    }
+                });
+            }
+            cx.notify();
+            return;
+        }
+
+        let next_hover = self
+            .hit_test(event.position)
+            .and_then(|(point, _)| self.link_at(point));
+        if next_hover != self.hovered_link {
+            self.hovered_link = next_hover;
+            cx.notify();
+        }
+    }
+
+    fn hit_test(
+        &self,
+        position: Point<Pixels>,
+    ) -> Option<(AlacPoint, alacritty_terminal::index::Side)> {
+        let layout = self.hit_layout.lock().clone()?;
+        pixel_to_cell_and_side(
+            position,
+            layout.origin,
+            layout.cell_width,
+            layout.cell_height,
+            layout.cols,
+            layout.rows,
+        )
+    }
+
+    fn link_at(&self, point: AlacPoint) -> Option<HoveredLink> {
+        self.state.with_term(|term| {
+            let grid = term.grid();
+            let cell = &grid[point];
+            if let Some(link) = cell.hyperlink() {
+                let uri = link.uri().to_string();
+                let cols = grid.columns();
+                let mut start = point.column.0;
+                while start > 0 {
+                    let prev = &grid[AlacPoint::new(point.line, Column(start - 1))];
+                    if prev.hyperlink().is_some_and(|h| h.uri() == uri) {
+                        start -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                let mut end = point.column.0 + 1;
+                while end < cols {
+                    let next = &grid[AlacPoint::new(point.line, Column(end))];
+                    if next.hyperlink().is_some_and(|h| h.uri() == uri) {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                return Some(HoveredLink {
+                    line: point.line.0,
+                    start_col: start,
+                    end_col: end,
+                    url: uri,
+                });
+            }
+            let cols = grid.columns();
+            let mut line = String::with_capacity(cols);
+            for col in 0..cols {
+                line.push(grid[AlacPoint::new(point.line, Column(col))].c);
+            }
+            find_url_span_at(&line, point.column.0).map(|(start, end, url)| HoveredLink {
+                line: point.line.0,
+                start_col: start,
+                end_col: end,
+                url: url.to_string(),
+            })
+        })
+    }
+
+    fn selection_text(&self) -> Option<String> {
+        self.state.with_term(|term| term.selection_to_string())
+    }
+
+    /// Copy selection to the system clipboard. Returns true if text was copied.
+    fn copy_selection(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match self.selection_text() {
+            Some(text) if !text.is_empty() => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                window.push_notification("Copied", cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let Some(text) = item.text() else {
+            return;
+        };
+        self.paste_text(&text, cx);
+    }
+
+    fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.clear_selection(cx);
+        // Terminals expect CR; keep bracketed-paste wrapper when the app asked for it.
+        let normalized = text.replace("\r\n", "\n").replace('\n', "\r");
+        let bracketed = self.state.mode().contains(TermMode::BRACKETED_PASTE);
+        let mut writer = self.stdin_writer.lock();
+        if bracketed {
+            let _ = writer.write_all(b"\x1b[200~");
+            let _ = writer.write_all(normalized.as_bytes());
+            let _ = writer.write_all(b"\x1b[201~");
+        } else {
+            let _ = writer.write_all(normalized.as_bytes());
+        }
+        let _ = writer.flush();
+    }
+
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        let cleared = self
+            .state
+            .with_term_mut(|term| term.selection.take().is_some());
+        if cleared {
+            cx.notify();
+        }
     }
 
     /// Handle scroll events.
@@ -816,11 +1032,13 @@ impl TerminalView {
                 TerminalEvent::ClipboardStore(text) => {
                     if let Some(ref callback) = self.clipboard_store_callback {
                         callback(window, cx, &text);
+                    } else {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
                     }
                 }
                 TerminalEvent::ClipboardLoad => {
-                    // Terminal wants to load data from clipboard
-                    // TODO: Implement clipboard integration
+                    // OSC 52 clipboard load — paste into the PTY.
+                    self.paste_clipboard(cx);
                 }
                 TerminalEvent::Exit => {
                     if let Some(ref callback) = self.exit_callback {
@@ -920,11 +1138,25 @@ impl Render for TerminalView {
         let renderer = self.renderer.clone();
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
+        let hit_layout = self.hit_layout.clone();
+        let hovered_link = self.hovered_link.as_ref().map(|link| {
+            (link.line, link.start_col, link.end_col)
+        });
+        let over_link = self.hovered_link.is_some();
 
         div()
+            .id("terminal-view")
+            .key_context("Terminal")
             .size_full()
             .bg(rgb(0x1e1e1e))
             .track_focus(&self.focus_handle)
+            .when(over_link, |this| this.cursor_pointer())
+            .on_action(cx.listener(|this, _: &EditPaste, _, cx| {
+                this.paste_clipboard(cx);
+            }))
+            .on_action(cx.listener(|this, _: &EditCopy, window, cx| {
+                this.copy_selection(window, cx);
+            }))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -950,6 +1182,17 @@ impl Render for TerminalView {
 
                         let cols = ((available_width / cell_width_f32) as usize).max(1);
                         let rows = ((available_height / cell_height_f32) as usize).max(1);
+
+                        *hit_layout.lock() = Some(TermHitLayout {
+                            origin: Point {
+                                x: bounds.origin.x + padding.left,
+                                y: bounds.origin.y + padding.top,
+                            },
+                            cell_width: measured_renderer.cell_width,
+                            cell_height: measured_renderer.cell_height,
+                            cols,
+                            rows,
+                        });
 
                         // Helper struct implementing Dimensions for resize
                         struct TermSize {
@@ -990,7 +1233,14 @@ impl Render for TerminalView {
                         }
 
                         // Paint the terminal with measured dimensions
-                        measured_renderer.paint(bounds, padding, &term, window, cx);
+                        measured_renderer.paint(
+                            bounds,
+                            padding,
+                            &term,
+                            hovered_link,
+                            window,
+                            cx,
+                        );
                     },
                 )
                 .size_full(),

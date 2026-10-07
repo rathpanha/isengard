@@ -215,7 +215,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-=", IncreaseFontSize, None),
         KeyBinding::new("secondary--", DecreaseFontSize, None),
         KeyBinding::new("secondary-0", ResetFontSize, None),
-        KeyBinding::new("secondary-shift-v", TogglePreview, None),
+        // Yield to terminal paste (`Ctrl+Shift+V` / `⌘⇧V` elsewhere) when focused.
+        KeyBinding::new("secondary-shift-v", TogglePreview, Some("!Terminal")),
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),

@@ -29,8 +29,11 @@ tabs, highlighted editor, status bar):
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
   a session, not when restoring a minimized panel. Tab cwds, visibility,
-  and height persist per workspace session. Mouse selection / scrollback
-  still minimal.
+  and height persist per workspace session. Mouse drag selects (double =
+  word, triple = line); copy/paste via OS terminal chords (`⌘C`/`⌘V` or
+  `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when focused); URL hover
+  continuous underline + pointer; Ctrl/Cmd+click opens.
+  Scrollback UI still minimal.
 - **Sidebar:** hide/show file tree without closing the workspace (View >
   Toggle Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility
   persist per workspace session.
@@ -50,8 +53,9 @@ shortcuts. Check these first if something is off.
 
 ## Known issues / TODO
 
-- Terminal mouse selection / scrollback UI still minimal. Workspace switch
-  clears all terminal tabs (re-prompts for a root if the panel was open).
+- Terminal scrollback UI still minimal (selection/copy/paste/URL-click work).
+  Workspace switch clears all terminal tabs (re-prompts for a root if the
+  panel was open).
 - Interactive flows not yet verified by a human (see above).
 - No UI integration tests yet; GPUI Kit supports them via the `test-support`
   feature and `#[gpui_kit::test]` — worth adding for tab close, dialogs, tree.

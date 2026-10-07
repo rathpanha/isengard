@@ -3,6 +3,15 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-07** — Terminal copy shows a "Copied" toast; URL hover underline
+  sits farther under the glyphs (`font_size` + 5px).
+- **2026-10-07** — Terminal paste: `TogglePreview` no longer steals
+  `Ctrl+Shift+V` / `⌘⇧V` while Terminal focused; URL hover underline is one
+  continuous stroke with a gap below the glyphs.
+- **2026-10-07** — Terminal copy/paste use OS chords (Linux/Win
+  Ctrl+Shift+C/V; macOS ⌘C/V); URL hover underline + pointer cursor.
+- **2026-10-07** — Terminal: mouse selection (word/line clicks), copy/paste,
+  Ctrl/Cmd+click to open URLs.
 - **2026-10-07** — Notifications clear the status bar (`margins.bottom` =
   status-bar height + 16px).
 - **2026-10-07** — Reverted no-animation experiment; Kit dialog/toast motion

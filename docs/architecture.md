@@ -113,12 +113,13 @@ src/
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
 │   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
 │   ├── pty.rs           portable-pty session + default shell / cwd
-│   ├── view.rs          TerminalView: grid paint + keyboard → PTY
+│   ├── view.rs          TerminalView: paint, select/copy/paste, URL click
 │   ├── state.rs         alacritty_terminal Term wrapper
-│   ├── render.rs        cell → GPUI paint (JetBrains Mono)
+│   ├── render.rs        cell → GPUI paint (selection invert)
+│   ├── links.rs         URL detect + open (Ctrl/Cmd+click)
 │   ├── input.rs         keystroke → bytes
 │   ├── colors.rs        ANSI / theme palette
-│   └── …                mouse, box_drawing, clipboard, event (v1 partial use)
+│   └── …                mouse, box_drawing, clipboard, event
 └── ui/
     ├── components.rs    shared compositions encoding docs/design.md rules
     │                    (center_dialog)

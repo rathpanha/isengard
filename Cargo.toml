@@ -22,6 +22,8 @@ portable-pty = "0.9"
 parking_lot = "0.12"
 flume = "0.12"
 ropey = "1"
+# Open terminal URLs in the system browser (Ctrl/Cmd+click).
+open = "5"
 
 # Decode `icon-1024.png` for Linux/X11 `WindowOptions::icon` (and tests).
 image = { version = "0.25", default-features = false, features = ["png"] }
