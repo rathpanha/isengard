@@ -15,8 +15,9 @@ pub static LOGO_MARK: LazyLock<Arc<Image>> = LazyLock::new(|| {
     ))
 });
 
-/// Shows the app icon in the macOS Dock. Bundled builds get it from the .app's
-/// Info.plist; this covers `cargo run`, where the binary has no bundle.
+/// Shows the app icon in the macOS Dock for unbundled `cargo run`.
+/// Windows: icon comes from the `.exe` resource (`build.rs` + `Isengard.ico`).
+/// Linux: X11 uses [`window_icon`]; Wayland needs `scripts/install-dev-icon.sh`.
 #[cfg(target_os = "macos")]
 pub fn set_dock_icon() {
     use objc2::{AllocAnyThread as _, MainThreadMarker};
@@ -38,9 +39,8 @@ pub fn set_dock_icon() {
 #[cfg(not(target_os = "macos"))]
 pub fn set_dock_icon() {}
 
-/// X11 `_NET_WM_ICON` via `WindowOptions::icon`. Wayland ignores this — panel
-/// icons come from a matching `.desktop` + hicolor icon (see
-/// `scripts/install-linux-dev-icon.sh`).
+/// Decoded `icon-1024.png` for `WindowOptions::icon` (honoured on **X11** only;
+/// GPUI ignores it on Wayland / Windows / macOS). Harmless to set everywhere.
 pub fn window_icon() -> Option<Arc<RgbaImage>> {
     match image::load_from_memory(include_bytes!("../assets/logo/icon-1024.png")) {
         Ok(img) => Some(Arc::new(img.into_rgba8())),

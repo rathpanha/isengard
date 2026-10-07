@@ -39,8 +39,8 @@ tabs, highlighted editor, status bar):
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard / File / Edit / View). Status bar while a workspace is open
   (panel toggles; path / Ln·Col when a file tab is active). Notifications
-  bottom-right. Logo on welcome + Dock / X11 window icon / .exe /
-  cargo-bundle; Wayland panel icon via `scripts/install-linux-dev-icon.sh`.
+  bottom-right. Logo on welcome + platform app icon (see architecture
+  Development setup / icon matrix).
 - **Theme:** JetBrains Mono Nerd Font; square corners; **dark mode only**;
   editor font-size zoom.
 
@@ -70,9 +70,10 @@ shortcuts. Check these first if something is off.
   unsaved buffer text or auto-open last workspace on launch.
 - Save All stops at the first failing file.
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
-- Windows icon embedding (`build.rs`) is untested on a real Windows box.
-  Linux: X11 uses `WindowOptions::icon`; Wayland needs the one-time
-  `scripts/install-linux-dev-icon.sh` (not verified on every DE).
+- App icons for `cargo run`: macOS Dock + Windows `.exe` embed + Linux X11
+  window icon are implemented; Wayland still needs
+  `scripts/install-dev-icon.sh` once. Windows embed and Wayland panel matching
+  are not verified on every machine/DE.
 - `package.metadata.bundle.identifier` (`dev.isengard.editor`) is a placeholder.
 - Syntax highlight theme (`assets/themes/`, Ayu Darker) is GPL-3.0; the project
   as a whole is also **GPL-3.0-only** (`LICENSE`, `Cargo.toml`). See

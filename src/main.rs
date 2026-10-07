@@ -45,7 +45,8 @@ fn main() {
                     cx,
                 ))),
                 window_min_size: Some(size(px(640.), px(400.))),
-                // Wayland panel icons match this to `*.desktop`; X11 uses `icon`.
+                // app_id: Wayland `.desktop` match. icon: X11 `_NET_WM_ICON`
+                // (ignored elsewhere; Windows uses .exe embed, macOS Dock API).
                 app_id: Some(branding::APP_ID.into()),
                 icon: branding::window_icon(),
                 ..TitleBar::window_options()
