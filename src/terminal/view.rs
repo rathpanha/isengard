@@ -845,7 +845,9 @@ impl TerminalView {
             });
         }
         self.selecting = false;
-        // Seed the primary selection (middle-click paste on Linux X11).
+        // Seed the primary selection (middle-click paste on Linux/X11).
+        // GPUI only exposes write_to_primary on linux/freebsd.
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if let Some(text) = self.selection_text()
             && !text.is_empty()
         {

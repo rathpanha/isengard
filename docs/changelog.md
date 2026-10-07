@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Terminal selection: `write_to_primary` only on
+  linux/freebsd so macOS/`cargo run` compiles again.
 - **2026-10-07** — New File in workspace stays in-memory until Save; Linux
   title-bar close runs unsaved-changes quit dialog.
 - **2026-10-07** — Save / Save All no longer show a toast on success.
