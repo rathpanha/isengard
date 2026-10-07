@@ -2,12 +2,22 @@
 
 ## Quick start
 
-Rust is installed via Homebrew's keg-only `rustup`; `cargo` is not on the
-default PATH:
+**macOS:** Rust via Homebrew's keg-only `rustup` (`cargo` is not on the
+default PATH):
 
 ```sh
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+```
 
+**Linux (Fedora):** install rustup (`curl https://sh.rustup.rs | sh`), then
+GPUI link deps as needed — at least `libxkbcommon-x11-devel`. Wayland panel
+icons for `cargo run` need a one-time user desktop entry:
+
+```sh
+./scripts/install-linux-dev-icon.sh
+```
+
+```sh
 cargo run                       # dev build, opens the welcome screen
 cargo run -- /path/to/folder    # open a folder at launch
 cargo run -- /path/to/file.js   # open a file (and its parent folder)
@@ -30,7 +40,7 @@ src/
 │                        menus, window (QuitMode::LastWindowClosed)
 ├── app.rs               IsengardApp view: actions, tabs, dialogs, layout, status bar
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
-├── branding.rs          logo image for the UI + macOS Dock icon (objc2 AppKit)
+├── branding.rs          logo mark, APP_ID, macOS Dock icon, Linux/X11 window icon
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
 ├── config.rs            AppConfig (serde JSON) + recents + workspace sessions
 ├── workspace.rs         Workspace (root folders + optional file): naming,
@@ -123,14 +133,18 @@ src/
   near-black tile). `logo-mark.svg` is the shapes only (welcome screen,
   `branding::LOGO_MARK`). `icon-macos.svg` puts the tile on Apple's 824px grid
   with a transparent margin and square corners (block style). Exports:
-  `Isengard.icns`, `icon-1024.png` (Dock icon, cargo-bundle), `logo-512.png`,
-  `Isengard.ico` (Windows, via `build.rs` + `assets/windows/isengard.rc` +
-  `embed-resource`). Colors: tile `#0b0b0c`, mark `#ececec`, cursor `#f5a524`.
-  The group is optically centred (halfway between bbox centre and area
-  centroid). To re-export after editing an SVG: render PNGs with a transparent
-  background using `resvg` (e.g. a tiny `resvg = "=0.45.1"` CLI; `qlmanage`
-  fills transparency with white, don't use it), build the iconset sizes
-  16–512 @1x/@2x, `iconutil -c icns`, and pack PNGs 16–256 into the .ico.
+  `Isengard.icns`, `icon-1024.png` (macOS Dock, X11 `WindowOptions::icon`,
+  cargo-bundle), `logo-512.png` (Linux hicolor via
+  `scripts/install-linux-dev-icon.sh`), `Isengard.ico` (Windows, via
+  `build.rs` + `assets/windows/isengard.rc` + `embed-resource`). App id
+  `branding::APP_ID` (`dev.isengard.editor`) is set on the window so Wayland
+  compositors can match the `.desktop` file. Colors: tile `#0b0b0c`, mark
+  `#ececec`, cursor `#f5a524`. The group is optically centred (halfway between
+  bbox centre and area centroid). To re-export after editing an SVG: render
+  PNGs with a transparent background using `resvg` (e.g. a tiny
+  `resvg = "=0.45.1"` CLI; `qlmanage` fills transparency with white, don't use
+  it), build the iconset sizes 16–512 @1x/@2x, `iconutil -c icns`, and pack
+  PNGs 16–256 into the .ico.
 - **Fonts**: five JetBrains Mono Nerd Font weights are embedded with
   `include_bytes!` (~13 MB) and registered via `cx.text_system().add_fonts`.
   Family name: `"JetBrainsMono Nerd Font"`. Attribution and license paths:

@@ -31,6 +31,7 @@ fn main() {
             gpui_kit::init(cx); // must come before any component is used
             editor::highlights::init();
             branding::set_dock_icon();
+            cx.set_app_identity(branding::APP_ID, "Isengard");
             theme::load_fonts(cx);
             let config = AppConfig::load();
             theme::apply(&config, None, cx);
@@ -44,6 +45,9 @@ fn main() {
                     cx,
                 ))),
                 window_min_size: Some(size(px(640.), px(400.))),
+                // Wayland panel icons match this to `*.desktop`; X11 uses `icon`.
+                app_id: Some(branding::APP_ID.into()),
+                icon: branding::window_icon(),
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, |window, cx| {

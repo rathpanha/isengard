@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-07** — Linux app icon for `cargo run`: `WindowOptions::{app_id,icon}`
+  (X11) + `scripts/install-linux-dev-icon.sh` for Wayland panel matching.
 - **2026-10-07** — Editor tab file icons: `tree_icon` + name as `Tab`
   children (`gap_2`, match file tree); avoid `Tab::prefix` (extra gap).
 - **2026-10-07** — Sidebar width/visibility and terminal height persist per

@@ -1,6 +1,11 @@
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::{Image, ImageFormat};
+use image::RgbaImage;
+
+/// Freedesktop / Wayland app id — must match the `.desktop` file basename
+/// (`dev.isengard.editor.desktop`) and `package.metadata.bundle.identifier`.
+pub const APP_ID: &str = "dev.isengard.editor";
 
 /// The logo mark (no background), for use inside the UI.
 pub static LOGO_MARK: LazyLock<Arc<Image>> = LazyLock::new(|| {
@@ -32,3 +37,28 @@ pub fn set_dock_icon() {
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_dock_icon() {}
+
+/// X11 `_NET_WM_ICON` via `WindowOptions::icon`. Wayland ignores this — panel
+/// icons come from a matching `.desktop` + hicolor icon (see
+/// `scripts/install-linux-dev-icon.sh`).
+pub fn window_icon() -> Option<Arc<RgbaImage>> {
+    match image::load_from_memory(include_bytes!("../assets/logo/icon-1024.png")) {
+        Ok(img) => Some(Arc::new(img.into_rgba8())),
+        Err(err) => {
+            log::warn!("failed to decode window icon: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_png_decodes() {
+        let icon = window_icon().expect("icon-1024.png should decode");
+        assert_eq!(icon.width(), 1024);
+        assert_eq!(icon.height(), 1024);
+    }
+}

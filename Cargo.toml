@@ -23,6 +23,9 @@ parking_lot = "0.12"
 flume = "0.12"
 ropey = "1"
 
+# Decode `icon-1024.png` for Linux/X11 `WindowOptions::icon` (and tests).
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Sets the Dock icon at runtime so unbundled builds (`cargo run`) show the logo.
 objc2 = "0.6"

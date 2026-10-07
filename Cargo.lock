@@ -3631,6 +3631,7 @@ dependencies = [
  "flume",
  "gpui-kit",
  "ignore",
+ "image",
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
