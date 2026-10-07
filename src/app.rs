@@ -8,9 +8,10 @@ use gpui_kit::component::{
     dialog::DialogFooter,
     h_flex,
     input::{Editor, EditorState, InputEvent, TabSize},
+    list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
     notification::Notification,
-    resizable::{h_resizable, resizable_panel},
+    resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     status_bar::StatusBar,
     tab::Tab,
     text::TextView,
@@ -21,11 +22,13 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 use serde::Deserialize;
 
 use crate::config::{
-    AppConfig, DEFAULT_EDITOR_FONT_SIZE, FileViewState, OpenFileEntry, WorkspaceSession,
+    AppConfig, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_SIDEBAR_WIDTH, DEFAULT_TERMINAL_HEIGHT,
+    FileViewState, OpenFileEntry, WorkspaceSession,
 };
 use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
+use crate::terminal::TerminalPanel;
 use crate::theme;
 use crate::ui::components::center_dialog;
 use crate::ui::file_tree::FileTreePanel;
@@ -53,6 +56,11 @@ actions!(
         DecreaseFontSize,
         ResetFontSize,
         TogglePreview,
+        ToggleSidebar,
+        ToggleTerminal,
+        NewTerminal,
+        /// Fired by the terminal panel after tabs change (close / need persist).
+        TerminalTabsChanged,
         About,
         Quit,
     ]
@@ -82,6 +90,117 @@ enum Switch {
     Close,
 }
 
+/// Folder list for the multi-root “Open Terminal in…” dialog.
+///
+/// Kit dialogs keep a focus trap on their own handle, so `on_key_down` on the
+/// list never fires. We intercept keystrokes for the life of this entity instead.
+struct TerminalCwdPicker {
+    folders: Vec<PathBuf>,
+    selected: usize,
+    hide_on_cancel: bool,
+    app: WeakEntity<IsengardApp>,
+    _keys: Subscription,
+}
+
+impl TerminalCwdPicker {
+    fn new(
+        folders: Vec<PathBuf>,
+        hide_on_cancel: bool,
+        app: WeakEntity<IsengardApp>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let entity = cx.weak_entity();
+        // ponytail: dialog focus trap eats on_key_down; intercept until Kit
+        // exposes the dialog focus handle to content.
+        let _keys = cx.intercept_keystrokes(move |event, window, cx| {
+            let Some(entity) = entity.upgrade() else {
+                return;
+            };
+            entity.update(cx, |this, cx| {
+                match event.keystroke.key.as_str() {
+                    "up" => {
+                        if this.selected > 0 {
+                            this.selected -= 1;
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }
+                    "down" => {
+                        if this.selected + 1 < this.folders.len() {
+                            this.selected += 1;
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }
+                    "enter" => {
+                        this.confirm(window, cx);
+                        cx.stop_propagation();
+                    }
+                    "escape" => {
+                        this.cancel(window, cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            });
+        });
+        Self {
+            folders,
+            selected: 0,
+            hide_on_cancel,
+            app,
+            _keys,
+        }
+    }
+
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(folder) = self.folders.get(self.selected).cloned() else {
+            return;
+        };
+        window.close_dialog(cx);
+        _ = self.app.update(cx, |this, cx| {
+            this.add_terminal_in(folder, window, cx);
+        });
+    }
+
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.close_dialog(cx);
+        if self.hide_on_cancel {
+            _ = self.app.update(cx, |this, cx| {
+                this.terminal.update(cx, |term, cx| {
+                    term.clear_sessions(cx);
+                    term.hide(cx);
+                });
+                this.persist_session(cx);
+                cx.notify();
+            });
+        }
+    }
+}
+
+impl Render for TerminalCwdPicker {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.selected;
+        v_flex()
+            .id("terminal-cwd-picker")
+            .w_full()
+            .gap_1()
+            .children(self.folders.iter().enumerate().map(|(ix, folder)| {
+                let name = document::file_name(folder);
+                ListItem::new(ix)
+                    .w_full()
+                    .selected(ix == selected)
+                    .cursor_pointer()
+                    .accessibility_label(name.clone())
+                    .child(div().px_2().py_1().child(name))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.selected = ix;
+                        this.confirm(window, cx);
+                    }))
+            }))
+    }
+}
+
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -96,6 +215,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary--", DecreaseFontSize, None),
         KeyBinding::new("secondary-0", ResetFontSize, None),
         KeyBinding::new("secondary-shift-v", TogglePreview, None),
+        KeyBinding::new("secondary-b", ToggleSidebar, None),
+        KeyBinding::new("ctrl-`", ToggleTerminal, None),
+        KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     // Fallback when the app view is not on the focus path (e.g. while a dialog is open).
@@ -167,6 +289,12 @@ pub struct IsengardApp {
     file_tree: FileTreePanel,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
+    /// Bottom integrated terminal (lazy; created on first show).
+    terminal: Entity<TerminalPanel>,
+    /// Per-workspace layout (restored from [`WorkspaceSession`]).
+    sidebar_width: f32,
+    sidebar_visible: bool,
+    terminal_height: f32,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
     /// Suppresses session writes while batch-restoring tabs.
@@ -201,6 +329,8 @@ impl IsengardApp {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
 
+        let terminal = cx.new(|_| TerminalPanel::new(&[]));
+
         let mut app = Self {
             config,
             focus_handle,
@@ -208,6 +338,10 @@ impl IsengardApp {
             file_tree,
             tabs: TabList::default(),
             app_menu_bar,
+            terminal,
+            sidebar_width: DEFAULT_SIDEBAR_WIDTH,
+            sidebar_visible: true,
+            terminal_height: DEFAULT_TERMINAL_HEIGHT,
             allow_quit: false,
             restoring_session: false,
             _subscriptions: vec![tree_subscription],
@@ -227,6 +361,7 @@ impl IsengardApp {
             }
             _ => {}
         }
+
         app
     }
 
@@ -369,10 +504,24 @@ impl IsengardApp {
         self.config.save();
         self.focus_handle.focus(window, cx);
         self.workspace_changed(window, cx);
+        self.restart_terminal_for_workspace(window, cx);
         self.restore_session(window, cx);
     }
 
-    /// Writes the current tabs + cursor/scroll + expanded dirs under this workspace's key.
+    fn restart_terminal_for_workspace(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Drop shells from the previous workspace; `restore_session` respawns
+        // saved tabs for the new key (if any).
+        self.terminal.update(cx, |term, cx| {
+            term.clear_sessions(cx);
+            term.hide(cx);
+        });
+    }
+
+    /// Writes the current tabs + cursor/scroll + expanded dirs + terminals under this workspace's key.
     fn persist_session(&mut self, cx: &App) {
         if self.restoring_session {
             return;
@@ -401,25 +550,51 @@ impl IsengardApp {
                 OpenFileEntry::with_view(tab.path.clone(), view)
             })
             .collect();
+        let terminal = self.terminal.read(cx);
         let session = WorkspaceSession {
             open_files,
             active: self.tabs.active().map(|t| t.path.clone()),
             expanded: self.file_tree.expanded_paths(),
+            terminal_cwds: terminal.session_cwds(),
+            terminal_active: terminal.active_index(),
+            terminal_visible: terminal.is_visible(),
+            sidebar_width: self.sidebar_width,
+            sidebar_visible: self.sidebar_visible,
+            terminal_height: self.terminal_height,
         };
         self.config.put_session(key, session);
         self.config.save();
     }
 
-    /// Reopens saved tabs (with cursor/scroll) and expands dirs for the current key.
+    fn reset_layout_defaults(&mut self) {
+        self.sidebar_width = DEFAULT_SIDEBAR_WIDTH;
+        self.sidebar_visible = true;
+        self.terminal_height = DEFAULT_TERMINAL_HEIGHT;
+    }
+
+    /// Reopens saved tabs (with cursor/scroll), expands dirs, and restores terminals.
     fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(key) = self.workspace.session_key() else {
+            self.reset_layout_defaults();
             return;
         };
         let Some(session) = self.config.session(&key).cloned() else {
+            self.reset_layout_defaults();
             return;
         };
 
         self.restoring_session = true;
+        self.sidebar_width = if session.sidebar_width >= 100. {
+            session.sidebar_width
+        } else {
+            DEFAULT_SIDEBAR_WIDTH
+        };
+        self.sidebar_visible = session.sidebar_visible;
+        self.terminal_height = if session.terminal_height >= 100. {
+            session.terminal_height
+        } else {
+            DEFAULT_TERMINAL_HEIGHT
+        };
         self.file_tree.expand_paths(&session.expanded, cx);
         for entry in &session.open_files {
             let path = entry.path();
@@ -439,6 +614,15 @@ impl IsengardApp {
                 self.apply_file_view(active, &entry.view(), window, cx);
             }
         }
+        self.terminal.update(cx, |term, cx| {
+            term.restore_sessions(
+                &session.terminal_cwds,
+                session.terminal_active,
+                session.terminal_visible,
+                window,
+                cx,
+            );
+        });
         self.restoring_session = false;
         self.persist_session(cx);
     }
@@ -1290,6 +1474,189 @@ impl IsengardApp {
         cx.notify();
     }
 
+    fn on_toggle_sidebar(
+        &mut self,
+        _: &ToggleSidebar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.file_tree.is_open() {
+            return;
+        }
+        self.sidebar_visible = !self.sidebar_visible;
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    fn on_toggle_terminal(
+        &mut self,
+        _: &ToggleTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.terminal.read(cx).is_visible() {
+            self.terminal.update(cx, |term, cx| term.hide(cx));
+            self.persist_session(cx);
+            self.focus_active_editor(window, cx);
+            cx.notify();
+            return;
+        }
+        self.open_terminal(window, cx);
+    }
+
+    fn on_new_terminal(
+        &mut self,
+        _: &NewTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_terminal(window, cx);
+    }
+
+    fn on_terminal_tabs_changed(
+        &mut self,
+        _: &TerminalTabsChanged,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.persist_session(cx);
+        if !self.terminal.read(cx).has_sessions() {
+            self.focus_active_editor(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Show the panel: restore existing sessions without asking, or create the first.
+    /// No-op on the welcome screen (needs at least one workspace folder).
+    fn open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.folders().is_empty() {
+            return;
+        }
+        if self.terminal.read(cx).has_sessions() {
+            self.terminal
+                .update(cx, |term, cx| term.show(window, cx));
+            self.persist_session(cx);
+            cx.notify();
+            return;
+        }
+        self.create_terminal(window, cx);
+    }
+
+    /// Always spawn a new terminal tab (asks for root when multi-root).
+    fn create_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folders = self.workspace.folders().to_vec();
+        if folders.is_empty() {
+            return;
+        }
+        if folders.len() > 1 {
+            self.pick_terminal_cwd(folders, false, window, cx);
+            return;
+        }
+        let cwd = crate::terminal::pty::default_cwd(&folders);
+        self.add_terminal_in(cwd, window, cx);
+    }
+
+    fn add_terminal_in(
+        &mut self,
+        cwd: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal
+            .update(cx, |term, cx| term.add_session(cwd, window, cx));
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    /// Dialog listing workspace roots. `hide_on_cancel` is for workspace switches
+    /// where the old session cwd is already invalid.
+    fn pick_terminal_cwd(
+        &self,
+        folders: Vec<PathBuf>,
+        hide_on_cancel: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let app = cx.entity().downgrade();
+        let muted = cx.theme().muted_foreground;
+        // Create once — the dialog builder may run every paint.
+        let picker = cx.new(|cx| {
+            TerminalCwdPicker::new(folders, hide_on_cancel, app, cx)
+        });
+        let picker_for_dialog = picker.clone();
+        window.open_dialog(cx, move |dialog, window, _cx| {
+            let picker_cancel = picker_for_dialog.clone();
+            let picker_open = picker_for_dialog.clone();
+            center_dialog(
+                dialog
+                    .title("Open Terminal in…")
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .w_full()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(muted)
+                                    .child(
+                                        "Choose a workspace folder for the shell. ↑↓ to move, Enter to open.",
+                                    ),
+                            )
+                            .child(picker_for_dialog.clone()),
+                    )
+                    .footer(
+                        DialogFooter::new()
+                            .gap_2()
+                            .child(
+                                Button::new("terminal-cwd-cancel")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(move |_, window, cx| {
+                                        picker_cancel.update(cx, |picker, cx| {
+                                            picker.cancel(window, cx);
+                                        });
+                                    }),
+                            )
+                            .child(
+                                Button::new("terminal-cwd-open")
+                                    .cursor_pointer()
+                                    .primary()
+                                    .label("Open")
+                                    .on_click(move |_, window, cx| {
+                                        picker_open.update(cx, |picker, cx| {
+                                            picker.confirm(window, cx);
+                                        });
+                                    }),
+                            ),
+                    ),
+                window,
+            )
+        });
+    }
+
+    fn remember_sidebar_width(&mut self, state: &Entity<ResizableState>, cx: &App) {
+        let sizes = state.read(cx).sizes();
+        if let Some(&w) = sizes.first() {
+            let w = f32::from(w).clamp(100., 800.);
+            if (self.sidebar_width - w).abs() > 0.5 {
+                self.sidebar_width = w;
+                self.persist_session(cx);
+            }
+        }
+    }
+
+    fn remember_terminal_height(&mut self, state: &Entity<ResizableState>, cx: &App) {
+        let sizes = state.read(cx).sizes();
+        if let Some(&h) = sizes.get(1) {
+            let h = f32::from(h).clamp(100., 800.);
+            if (self.terminal_height - h).abs() > 0.5 {
+                self.terminal_height = h;
+                self.persist_session(cx);
+            }
+        }
+    }
+
     fn on_about(&mut self, _: &About, window: &mut Window, cx: &mut Context<Self>) {
         window.open_dialog(cx, |dialog, window, _| {
             center_dialog(
@@ -1547,37 +1914,118 @@ impl IsengardApp {
             .into_any_element()
     }
 
-    /// The status bar describes the active file, so it only exists while one is open.
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let tab = self.tabs.active()?;
-        let path = self.workspace.relative_label(&tab.path);
-        let right = if let Some(state) = tab.editor_state() {
-            let cursor = state.read(cx).cursor_position();
-            h_flex()
-                .gap_4()
-                .child(format!(
-                    "Ln {}, Col {}",
-                    cursor.line + 1,
-                    cursor.character + 1
-                ))
-                .child(tab.language().unwrap().display_name())
-                .into_any_element()
-        } else {
-            div().child("Image").into_any_element()
-        };
-        let bar = StatusBar::new()
-            .left(div().child(path))
+    fn render_status_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let term_visible = self.terminal.read(cx).is_visible();
+        let has_folders = self.file_tree.is_open();
+        let sidebar_visible = self.sidebar_visible;
+
+        let left = h_flex()
+            .gap_2()
+            .items_center()
+            .when(has_folders, |this| {
+                this.child(
+                    Button::new("toggle-sidebar")
+                        .ghost()
+                        .cursor_pointer()
+                        .xsmall()
+                        .icon(if sidebar_visible {
+                            IconName::PanelLeftClose
+                        } else {
+                            IconName::PanelLeftOpen
+                        })
+                        .tooltip(if sidebar_visible {
+                            "Hide Sidebar"
+                        } else {
+                            "Show Sidebar"
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_sidebar(&ToggleSidebar, window, cx)
+                        })),
+                )
+            })
+            .when_some(self.tabs.active(), |this, tab| {
+                this.child(self.workspace.relative_label(&tab.path))
+            });
+
+        let right = h_flex()
+            .gap_4()
+            .items_center()
+            .when_some(self.tabs.active(), |this, tab| {
+                if let Some(state) = tab.editor_state() {
+                    let cursor = state.read(cx).cursor_position();
+                    this.child(format!(
+                        "Ln {}, Col {}",
+                        cursor.line + 1,
+                        cursor.character + 1
+                    ))
+                    .child(tab.language().unwrap().display_name())
+                } else {
+                    this.child("Image")
+                }
+            })
+            .when(has_folders, |this| {
+                this.child(
+                    Button::new("toggle-terminal")
+                        .ghost()
+                        .cursor_pointer()
+                        .xsmall()
+                        .icon(IconName::SquareTerminal)
+                        .tooltip(if term_visible {
+                            "Minimize Terminal"
+                        } else {
+                            "Show Terminal"
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_terminal(&ToggleTerminal, window, cx)
+                        })),
+                )
+            });
+
+        StatusBar::new()
+            .left(left)
             .right(right)
-            .text_xs();
-        Some(bar.into_any_element())
+            .text_xs()
+            .into_any_element()
+    }
+
+    /// Editor column, optionally stacked with the terminal under it (not under the tree).
+    fn render_editor_with_terminal(&self, cx: &mut Context<Self>) -> AnyElement {
+        let editor = self.render_editor_area(cx);
+        self.stack_with_terminal(editor, cx)
+    }
+
+    fn stack_with_terminal(&self, top: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        if !self.terminal.read(cx).is_visible() {
+            return top;
+        }
+        let height = px(self.terminal_height.max(100.));
+        let app = cx.entity().downgrade();
+        // Key by workspace so Kit's ResizableState doesn't leak sizes across folders.
+        let split_id = self
+            .workspace
+            .session_key()
+            .unwrap_or_else(|| "none".into());
+        v_resizable(SharedString::from(format!("editor-term-split-{split_id}")))
+            .on_resize(move |state, _, cx| {
+                let _ = app.update(cx, |this, cx| {
+                    this.remember_terminal_height(state, cx);
+                });
+            })
+            .child(resizable_panel().child(top))
+            .child(
+                resizable_panel()
+                    .size(height)
+                    .child(self.terminal.clone()),
+            )
+            .into_any_element()
     }
 }
 
 impl Render for IsengardApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = if self.show_welcome() {
+        let main = if self.show_welcome() {
             welcome::render(self, cx).into_any_element()
-        } else if self.file_tree.is_open() {
+        } else if self.file_tree.is_open() && self.sidebar_visible {
             let app = cx.entity().downgrade();
             let tree = self.file_tree.render(
                 move |path, permanent, window, cx| {
@@ -1587,16 +2035,27 @@ impl Render for IsengardApp {
                 },
                 cx,
             );
-            h_resizable("main-split")
+            let width = px(self.sidebar_width.max(100.));
+            let app = cx.entity().downgrade();
+            let split_id = self
+                .workspace
+                .session_key()
+                .unwrap_or_else(|| "none".into());
+            h_resizable(SharedString::from(format!("main-split-{split_id}")))
+                .on_resize(move |state, _, cx| {
+                    let _ = app.update(cx, |this, cx| {
+                        this.remember_sidebar_width(state, cx);
+                    });
+                })
                 .child(
                     resizable_panel()
-                        .size(px(260.))
+                        .size(width)
                         .child(div().size_full().min_w_0().overflow_hidden().child(tree)),
                 )
-                .child(resizable_panel().child(self.render_editor_area(cx)))
+                .child(resizable_panel().child(self.render_editor_with_terminal(cx)))
                 .into_any_element()
         } else {
-            self.render_editor_area(cx).into_any_element()
+            self.render_editor_with_terminal(cx)
         };
 
         v_flex()
@@ -1628,11 +2087,17 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_decrease_font))
             .on_action(cx.listener(Self::on_reset_font))
             .on_action(cx.listener(Self::on_toggle_preview))
+            .on_action(cx.listener(Self::on_toggle_sidebar))
+            .on_action(cx.listener(Self::on_toggle_terminal))
+            .on_action(cx.listener(Self::on_new_terminal))
+            .on_action(cx.listener(Self::on_terminal_tabs_changed))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_quit))
             .child(self.render_title_bar(cx))
-            .child(div().flex_1().min_h_0().child(body))
-            .children(self.render_status_bar(cx))
+            .child(div().flex_1().min_h_0().child(main))
+            .when(!self.show_welcome(), |this| {
+                this.child(self.render_status_bar(cx))
+            })
     }
 }
 

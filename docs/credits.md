@@ -60,6 +60,9 @@ many to list; `cargo tree` is the full graph).
 | `log` / `env_logger` | Logging |
 | `rust-embed` | Bundled assets |
 | `ignore` | `.gitignore` matching for muted tree rows |
+| `alacritty_terminal` | VTE / terminal grid state for the integrated panel |
+| `portable-pty` | PTY + default shell spawn (wezterm) |
+| `parking_lot` / `flume` / `ropey` | Sync + channels for the adapted terminal view |
 | `cc` | Build pin for tree-sitter/SQL + Windows resource embed |
 | `embed-resource` | Windows `.exe` icon (build) |
 | `objc2` / `objc2-app-kit` / `objc2-foundation` | macOS Dock icon at runtime |
@@ -70,9 +73,14 @@ for macOS `.app` / Linux `.deb` builds (dev tool, not a runtime dependency).
 
 ## Inspiration (not copied)
 
-Workspace UX (multi-root folders, preview tabs, session restore) follows
-patterns familiar from **Visual Studio Code** and other editors. That is
-behavioural inspiration, not copied source.
+Workspace UX (multi-root folders, preview tabs, session restore) and the
+bottom integrated terminal follow patterns familiar from **Visual Studio Code**
+and other editors. That is behavioural inspiration, not copied source.
+
+The terminal view under `src/terminal/` is adapted from
+[gpui-terminal](https://github.com/zortax/gpui-terminal) (MIT/Apache-2.0) for
+our GPUI Kit / `gpui-pre` 0.3.8 pin — the crates.io crate targets a different
+GPUI and is not a direct dependency.
 
 ## Keeping this page honest
 

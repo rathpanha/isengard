@@ -23,8 +23,10 @@ section here.
 - **Color:** only semantic theme colors from `cx.theme()` — `foreground`,
   `muted_foreground`, `background`, `border`, `danger`, `sidebar`, … No raw
   hex/rgb in UI code. Opacity variations of a theme color are fine
-  (e.g. `danger.opacity(0.15)`). Exception: the file tree uses Material Icon
-  Theme SVGs with their upstream fill colours (see §5).
+  (e.g. `danger.opacity(0.15)`). Exceptions: the file tree uses Material Icon
+  Theme SVGs with their upstream fill colours (see §5); the terminal ANSI
+  16-colour table may keep documented defaults in `terminal::colors` (bg/fg/
+  cursor mapped from `cx.theme()` where possible).
 - **Dark only:** the app is dark mode permanently — no light theme, no toggle.
   Editor syntax colours come from `assets/themes/ayu-darker-highlight.json`
   (GPL-3.0); editor/gutter background is forced to `theme.sidebar` (same as the
@@ -110,9 +112,27 @@ Add a row here whenever a new shared component is created.
 - **Keyboard shortcut hints:** one `Kbd` key cap per key with `gap_1`
   (`⌘` `O`, `Ctrl` `O`) — see `welcome::shortcut_keys`. Never a single cap with
   the keys run together.
-- **Empty states:** don't show chrome that has nothing to say. The status bar
-  exists only while a file tab is active; the file tree only while a folder is
-  open; the welcome screen replaces the workspace when nothing is open.
+- **Empty states:** don't show chrome that has nothing to say. The file tree
+  only while a folder is open and the sidebar is not minimized; the welcome
+  screen replaces the workspace when nothing is open; the terminal panel is
+  omitted entirely when minimized (no empty strip). Status bar only while a
+  folder/workspace is open (panel toggles; path / Ln·Col when a file tab is
+  active) — not on welcome.
+- **Bottom terminal panel:** Kit `v_resizable("editor-term-split")` under the
+  **editor column only** (file tree stays full height in `main-split`); when
+  the sidebar is hidden, under the full editor body. Requires an open
+  folder/workspace (not available on welcome). Open/closed + height remembered
+  in `config.terminal_visible` / `terminal_height` (default closed, 200px).
+  Header: tab strip (title = folder name) + `Plus` (new) + `Minus` (minimize).
+  Toggle (`Ctrl+\`` / status-bar) shows/hides without spawning; if no sessions
+  yet, creates the first. **New Terminal** (`Ctrl+Shift+\`` / `Plus` / View menu)
+  always spawns a tab. Multi-root: root picker only when creating a session
+  (↑↓ / Enter / Cancel), not when un-minimizing. Tab cwds, visibility, and
+  panel height are stored per workspace in `sessions` (shells respawn).
+- **Sidebar toggle:** file tree can be hidden while the workspace stays open.
+  Width + visibility remembered per workspace in `sessions` (default 260px /
+  visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /
+  `Ctrl+B`.
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`). Don't set placement per toast.
 - **Links vs buttons:** navigation-like actions on the welcome screen

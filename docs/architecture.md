@@ -45,6 +45,15 @@ src/
 │   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)
 │   ├── indent_guides.rs vertical tree lines from flat entry depths
 │   └── icons.rs         Material Icon Theme (full set) → tree_icon(path, …)
+├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
+│   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
+│   ├── pty.rs           portable-pty session + default shell / cwd
+│   ├── view.rs          TerminalView: grid paint + keyboard → PTY
+│   ├── state.rs         alacritty_terminal Term wrapper
+│   ├── render.rs        cell → GPUI paint (JetBrains Mono)
+│   ├── input.rs         keystroke → bytes
+│   ├── colors.rs        ANSI / theme palette
+│   └── …                mouse, box_drawing, clipboard, event (v1 partial use)
 └── ui/
     ├── components.rs    shared compositions encoding docs/design.md rules
     │                    (center_dialog)
@@ -84,6 +93,20 @@ src/
   (selection is restored by id). Tree item ids are absolute paths. Row icons
   come from `file_tree::tree_icon` (full Material Icon Theme via `img()` +
   `material-icons.json`), not Lucide.
+- **Terminal:** `IsengardApp::terminal` is an `Entity<TerminalPanel>` (PTY
+  session lazy on first show). When the tree is open, `v_resizable("editor-term-split")`
+  is the right child of `main-split` (under editor only; tree full height).
+  Without a tree, the same vertical split wraps the body. Panel omitted when
+  minimized; `AppConfig.terminal_visible` + `terminal_height` restore open
+  state and height (`resizable_panel().size`, saved on toggle / resize end).
+  `apply_switch` restarts the shell in the first folder cwd (else home).
+  Requires at least one workspace folder (hidden on welcome / Close
+  Workspace). `ToggleTerminal` shows/hides existing tabs; `NewTerminal`
+  always `add_session`. Multi-root create uses `pick_terminal_cwd` before
+  `add_terminal_in`. Layout sizes live on `WorkspaceSession`
+  (`sidebar_width` / `sidebar_visible` / `terminal_height`); resizable
+  element ids include the session key so Kit state does not leak across
+  folders. `ToggleSidebar` / `⌘B`/`Ctrl+B`.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close
@@ -143,4 +166,7 @@ changes between snapshots; upgrade `gpui-kit` as a whole and re-check every
 API used here. Tree-sitter languages come from the `tree-sitter-languages`
 feature (JSON is included via base `tree-sitter`). Detection lives in
 `Language` in `editor/language.rs`. Direct dep `cc = "~1.2.1"` keeps
-`tree-sitter-sequel` (SQL) resolvable against `embed-resource`.
+`tree-sitter-sequel` (SQL) resolvable against `embed-resource`. Terminal deps:
+`alacritty_terminal = "0.25.1"`, `portable-pty = "0.9"` (plus `parking_lot`,
+`flume`, `ropey` for the adapted view). Do not depend on crates.io
+`gpui-terminal` — it targets a different GPUI; our panel is a local adaptation.

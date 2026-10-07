@@ -4,6 +4,8 @@ mod config;
 mod editor;
 mod file_tree;
 mod menus;
+#[allow(dead_code, clippy::type_complexity, clippy::manual_range_contains)]
+mod terminal;
 mod theme;
 mod ui;
 mod workspace;

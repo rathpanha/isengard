@@ -3,6 +3,26 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-07** — Sidebar width/visibility and terminal height persist per
+  workspace/folder session (not globally).
+- **2026-10-07** — Terminal tabs (cwds + visibility) persist in the workspace
+  session and restore when reopening the editor.
+- **2026-10-07** — Multi-tab terminals; root picker only when creating a
+  session (New Terminal / first open), not when un-minimizing.
+- **2026-10-07** — Multi-root terminal folder dialog: ↑↓ / Enter / Escape.
+- **2026-10-07** — Terminal only while a folder/workspace is open (not on
+  welcome).
+- **2026-10-07** — Multi-root: opening the terminal asks which folder to use
+  as the shell cwd.
+- **2026-10-07** — Terminal open/closed state persisted in config
+  (`terminal_visible`).
+- **2026-10-07** — Panel chrome: status-bar Show/Minimize Terminal + Toggle
+  Sidebar; terminal/sidebar sizes persisted in config across hide/show.
+- **2026-10-07** — Terminal panel sits under the editor column only (file tree
+  keeps full height).
+- **2026-10-07** — Bottom integrated terminal: `v_resizable` panel, default
+  shell via `portable-pty` + adapted `alacritty_terminal` view; View >
+  Toggle Terminal / `Ctrl+\``.
 - **2026-10-07** — Welcome Start: two columns (workspace | folder/file) with
   a vertical separator; unique icons per action.
 - **2026-10-07** — Welcome Start: side-by-side rows + unique icons

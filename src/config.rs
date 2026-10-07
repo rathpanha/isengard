@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_EDITOR_FONT_SIZE: f32 = 14.0;
 pub const MIN_FONT_SIZE: f32 = 9.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
+/// Default file-tree sidebar width in the main horizontal split.
+pub const DEFAULT_SIDEBAR_WIDTH: f32 = 260.0;
+/// Default integrated terminal height in the editor vertical split.
+pub const DEFAULT_TERMINAL_HEIGHT: f32 = 200.0;
 /// Cap for each recent list (folders and workspaces).
 pub const MAX_RECENT: usize = 8;
 /// Cap for persisted workspace sessions (tabs + tree expand).
@@ -52,13 +56,56 @@ impl OpenFileEntry {
     }
 }
 
+fn default_sidebar_width() -> f32 {
+    DEFAULT_SIDEBAR_WIDTH
+}
+
+fn default_sidebar_visible() -> bool {
+    true
+}
+
+fn default_terminal_height() -> f32 {
+    DEFAULT_TERMINAL_HEIGHT
+}
+
 /// Open tabs and expanded folders for one workspace / folder key.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkspaceSession {
     pub open_files: Vec<OpenFileEntry>,
     pub active: Option<PathBuf>,
     pub expanded: Vec<PathBuf>,
+    /// Integrated terminal tab cwds (shells are respawned on restore).
+    pub terminal_cwds: Vec<PathBuf>,
+    /// Index into `terminal_cwds` for the selected tab.
+    pub terminal_active: usize,
+    /// Whether the terminal panel was visible for this workspace.
+    pub terminal_visible: bool,
+    /// File-tree sidebar width (px) in `main-split`.
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: f32,
+    /// Whether the file-tree sidebar is shown.
+    #[serde(default = "default_sidebar_visible")]
+    pub sidebar_visible: bool,
+    /// Integrated terminal panel height (px) in `editor-term-split`.
+    #[serde(default = "default_terminal_height")]
+    pub terminal_height: f32,
+}
+
+impl Default for WorkspaceSession {
+    fn default() -> Self {
+        Self {
+            open_files: Vec::new(),
+            active: None,
+            expanded: Vec::new(),
+            terminal_cwds: Vec::new(),
+            terminal_active: 0,
+            terminal_visible: false,
+            sidebar_width: DEFAULT_SIDEBAR_WIDTH,
+            sidebar_visible: true,
+            terminal_height: DEFAULT_TERMINAL_HEIGHT,
+        }
+    }
 }
 
 /// User-facing settings, persisted as JSON in the platform config directory.
@@ -73,7 +120,7 @@ pub struct AppConfig {
     pub recent_folders: Vec<PathBuf>,
     /// `.isengard-workspace` files, most recently opened first.
     pub recent_workspaces: Vec<PathBuf>,
-    /// Last tabs + expanded dirs, keyed by [`crate::workspace::Workspace::session_key`].
+    /// Last tabs + tree + terminal layout, keyed by workspace session key.
     pub sessions: BTreeMap<String, WorkspaceSession>,
 }
 
@@ -280,6 +327,7 @@ mod tests {
                 )],
                 active: Some(PathBuf::from("/code/app/main.rs")),
                 expanded: vec![PathBuf::from("/code/app/src")],
+                ..Default::default()
             },
         );
         assert!(config.sessions.len() <= MAX_SESSIONS);
