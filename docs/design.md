@@ -31,6 +31,13 @@ section here.
   Editor syntax colours come from `assets/themes/ayu-darker-highlight.json`
   (GPL-3.0); editor/gutter background is forced to `theme.sidebar` (same as the
   file tree).
+- **No animation / motion:** the UI is static. Do not add fades, slides,
+  springs, progressers, shimmer, or any `with_animation` / Kit motion helpers
+  in app code. Dialog and notification entrance/exit motion from GPUI Kit is
+  disabled app-wide via `cx.set_reduce_motion(true)` in `main` (Kit's
+  `with_animation` then renders the end frame only). Never call
+  `set_reduce_motion(false)`. OS chrome (window open, menu bar) is outside our
+  control.
 
 ## 2. Spacing
 
