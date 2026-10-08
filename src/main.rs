@@ -10,6 +10,7 @@ mod theme;
 mod ui;
 mod workspace;
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use gpui_kit::component::TitleBar;
@@ -18,6 +19,30 @@ use gpui_kit::*;
 use crate::app::IsengardApp;
 use crate::config::AppConfig;
 
+// Default `Assets` is only ~101 component icons; FilePlus/FolderPlus live in
+// the full Lucide catalog but are not embedded unless we opt in. Compose just
+// those two (not `AllAssets` — ~1 MiB) with the default bundle.
+gpui_kit::assets::icon_assets!(ExtraIcons, [FilePlus, FolderPlus]);
+
+struct AppAssets;
+
+impl AssetSource for AppAssets {
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if let Some(bytes) = ExtraIcons.load(path)? {
+            return Ok(Some(bytes));
+        }
+        gpui_kit::assets::Assets.load(path)
+    }
+
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        let mut paths = gpui_kit::assets::Assets.list(path)?;
+        paths.extend(ExtraIcons.list(path)?);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
+
 fn main() {
     env_logger::init();
     // `isengard <folder>` opens a folder, `isengard <x.isengard-workspace>` a workspace,
@@ -25,7 +50,7 @@ fn main() {
     let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
 
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(AppAssets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx); // must come before any component is used

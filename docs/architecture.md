@@ -91,7 +91,8 @@ prints that nothing is needed (macOS / Git Bash on Windows).
 
 ```
 src/
-├── main.rs              app bootstrap: gpui_kit::init, fonts, theme, key bindings,
+├── main.rs              app bootstrap: `AppAssets` (default Kit icons + FilePlus/
+│                        FolderPlus), gpui_kit::init, fonts, theme, key bindings,
 │                        menus, window (QuitMode::LastWindowClosed)
 ├── app.rs               IsengardApp view: actions, tabs, dialogs, layout, status bar
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
@@ -153,9 +154,11 @@ src/
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
   the tree's context menu. Same pattern for `RenamePath` / `DeletePath` /
   `NewFileIn` / `NewFolderIn`. Blank-space New File/Folder uses a panel
-  `ContextMenuExt` around the tree (row menus suppress it). Selection
-  shortcuts bind only in the Kit `Tree` key context: `f2` rename;
-  `delete` / `backspace` → OS Trash (`trash` crate).
+  `ContextMenuExt` around the tree (row menus suppress it). A thin
+  toolbar above the tree dispatches the same actions (parent from
+  selection, else first root). Selection shortcuts bind only in the Kit
+  `Tree` key context: `f2` rename; `delete` / `backspace` → OS Trash
+  (`trash` crate).
 - **File tree**: `FsNode` is the source of truth. Unloaded/empty directories get
   a disabled placeholder child (`"Loading…"` / `"(empty)"`) because GPUI Kit's
   `TreeItem::is_folder()` is just "has children". On `TreeEvent::Expanded` the

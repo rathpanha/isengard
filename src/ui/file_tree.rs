@@ -3,12 +3,16 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _, h_flex,
+    ActiveTheme as _, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex,
     input::{Input, InputState},
     list::ListItem,
     menu::ContextMenuExt as _,
     tree::{TreeEvent, TreeItem, TreeState, tree},
+    v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
@@ -168,6 +172,7 @@ impl FileTreePanel {
             .unwrap_or(raw);
         Some(PathBuf::from(path))
     }
+
 
     /// Expands `dir`, reloads its children from disk, and syncs the Kit tree.
     pub fn refresh_dir(&mut self, dir: &Path, cx: &mut App) {
@@ -445,15 +450,73 @@ impl FileTreePanel {
                 .text_color(theme.sidebar_foreground)
                 .text_sm();
 
+        // Toolbar always offers create when the tree fills the panel (no blank
+        // space left to right-click). Parent resolved on click: selection's
+        // dir, parent of selected file, else first workspace root.
+        let toolbar_roots: Vec<PathBuf> =
+            self.roots.iter().map(|r| r.path().to_path_buf()).collect();
+        let tree_state_toolbar = self.state.clone();
+        let toolbar = h_flex()
+            .id("file-tree-toolbar")
+            .w_full()
+            .items_center()
+            .justify_end()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .child({
+                let tree_state = tree_state_toolbar.clone();
+                let roots = toolbar_roots.clone();
+                Button::new("tree-new-file")
+                    .ghost()
+                    .cursor_pointer()
+                    .xsmall()
+                    .icon(LucideIcon::FilePlus)
+                    .tooltip("New File")
+                    .on_click(
+                        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                            let Some(parent) = toolbar_create_parent(&tree_state, &roots, &*cx)
+                            else {
+                                return;
+                            };
+                            tree_state.update(cx, |state, cx| state.focus(window, cx));
+                            window.dispatch_action(Box::new(NewFileIn(parent)), cx);
+                        },
+                    )
+            })
+            .child({
+                let tree_state = tree_state_toolbar;
+                let roots = toolbar_roots;
+                Button::new("tree-new-folder")
+                    .ghost()
+                    .cursor_pointer()
+                    .xsmall()
+                    .icon(LucideIcon::FolderPlus)
+                    .tooltip("New Folder")
+                    .on_click(
+                        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                            let Some(parent) = toolbar_create_parent(&tree_state, &roots, &*cx)
+                            else {
+                                return;
+                            };
+                            tree_state.update(cx, |state, cx| state.focus(window, cx));
+                            window.dispatch_action(Box::new(NewFolderIn(parent)), cx);
+                        },
+                    )
+            });
+
         // Fill the panel so right-click on empty space (below rows) can create
         // at the workspace root — single-root never shows a root row to target.
         let tree_state_blank = self.state.clone();
-        div()
+        let tree_panel = div()
             .id("file-tree-panel")
-            .size_full()
+            .flex_1()
+            .min_h_0()
             .min_w_0()
+            .w_full()
             .overflow_hidden()
-            .bg(theme.sidebar)
             .context_menu(move |menu, window, cx| {
                 if blank_menu_blocked.replace(false) {
                     return menu;
@@ -465,9 +528,42 @@ impl FileTreePanel {
                 menu.menu("New File", Box::new(NewFileIn(root.clone())))
                     .menu("New Folder", Box::new(NewFolderIn(root)))
             })
-            .child(tree_el)
+            .child(tree_el);
+
+        v_flex()
+            .id("file-tree")
+            .size_full()
+            .min_w_0()
+            .bg(theme.sidebar)
+            .text_color(theme.sidebar_foreground)
+            .child(toolbar)
+            .child(tree_panel)
             .into_any_element()
     }
+}
+
+/// Parent dir for toolbar create: selected folder, parent of selected file,
+/// else the first workspace root.
+fn toolbar_create_parent(
+    tree_state: &Entity<TreeState>,
+    roots: &[PathBuf],
+    cx: &App,
+) -> Option<PathBuf> {
+    if let Some(item) = tree_state.read(cx).selected_item() {
+        let raw = item.id.as_ref();
+        if !raw.contains(CREATING_SUFFIX) {
+            let path = PathBuf::from(
+                raw.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(raw),
+            );
+            if path.is_dir() {
+                return Some(path);
+            }
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                return Some(parent.to_path_buf());
+            }
+        }
+    }
+    roots.first().cloned()
 }
 
 fn to_tree_item(node: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {

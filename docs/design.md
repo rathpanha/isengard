@@ -170,11 +170,19 @@ Add a row here whenever a new shared component is created.
     Delete; multi-root roots also get "Remove Folder from Workspace".
     Right-click empty space in the tree panel (not on a row) → New File /
     New Folder under the workspace root (single-root folder, or first
-    root when multi). With the tree focused (`Tree` key context): `F2`
-    renames; `Delete` / `Backspace` moves to the OS Trash (toast, no
-    confirm). **Rename**, **New File**, and **New Folder** are inline in
-    the tree (Kit `Input` on the row or a temporary create row; Enter/blur
-    commits, Escape cancels; empty create name cancels).
+    root when multi). Mini toolbar at the top of the tree (ghost
+    `xsmall` icon buttons, `gap_1`, trailing-aligned, `border_b`, tooltips
+    — same chrome as the terminal tab strip): New File /
+    New Folder (`assets::IconName::FilePlus` / `FolderPlus`, embedded via
+    `icon_assets!` + `AppAssets` in `main.rs` — not in default Kit
+    `Assets`). Creates in the selected directory (or
+    parent of a selected file); with no selection, the first workspace
+    root. No folder-name label above the tree (title bar owns the name).
+    With the tree focused (`Tree` key context): `F2` renames; `Delete` /
+    `Backspace` moves to the OS Trash (toast, no confirm). **Rename**,
+    **New File**, and **New Folder** are inline in the tree (Kit `Input`
+    on the row or a temporary create row; Enter/blur commits, Escape
+    cancels; empty create name cancels).
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
   (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps

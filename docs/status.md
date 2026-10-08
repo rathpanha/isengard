@@ -22,6 +22,8 @@ tabs, highlighted editor, status bar):
   Rename / Delete (multi-root roots also Remove Folder from Workspace).
   Right-click empty space in the tree panel → New File / New Folder at
   the workspace root (sole root when single-root; first root when multi).
+  Mini toolbar above the tree: New File / New Folder (selection's dir,
+  else root) so create still works when the tree has no blank space.
   Rename / New File / New Folder are inline in the tree (Enter/blur
   commit, Escape cancel). Clicking a tree row focuses the Tree (preview
   open does not steal focus); `F2` rename; `Delete` / `Backspace` → OS

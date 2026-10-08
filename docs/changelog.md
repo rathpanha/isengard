@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Embed Lucide `FilePlus` / `FolderPlus` via `AppAssets`
+  (default Kit icons + those two); tree toolbar uses them.
+- **2026-10-08** — File tree toolbar icons: `FilePlus` / `FolderPlus`.
+- **2026-10-08** — File tree mini toolbar: New File / New Folder (for when
+  the tree has no blank space to right-click).
 - **2026-10-08** — Right-click empty space in the file tree → New File /
   New Folder at the workspace root.
 - **2026-10-08** — New File / New Folder are inline in the tree (same as
