@@ -46,13 +46,20 @@ tabs, highlighted editor, status bar):
   Scrollback UI still minimal.
 - **Sidebar:** hide/show without closing the workspace (View > Toggle
   Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist
-  per workspace session. Explorer ↔ Search via top sidebar strip (`⌘⇧F` /
-  Find in Files): project find + replace across roots.
+  per workspace session. Explorer ↔ Search ↔ Source Control via top strip
+  (`⌘⇧F` / Find in Files for Search; View > Source Control for Git).
 - **Project search:** parallel `ignore` walk + `regex` / `aho-corasick`
   prefilter; cancels in-flight scans on new query; skips `node_modules`/
   `target`/media/binaries and files >1 MiB; open buffers preferred over disk;
   Replace in File / Replace All (confirm); click match to open (result row +
   editor highlight). Results list paints at most 500 hits.
+- **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
+  bottom border only); collapsible changes with Material icons + status
+  on the right; Open File icon + per-file / discard-all (confirm);
+  commit textarea + outlined Pull/Push/Commit; commit-all (no stage UI);
+  pull `--ff-only` / push; click opens read-only side-by-side diff
+  preview with line highlights. No stage UI, branch UI, or conflict
+  resolver.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root). Linux in-window close × confirms unsaved changes.

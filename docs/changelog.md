@@ -3,6 +3,24 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Git change rows: Open File icon (permanent tab, like
+  the tree) next to discard.
+- **2026-10-08** — Git diff overview ruler: absolute overlay (flex sibling
+  blew out pane height); ticks still via document fractions.
+- **2026-10-08** — Git side-by-side diff: overview-ruler ticks on each
+  pane (Kit scrollbar has no marker API).
+- **2026-10-08** — Git side-by-side diff: line highlights (delete/insert
+  fills) via `similar`.
+- **2026-10-08** — Git change preview: equal side-by-side HEAD | Working
+  Tree panes, both read-only (replaces unified diff tab).
+- **2026-10-08** — Git sections: flush layout, bottom border only (no cards).
+- **2026-10-08** — Git changes: Material icons, status letter on the right,
+  discard file / discard all (confirm); Refresh ghost icon-only.
+- **2026-10-08** — Git panel UX: strip order Explorer|Git|Search; commit
+  textarea; outlined buttons; bordered repo sections; collapsible changes;
+  click opens read-only diff preview.
+- **2026-10-08** — Minimal Source Control sidebar (stacked multi-root repos;
+  status / commit-all / pull ff-only / push via CLI `git`).
 - **2026-10-08** — Remember main window size/position/maximized in
   `config.json` across launches.
 - **2026-10-08** — Project search speed: parallel walk, cancel on new query,

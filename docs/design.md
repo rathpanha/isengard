@@ -157,9 +157,10 @@ Add a row here whenever a new shared component is created.
   visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /
   `Ctrl+B`.
 - **Project Search (sidebar):** left panel switches between Explorer (file
-  tree) and Search (same width — not a second column). Toggle via the
-  sidebar top strip (`FolderTree` / `Search`, `.small()`), View >
-  Explorer / Search, Edit > Find in Files, or `⌘⇧F` / `Ctrl+Shift+F`.
+  tree), Search, and Source Control (same width — not a second column).
+  Toggle via the sidebar top strip (`FolderTree` / `Search` / `GitBranch`,
+  `.small()`), View > Explorer / Search / Source Control, Edit > Find in
+  Files, or `⌘⇧F` / `Ctrl+Shift+F`.
   Find + replace fields; toggles for case / whole word / regex (Lucide
   `CaseSensitive` / `WholeWord` / `Regex`). Results list: file headers
   (Material `tree_icon` + workspace-relative path) + match rows (`Ln` +
@@ -172,6 +173,22 @@ Add a row here whenever a new shared component is created.
   binaries / media extensions / well-known build dirs (`node_modules`,
   `target`, …) / files >1 MiB. Caps at 10k matches / 2k files; UI paints at
   most 500 hit rows (shows truncated).
+- **Source Control (sidebar):** strip order Explorer | Source Control |
+  Search. Stacked flush sections (no cards) — one per unique Git worktree
+  (shared `.git` → one section), separated only by a bottom border. Per
+  section: repo name + branch, outlined Pull / Push, multi-line commit
+  `Textarea` + outlined Commit, collapsible changes list. Change rows:
+  Material `tree_icon` + path, status letter (`M`/`A`/`D`/`R`/`?`) on the
+  right, ghost Open File (`ExternalLink`, permanent tab) + Undo discard
+  (confirms). Discard-all on the changes header (confirms;
+  `reset --hard` + `clean -fd`). Header Refresh is ghost icon-only.
+  **No staging UI** — Commit is `git add -A` then `git commit -m`. Pull
+  is `--ff-only`. Click a change opens a **read-only** side-by-side
+  preview tab (equal HEAD | Working Tree panes; deleted lines
+  danger-fill / inserted success-fill; overview ruler ticks on each
+  pane's scroll edge; not editable). System `git` on PATH; errors
+  toast. Refresh on view open / workspace change / after actions /
+  Refresh. Not: stage UI, branch switch, stash, merge UI, amend.
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`), with `margins.bottom` clearing the status
   bar (`STATUS_BAR_HEIGHT` + 16px edge). Don't set placement/margins per toast.

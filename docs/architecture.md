@@ -117,6 +117,11 @@ src/
 │   ├── engine.rs        parallel WalkBuilder + regex/aho-corasick; cancel;
 │   │                    size/ext/dir skips; open-buffer override; replace
 │   └── panel.rs         SearchPanel UI (inputs, toggles, capped results)
+├── git/                 minimal Source Control (sidebar Git view)
+│   ├── engine.rs        CLI `git`: discover, porcelain, commit/pull/push,
+│   │                    discard, side-by-side file texts (`file_sides`)
+│   ├── diff_highlight.rs line ranges via `similar` for pane fills
+│   └── panel.rs         GitPanel: stacked repos, commit box, change list
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
 │   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
 │   ├── pty.rs           portable-pty session + default shell / cwd
@@ -258,5 +263,6 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 `alacritty_terminal = "0.25.1"`, `portable-pty = "0.9"` (plus `parking_lot`,
 `flume`, `ropey` for the adapted view). Project search: `regex = "1"`,
 `aho-corasick = "1"`, existing `ignore = "0.4"` (parallel `WalkBuilder`,
-`require_git(false)`, `max_filesize`). Do not depend on crates.io
+`require_git(false)`, `max_filesize`). Source Control shells out to system
+`git` on PATH (no `git2`/`gix`). Do not depend on crates.io
 `gpui-terminal` — it targets a different GPUI; our panel is a local adaptation.

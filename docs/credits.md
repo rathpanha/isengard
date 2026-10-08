@@ -61,6 +61,7 @@ many to list; `cargo tree` is the full graph).
 | `rust-embed` | Bundled assets |
 | `ignore` | `.gitignore` matching (tree dim + project search walk) |
 | `regex` / `aho-corasick` | Project Find & Replace matcher + literal prefilter |
+| `similar` | Line diff for Source Control side-by-side highlights |
 | `alacritty_terminal` | VTE / terminal grid state for the integrated panel |
 | `portable-pty` | PTY + default shell spawn (wezterm) |
 | `open` | Open terminal URLs in the system browser |

@@ -40,6 +40,9 @@ use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
+use crate::git::{
+    GitPanel, GitPanelEvent, OverviewMark, file_sides, line_highlight_ranges, overview_marks,
+};
 use crate::search::{
     SearchMatch, SearchPanel, SearchPanelEvent, SearchQuery, apply_replace, run_search,
 };
@@ -99,6 +102,8 @@ actions!(
         FindInFiles,
         /// Switch the sidebar to the file tree.
         ShowFileTree,
+        /// Switch the sidebar to Source Control.
+        ShowGit,
         ToggleTerminal,
         NewTerminal,
         /// Fired by the terminal panel after tabs change (close / need persist).
@@ -169,6 +174,7 @@ enum Switch {
 enum SidebarView {
     Files,
     Search,
+    Git,
 }
 
 /// Folder list for the multi-root “Open Terminal in…” dialog.
@@ -329,6 +335,15 @@ enum TabBody {
         rendered_preview: bool,
         _subscriptions: Vec<Subscription>,
     },
+    /// Read-only side-by-side git diff (equal panes).
+    Diff {
+        language: Language,
+        old: Entity<EditorState>,
+        new: Entity<EditorState>,
+        /// Keeps line-fill highlights alive for the tab lifetime.
+        _highlights: (RangeDecorationCollection, RangeDecorationCollection),
+        _subscriptions: Vec<Subscription>,
+    },
     Image,
 }
 
@@ -339,7 +354,7 @@ impl EditorTab {
 
     fn language(&self) -> Option<Language> {
         match &self.body {
-            TabBody::Text { language, .. } => Some(*language),
+            TabBody::Text { language, .. } | TabBody::Diff { language, .. } => Some(*language),
             TabBody::Image => None,
         }
     }
@@ -348,9 +363,14 @@ impl EditorTab {
         matches!(self.body, TabBody::Image)
     }
 
+    fn is_diff(&self) -> bool {
+        matches!(self.body, TabBody::Diff { .. })
+    }
+
     fn editor_state(&self) -> Option<&Entity<EditorState>> {
         match &self.body {
             TabBody::Text { state, .. } => Some(state),
+            TabBody::Diff { new, .. } => Some(new),
             TabBody::Image => None,
         }
     }
@@ -360,13 +380,15 @@ impl EditorTab {
             TabBody::Text {
                 rendered_preview, ..
             } => *rendered_preview,
-            TabBody::Image => false,
+            TabBody::Diff { .. } | TabBody::Image => false,
         }
     }
 
     fn supports_rendered_preview(&self) -> bool {
-        self.language()
-            .is_some_and(Language::supports_rendered_preview)
+        matches!(self.body, TabBody::Text { .. })
+            && self
+                .language()
+                .is_some_and(Language::supports_rendered_preview)
     }
 }
 
@@ -377,6 +399,7 @@ pub struct IsengardApp {
     workspace: Workspace,
     file_tree: FileTreePanel,
     search: Entity<SearchPanel>,
+    git: Entity<GitPanel>,
     sidebar_view: SidebarView,
     /// Bumps on each query change so stale background searches are ignored.
     search_generation: u64,
@@ -438,6 +461,57 @@ impl IsengardApp {
                 }
             });
 
+        let git = cx.new(|cx| GitPanel::new(window, cx));
+        let git_subscription =
+            cx.subscribe_in(&git, window, |this, _, event: &GitPanelEvent, window, cx| {
+                match event {
+                    GitPanelEvent::OpenDiff {
+                        repo,
+                        path,
+                        rel_path,
+                        status,
+                        old_rel_path,
+                    } => {
+                        this.open_git_diff(
+                            repo.clone(),
+                            path.clone(),
+                            rel_path.clone(),
+                            *status,
+                            old_rel_path.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                    GitPanelEvent::OpenFile { path } => {
+                        this.open_file(path, true, window, cx);
+                    }
+                    GitPanelEvent::ConfirmDiscardFile {
+                        repo,
+                        rel_path,
+                        status,
+                        old_rel_path,
+                    } => {
+                        this.confirm_git_discard_file(
+                            repo.clone(),
+                            rel_path.clone(),
+                            *status,
+                            old_rel_path.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                    GitPanelEvent::ConfirmDiscardAll { repo, count } => {
+                        this.confirm_git_discard_all(repo.clone(), *count, window, cx);
+                    }
+                    GitPanelEvent::ToastError(msg) => {
+                        notify_error(msg.clone(), window, cx);
+                    }
+                    GitPanelEvent::ToastSuccess(msg) => {
+                        notify_success(msg.clone(), window, cx);
+                    }
+                }
+            });
+
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
@@ -463,6 +537,7 @@ impl IsengardApp {
             workspace: Workspace::default(),
             file_tree,
             search,
+            git,
             sidebar_view: SidebarView::Files,
             search_generation: 0,
             search_cancel: Arc::new(AtomicBool::new(false)),
@@ -477,7 +552,12 @@ impl IsengardApp {
             restoring_session: false,
             window_geometry_generation: 0,
             tree_edit: None,
-            _subscriptions: vec![tree_subscription, search_subscription, bounds_sub],
+            _subscriptions: vec![
+                tree_subscription,
+                search_subscription,
+                git_subscription,
+                bounds_sub,
+            ],
         };
 
         // Otherwise start on the welcome screen.
@@ -562,8 +642,26 @@ impl IsengardApp {
     /// Re-syncs the tree and titles after `workspace` changed.
     fn workspace_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.file_tree.set_folders(self.workspace.folders(), cx);
+        self.refresh_git_panel(window, cx);
         window.set_window_title(&self.window_title());
         cx.notify();
+    }
+
+    fn refresh_git_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folders = self.workspace.folders().to_vec();
+        // Few `rev-parse`s — cheap; keys match what the panel will load.
+        let labels: HashMap<PathBuf, String> = crate::git::discover_repos(&folders)
+            .into_iter()
+            .map(|root| {
+                let label = root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| root.display().to_string());
+                (root, label)
+            })
+            .collect();
+        self.git
+            .update(cx, |panel, cx| panel.set_folders(folders, labels, window, cx));
     }
 
     fn window_title(&self) -> String {
@@ -712,7 +810,9 @@ impl IsengardApp {
         let open_files = self
             .tabs
             .iter()
-            .filter(|tab| !document::is_untitled(&tab.path))
+            .filter(|tab| {
+                !document::is_untitled(&tab.path) && !document::is_diff_preview(&tab.path)
+            })
             .map(|tab| {
                 let view = tab
                     .editor_state()
@@ -735,7 +835,9 @@ impl IsengardApp {
         let active = self
             .tabs
             .active()
-            .filter(|t| !document::is_untitled(&t.path))
+            .filter(|t| {
+                !document::is_untitled(&t.path) && !document::is_diff_preview(&t.path)
+            })
             .map(|t| t.path.clone());
         let session = WorkspaceSession {
             open_files,
@@ -2366,6 +2468,22 @@ impl IsengardApp {
         cx.notify();
     }
 
+    fn on_show_git(
+        &mut self,
+        _: &ShowGit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.is_empty() {
+            return;
+        }
+        self.sidebar_view = SidebarView::Git;
+        self.sidebar_visible = true;
+        self.persist_session(cx);
+        self.refresh_git_panel(window, cx);
+        cx.notify();
+    }
+
     fn open_buffer_texts(&self, cx: &App) -> HashMap<PathBuf, String> {
         let mut map = HashMap::new();
         for tab in self.tabs.iter() {
@@ -2431,6 +2549,217 @@ impl IsengardApp {
             .ok()
         })
         .detach();
+    }
+
+    fn confirm_git_discard_file(
+        &mut self,
+        repo: PathBuf,
+        rel_path: String,
+        status: char,
+        old_rel_path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = Path::new(&rel_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(rel_path.as_str())
+            .to_owned();
+        self.open_choice_dialog(
+            "Discard Changes?",
+            format!("Discard changes to {name}? This cannot be undone."),
+            "Discard",
+            "Keep",
+            {
+                let repo = repo.clone();
+                let rel_path = rel_path.clone();
+                let old_rel_path = old_rel_path.clone();
+                move |this, window, cx| {
+                    this.git.update(cx, |panel, cx| {
+                        panel.discard_change(
+                            repo.clone(),
+                            rel_path.clone(),
+                            status,
+                            old_rel_path.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            },
+            |_, _, _| {},
+            window,
+            cx,
+        );
+    }
+
+    fn confirm_git_discard_all(
+        &mut self,
+        repo: PathBuf,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = self.workspace.relative_label(&repo);
+        self.open_choice_dialog(
+            "Discard All Changes?",
+            format!(
+                "Discard all {count} change{} in {label}? This cannot be undone.",
+                if count == 1 { "" } else { "s" }
+            ),
+            "Discard All",
+            "Keep",
+            move |this, window, cx| {
+                this.git.update(cx, |panel, cx| {
+                    panel.discard_repo(repo.clone(), window, cx);
+                });
+            },
+            |_, _, _| {},
+            window,
+            cx,
+        );
+    }
+
+    /// Read-only side-by-side diff preview tab for a Source Control change.
+    fn open_git_diff(
+        &mut self,
+        repo: PathBuf,
+        file: PathBuf,
+        rel_path: String,
+        status: char,
+        old_rel_path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let virtual_path = document::diff_preview_path(&file);
+        let (old_text, new_text) =
+            match file_sides(&repo, &rel_path, status, old_rel_path.as_deref()) {
+                Ok(sides) => sides,
+                Err(err) => {
+                    return notify_error(format!("Diff failed: {err}"), window, cx);
+                }
+            };
+        let language = Language::from_path(&file);
+
+        if let Some(ix) = self.tabs.position(|t| t.path == virtual_path) {
+            let sides = self.tabs.get(ix).and_then(|t| match &t.body {
+                TabBody::Diff { old, new, .. } => Some((old.clone(), new.clone())),
+                _ => None,
+            });
+            if let Some((old, new)) = sides {
+                old.update(cx, |state, cx| {
+                    state.set_value(old_text.clone(), window, cx);
+                    state.set_readonly(true, cx);
+                });
+                new.update(cx, |state, cx| {
+                    state.set_value(new_text.clone(), window, cx);
+                    state.set_readonly(true, cx);
+                });
+                let highlights =
+                    Self::apply_diff_highlights(&old, &new, &old_text, &new_text, cx);
+                if let Some(tab) = self.tabs.get_mut(ix)
+                    && let TabBody::Diff {
+                        _highlights, ..
+                    } = &mut tab.body
+                {
+                    _highlights.0.dispose(cx);
+                    _highlights.1.dispose(cx);
+                    *_highlights = highlights;
+                }
+            }
+            self.tabs.activate(ix);
+            self.focus_active_editor(window, cx);
+            cx.notify();
+            return;
+        }
+
+        // Replace active preview tab when present (VS Code–style).
+        let preview_ix = self
+            .tabs
+            .active_index()
+            .filter(|&ix| self.tabs.get(ix).is_some_and(|t| t.preview));
+        if let Some(ix) = preview_ix {
+            self.tabs.remove(ix);
+        }
+
+        let old = Self::new_diff_editor(language, old_text.clone(), window, cx);
+        let new = Self::new_diff_editor(language, new_text.clone(), window, cx);
+        let highlights = Self::apply_diff_highlights(&old, &new, &old_text, &new_text, cx);
+        let subscriptions = vec![
+            cx.observe(&old, |_, _, cx| cx.notify()),
+            cx.observe(&new, |_, _, cx| cx.notify()),
+        ];
+        self.tabs.push(EditorTab {
+            path: virtual_path,
+            body: TabBody::Diff {
+                language,
+                old,
+                new,
+                _highlights: highlights,
+                _subscriptions: subscriptions,
+            },
+            is_modified: false,
+            preview: true,
+            untitled_save_dir: None,
+        });
+        self.focus_active_editor(window, cx);
+        cx.notify();
+    }
+
+    fn new_diff_editor(
+        language: Language,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<EditorState> {
+        cx.new(|cx| {
+            let mut state = EditorState::new(window, cx)
+                .language(language.highlighter_name())
+                .line_number(true)
+                .indent_guides(true)
+                .soft_wrap(false)
+                .tab_size(TabSize {
+                    tab_size: 4,
+                    hard_tabs: false,
+                })
+                .default_value(text);
+            state.set_readonly(true, cx);
+            state
+        })
+    }
+
+    fn apply_diff_highlights(
+        old: &Entity<EditorState>,
+        new: &Entity<EditorState>,
+        old_text: &str,
+        new_text: &str,
+        cx: &mut Context<Self>,
+    ) -> (RangeDecorationCollection, RangeDecorationCollection) {
+        let (old_ranges, new_ranges) = line_highlight_ranges(old_text, new_text);
+        let del = cx.theme().danger.opacity(0.28);
+        let add = cx.theme().success.opacity(0.28);
+        let old_col = Self::diff_range_collection(old, &old_ranges, del, cx);
+        let new_col = Self::diff_range_collection(new, &new_ranges, add, cx);
+        (old_col, new_col)
+    }
+
+    fn diff_range_collection(
+        state: &Entity<EditorState>,
+        ranges: &[(usize, usize)],
+        color: Hsla,
+        cx: &mut Context<Self>,
+    ) -> RangeDecorationCollection {
+        state.update(cx, |state, cx| {
+            let decorations: Vec<RangeDecoration> = ranges
+                .iter()
+                .map(|&(start, end)| {
+                    RangeDecoration::new(start..end)
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(color)
+                })
+                .collect();
+            state.create_range_decorations_collection(decorations, cx)
+        })
     }
 
     fn open_search_match(
@@ -2592,9 +2921,9 @@ impl IsengardApp {
         self.schedule_search(query, cx);
     }
 
-    /// Explorer / Search toggle strip above the active sidebar view.
+    /// Explorer / Search / Git toggle strip above the active sidebar view.
     fn render_sidebar_chrome(&self, cx: &mut Context<Self>) -> AnyElement {
-        let files = self.sidebar_view == SidebarView::Files;
+        let view = self.sidebar_view;
         h_flex()
             .id("sidebar-view-toggle")
             .w_full()
@@ -2613,9 +2942,21 @@ impl IsengardApp {
                     .small()
                     .icon(LucideIcon::FolderTree)
                     .tooltip("Explorer")
-                    .selected(files)
+                    .selected(view == SidebarView::Files)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.on_show_file_tree(&ShowFileTree, window, cx);
+                    })),
+            )
+            .child(
+                Button::new("sidebar-git")
+                    .ghost()
+                    .cursor_pointer()
+                    .small()
+                    .icon(LucideIcon::GitBranch)
+                    .tooltip("Source Control")
+                    .selected(view == SidebarView::Git)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_show_git(&ShowGit, window, cx);
                     })),
             )
             .child(
@@ -2625,7 +2966,7 @@ impl IsengardApp {
                     .small()
                     .icon(LucideIcon::Search)
                     .tooltip("Search")
-                    .selected(!files)
+                    .selected(view == SidebarView::Search)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.on_find_in_files(&FindInFiles, window, cx);
                     })),
@@ -3020,6 +3361,48 @@ impl IsengardApp {
                         .max_h_full(),
                 )
                 .into_any_element()
+        } else if active.is_diff() {
+            let (old, new) = match &active.body {
+                TabBody::Diff { old, new, .. } => (old.clone(), new.clone()),
+                _ => unreachable!("is_diff"),
+            };
+            let old_text = old.read(cx).value();
+            let new_text = new.read(cx).value();
+            let (old_ranges, new_ranges) = line_highlight_ranges(&old_text, &new_text);
+            let old_marks = overview_marks(&old_text, &old_ranges);
+            let new_marks = overview_marks(&new_text, &new_ranges);
+            let muted = cx.theme().muted_foreground;
+            let border = cx.theme().border;
+            let del = cx.theme().danger;
+            let add = cx.theme().success;
+            let mono = cx.theme().mono_font_family.clone();
+            let mono_size = cx.theme().mono_font_size;
+            h_flex()
+                .size_full()
+                .min_w_0()
+                .child(Self::render_diff_pane(
+                    "HEAD",
+                    &old,
+                    &old_marks,
+                    del,
+                    muted,
+                    border,
+                    mono.clone(),
+                    mono_size,
+                    true,
+                ))
+                .child(Self::render_diff_pane(
+                    "Working Tree",
+                    &new,
+                    &new_marks,
+                    add,
+                    muted,
+                    border,
+                    mono,
+                    mono_size,
+                    false,
+                ))
+                .into_any_element()
         } else if rendered_preview {
             let language = active.language().expect("text tab");
             let text = active
@@ -3082,6 +3465,91 @@ impl IsengardApp {
             .child(tab_bar)
             .children(preview_toolbar)
             .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+
+    fn render_diff_pane(
+        title: &'static str,
+        state: &Entity<EditorState>,
+        marks: &[OverviewMark],
+        mark_color: Hsla,
+        muted: Hsla,
+        border: Hsla,
+        mono: SharedString,
+        mono_size: Pixels,
+        with_right_border: bool,
+    ) -> AnyElement {
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .when(with_right_border, |el| {
+                el.border_r_1().border_color(border)
+            })
+            .child(
+                div()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(border)
+                    .text_xs()
+                    .text_color(muted)
+                    .child(title),
+            )
+            .child(
+                // Overview is an absolute overlay — a flex sibling with
+                // `relative()` mark heights blew out pane layout (empty void).
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .relative()
+                    .child(
+                        Editor::new(state)
+                            .readonly(true)
+                            .bordered(false)
+                            .p_0()
+                            .h_full()
+                            .font_family(mono)
+                            .text_size(mono_size),
+                    )
+                    .child(Self::render_diff_overview(marks, mark_color, border)),
+            )
+            .into_any_element()
+    }
+
+    /// Thin overview ruler overlaid on the editor's right edge (Kit scrollbar
+    /// has no marker API). Must stay `absolute` so marks cannot affect flex size.
+    fn render_diff_overview(
+        marks: &[OverviewMark],
+        color: Hsla,
+        border: Hsla,
+    ) -> AnyElement {
+        div()
+            .id("diff-overview")
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .w(px(10.))
+            .border_l_1()
+            .border_color(border)
+            .bg(border.opacity(0.35))
+            .overflow_hidden()
+            .children(marks.iter().enumerate().map(|(i, mark)| {
+                div()
+                    .id(ElementId::Name(SharedString::from(format!(
+                        "diff-mark-{i}"
+                    ))))
+                    .absolute()
+                    .left(px(2.))
+                    .right(px(2.))
+                    .top(relative(mark.top))
+                    .h(relative(mark.height))
+                    .min_h(px(3.))
+                    .bg(color)
+            }))
             .into_any_element()
     }
 
@@ -3220,6 +3688,7 @@ impl Render for IsengardApp {
                     )
                 }
                 SidebarView::Search => self.search.clone().into_any_element(),
+                SidebarView::Git => self.git.clone().into_any_element(),
             };
             let sidebar = v_flex()
                 .size_full()
@@ -3287,6 +3756,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_find_in_files))
             .on_action(cx.listener(Self::on_show_file_tree))
+            .on_action(cx.listener(Self::on_show_git))
             .on_action(cx.listener(Self::on_toggle_terminal))
             .on_action(cx.listener(Self::on_new_terminal))
             .on_action(cx.listener(Self::on_terminal_tabs_changed))

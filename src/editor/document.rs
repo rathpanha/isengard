@@ -10,6 +10,8 @@ const IMAGE_EXTENSIONS: &[&str] = &[
 
 /// In-memory buffer id prefix (`untitled:1`, `untitled:2`, …). Not a real path.
 const UNTITLED_PREFIX: &str = "untitled:";
+/// Read-only git diff preview tab (`isengard-diff:</abs/path>`).
+const DIFF_PREFIX: &str = "isengard-diff:";
 
 /// True when `path` should open as an image preview instead of a text editor.
 pub fn is_image(path: &Path) -> bool {
@@ -44,6 +46,16 @@ pub fn is_untitled(path: &Path) -> bool {
     path.to_string_lossy().starts_with(UNTITLED_PREFIX)
 }
 
+/// True for Source Control diff preview tabs (not a real file).
+pub fn is_diff_preview(path: &Path) -> bool {
+    path.to_string_lossy().starts_with(DIFF_PREFIX)
+}
+
+/// Virtual path for a read-only git diff of `file` (absolute working-tree path).
+pub fn diff_preview_path(file: &Path) -> PathBuf {
+    PathBuf::from(format!("{DIFF_PREFIX}{}", file.display()))
+}
+
 /// Virtual path for an unsaved buffer (`untitled:1`).
 pub fn untitled_path(id: u64) -> PathBuf {
     PathBuf::from(format!("{UNTITLED_PREFIX}{id}"))
@@ -51,10 +63,16 @@ pub fn untitled_path(id: u64) -> PathBuf {
 
 /// Tab / status label: `Untitled-1` for virtual buffers, else the file name.
 pub fn tab_label(path: &Path) -> String {
-    match untitled_id(path) {
-        Some(id) => format!("Untitled-{id}"),
-        None => file_name(path),
+    if let Some(id) = untitled_id(path) {
+        return format!("Untitled-{id}");
     }
+    if let Some(file) = path
+        .to_string_lossy()
+        .strip_prefix(DIFF_PREFIX)
+    {
+        return format!("{} (Diff)", file_name(Path::new(file)));
+    }
+    file_name(path)
 }
 
 fn untitled_id(path: &Path) -> Option<u64> {
