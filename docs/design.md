@@ -167,12 +167,14 @@ Add a row here whenever a new shared component is created.
     shown disabled as `<name> (missing)` with a folder icon.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`):
     files — Rename, Delete; folders — New File…, New Folder…, Rename,
-    Delete; multi-root roots also get "Remove Folder from Workspace". With
-    the tree focused (`Tree` key context): `F2` renames; `Delete` /
-    `Backspace` moves to the OS Trash (toast, no confirm). **Rename**,
-    **New File**, and **New Folder** are inline in the tree (Kit `Input`
-    on the row or a temporary create row; Enter/blur commits, Escape
-    cancels; empty create name cancels).
+    Delete; multi-root roots also get "Remove Folder from Workspace".
+    Right-click empty space in the tree panel (not on a row) → New File /
+    New Folder under the workspace root (single-root folder, or first
+    root when multi). With the tree focused (`Tree` key context): `F2`
+    renames; `Delete` / `Backspace` moves to the OS Trash (toast, no
+    confirm). **Rename**, **New File**, and **New Folder** are inline in
+    the tree (Kit `Input` on the row or a temporary create row; Enter/blur
+    commits, Escape cancels; empty create name cancels).
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
   (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps

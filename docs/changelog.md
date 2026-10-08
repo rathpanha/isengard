@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Right-click empty space in the file tree → New File /
+  New Folder at the workspace root.
 - **2026-10-08** — New File / New Folder are inline in the tree (same as
   rename); no name modal.
 - **2026-10-08** — Removed Delete Permanent; tree Delete is Trash-only.

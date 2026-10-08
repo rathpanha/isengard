@@ -20,6 +20,8 @@ tabs, highlighted editor, status bar):
   gitignored rows shown muted; indent guides (design owns the pixel rules).
   Context menu: files Rename / Delete; folders New File / New Folder /
   Rename / Delete (multi-root roots also Remove Folder from Workspace).
+  Right-click empty space in the tree panel → New File / New Folder at
+  the workspace root (sole root when single-root; first root when multi).
   Rename / New File / New Folder are inline in the tree (Enter/blur
   commit, Escape cancel). Clicking a tree row focuses the Tree (preview
   open does not steal focus); `F2` rename; `Delete` / `Backspace` → OS

@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -6,6 +7,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Sizable as _, h_flex,
     input::{Input, InputState},
     list::ListItem,
+    menu::ContextMenuExt as _,
     tree::{TreeEvent, TreeItem, TreeState, tree},
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
@@ -253,6 +255,12 @@ impl FileTreePanel {
     ) -> AnyElement {
         let theme = cx.theme();
         let multi_root = self.roots.len() > 1;
+        // Single-root hides the root row, so blank-space create targets that folder.
+        // Multi-root: each root is clickable; blank space still creates in the first root.
+        let blank_create_root = self.roots.first().map(|r| r.path().to_path_buf());
+        // Row + panel ContextMenus both hover (Normal hitboxes); row right-click
+        // sets this so the blank-space menu builder returns empty.
+        let blank_menu_blocked = Rc::new(Cell::new(false));
         let on_open_file = Rc::new(on_open_file);
         let tree_state = self.state.clone();
         let edit_id = edit.map(|(target, _)| target.row_id());
@@ -276,7 +284,8 @@ impl FileTreePanel {
             set
         });
 
-        tree(&self.state, move |ix, entry, _selected, _window, cx| {
+        let blank_menu_blocked_row = blank_menu_blocked.clone();
+        let tree_el = tree(&self.state, move |ix, entry, _selected, _window, cx| {
                     let item = entry.item();
                     let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
                     let is_creating = item.id.ends_with(CREATING_SUFFIX);
@@ -329,6 +338,7 @@ impl FileTreePanel {
                         // Kit selects on mouse-down but does not focus the Tree;
                         // without this, Delete/F2 stay bound to the editor.
                         .when(!is_editing && !entry.is_disabled(), |item| {
+                            let blank_menu_blocked = blank_menu_blocked_row.clone();
                             item.on_mouse_down(MouseButton::Left, {
                                 let tree_state = tree_state.clone();
                                 move |_, window, cx| {
@@ -336,6 +346,7 @@ impl FileTreePanel {
                                 }
                             })
                             .on_mouse_down(MouseButton::Right, move |_, window, cx| {
+                                blank_menu_blocked.set(true);
                                 tree_state.update(cx, |state, cx| state.focus(window, cx));
                             })
                         })
@@ -431,11 +442,31 @@ impl FileTreePanel {
                 })
                 .size_full()
                 .min_w_0()
-                .overflow_hidden()
-                .bg(theme.sidebar)
                 .text_color(theme.sidebar_foreground)
-                .text_sm()
-                .into_any_element()
+                .text_sm();
+
+        // Fill the panel so right-click on empty space (below rows) can create
+        // at the workspace root — single-root never shows a root row to target.
+        let tree_state_blank = self.state.clone();
+        div()
+            .id("file-tree-panel")
+            .size_full()
+            .min_w_0()
+            .overflow_hidden()
+            .bg(theme.sidebar)
+            .context_menu(move |menu, window, cx| {
+                if blank_menu_blocked.replace(false) {
+                    return menu;
+                }
+                let Some(root) = blank_create_root.clone() else {
+                    return menu;
+                };
+                tree_state_blank.update(cx, |state, cx| state.focus(window, cx));
+                menu.menu("New File", Box::new(NewFileIn(root.clone())))
+                    .menu("New Folder", Box::new(NewFolderIn(root)))
+            })
+            .child(tree_el)
+            .into_any_element()
     }
 }
 
