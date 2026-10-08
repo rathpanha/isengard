@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — In-flight Button `.loading()` rule in design.md; git +
+  search replace use spinners; git checkboxes get `cursor_pointer`.
 - **2026-10-08** — Git commit selection defaults to none selected.
 - **2026-10-08** — Git commit selection: per-file + select-all checkboxes;
   Suggest/Commit use selection only (`git add -- paths`).

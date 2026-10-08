@@ -364,6 +364,7 @@ impl Render for SearchPanel {
                                     .small()
                                     .icon(LucideIcon::Replace)
                                     .tooltip("Replace in File")
+                                    .loading(self.searching)
                                     .disabled(replace_file_disabled)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(path) = this.selected_file() {
@@ -378,6 +379,7 @@ impl Render for SearchPanel {
                                     .small()
                                     .icon(LucideIcon::ReplaceAll)
                                     .tooltip("Replace All")
+                                    .loading(self.searching)
                                     .disabled(!can_replace)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(SearchPanelEvent::ReplaceAll);

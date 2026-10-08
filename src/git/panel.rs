@@ -524,6 +524,7 @@ impl Render for GitPanel {
                                     } else {
                                         "Pull".into()
                                     })
+                                    .loading(busy)
                                     .disabled(busy)
                                     .on_click({
                                         let root = root.clone();
@@ -544,6 +545,7 @@ impl Render for GitPanel {
                                     } else {
                                         "Push".into()
                                     })
+                                    .loading(busy)
                                     .disabled(busy)
                                     .on_click({
                                         let root = root.clone();
@@ -581,6 +583,7 @@ impl Render for GitPanel {
                                     .child(
                                         outline_btn(format!("git-suggest-{si}").into())
                                             .label("Suggest")
+                                            .loading(busy)
                                             .disabled(busy || nothing_selected)
                                             .on_click({
                                                 let root = root.clone();
@@ -592,6 +595,7 @@ impl Render for GitPanel {
                                     .child(
                                         outline_btn(format!("git-commit-{si}").into())
                                             .label("Commit")
+                                            .loading(busy)
                                             .disabled(busy || message_empty || nothing_selected)
                                             .on_click({
                                                 let root = root.clone();
@@ -634,6 +638,7 @@ impl Render for GitPanel {
                                             "Select All"
                                         })
                                         .disabled(busy)
+                                        .when(!busy, |el| el.cursor_pointer())
                                         .on_click({
                                             let root = root.clone();
                                             cx.listener(move |this, checked: &bool, _, cx| {
@@ -688,6 +693,7 @@ impl Render for GitPanel {
                                         .small()
                                         .icon(LucideIcon::Undo2)
                                         .tooltip("Discard All Changes")
+                                        .loading(busy)
                                         .disabled(busy)
                                         .on_click({
                                             let root = root.clone();
@@ -786,6 +792,7 @@ impl Render for GitPanel {
                             .small()
                             .icon(LucideIcon::RefreshCw)
                             .tooltip("Refresh")
+                            .loading(self.loading)
                             .disabled(self.loading)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.refresh(window, cx);
@@ -853,6 +860,7 @@ fn render_change_row(
                 .small()
                 .checked(is_selected)
                 .disabled(busy)
+                .when(!busy, |el| el.cursor_pointer())
                 .on_click({
                     let root = repo.clone();
                     let rel = rel.clone();
@@ -937,6 +945,7 @@ fn render_change_row(
                 .small()
                 .icon(LucideIcon::Undo2)
                 .tooltip("Discard Changes")
+                .loading(busy)
                 .disabled(busy)
                 .on_click({
                     let repo = repo.clone();

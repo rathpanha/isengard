@@ -53,6 +53,12 @@ section here.
   - **Icon-only dismiss / chrome** (tab ×, remove from recent, terminal × /
     minimize, sidebar toggle, tree New File/Folder): Kit's default `.ghost()`
     — no danger tint on the ×.
+  - **In-flight async actions** (git Pull/Push/Commit/Refresh/discard, search
+    while a scan runs, …): Button `.loading(true)` so Kit shows a spinner.
+    Do **not** grey out with `.disabled(true)` alone for busy — disable may
+    still apply together with loading, or for unrelated reasons (empty
+    message, no selection). Status text ("Searching…") does not replace a
+    loading control when the control itself started the work.
   - **Choice dialogs** (`open_choice_dialog`): Cancel · secondary · primary —
     Cancel `.outline()`; discard secondary ("Don't Save", "Quit Without
     Saving") `.danger().outline()`; safe primary ("Save", "Save All")
@@ -65,11 +71,12 @@ section here.
   `open_dialog` with `components::center_dialog`. Context menus stay
   click-anchored.
 - **Pointer cursor** on everything clickable (buttons, tabs, tree/list rows,
-  links); disabled items and plain text keep the default arrow, text areas the
-  I-beam. GPUI Kit only does this itself for `link()`/`text()` buttons, so add
-  `.cursor_pointer()` to every other clickable component (for list/tree rows:
-  `.when(!disabled, |item| item.cursor_pointer())`). Shared components in
-  `src/ui/components.rs` already include it.
+  checkboxes, links); disabled items and plain text keep the default arrow,
+  text areas the I-beam. GPUI Kit only does this itself for `link()`/`text()`
+  buttons, so add `.cursor_pointer()` to every other clickable component
+  (for list/tree rows and checkboxes: `.when(!disabled, |el|
+  el.cursor_pointer())`). Shared components in `src/ui/components.rs`
+  already include it.
 - **Tooltips** on every icon-only button, naming the action ("Close",
   "Remove from recent").
 
