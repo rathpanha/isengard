@@ -167,13 +167,22 @@ pub fn load_workspace_status(folders: &[PathBuf]) -> Vec<RepoStatus> {
         .collect()
 }
 
-/// `git add -A` then `git commit -m`.
-pub fn commit_all(root: &Path, message: &str) -> Result<(), String> {
+/// Stage `rel_paths` then `git commit -m` (empty selection / message rejected).
+pub fn commit_paths(root: &Path, message: &str, rel_paths: &[String]) -> Result<(), String> {
     let message = message.trim();
     if message.is_empty() {
         return Err("Commit message is empty".into());
     }
-    git(root, &["add", "-A"])?;
+    if rel_paths.is_empty() {
+        return Err("No files selected".into());
+    }
+    let mut args: Vec<&str> = Vec::with_capacity(2 + rel_paths.len());
+    args.push("add");
+    args.push("--");
+    for p in rel_paths {
+        args.push(p.as_str());
+    }
+    git(root, &args)?;
     git(root, &["commit", "-m", message])?;
     Ok(())
 }
@@ -549,11 +558,55 @@ R  old.rs -> renamed.rs\n\
     }
 
     #[test]
-    fn commit_all_requires_message() {
+    fn commit_paths_requires_message_and_selection() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(
-            commit_all(tmp.path(), "   ").unwrap_err(),
+            commit_paths(tmp.path(), "   ", &["a.txt".into()]).unwrap_err(),
             "Commit message is empty"
+        );
+        assert_eq!(
+            commit_paths(tmp.path(), "ok", &[]).unwrap_err(),
+            "No files selected"
+        );
+    }
+
+    #[test]
+    fn commit_paths_stages_only_selected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&root)
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&root)
+            .status();
+        fs::write(root.join("a.txt"), "a\n").unwrap();
+        fs::write(root.join("b.txt"), "b\n").unwrap();
+        commit_paths(&root, "add a", &["a.txt".into()]).unwrap();
+        let status = load_repo_status(&root);
+        assert!(
+            status
+                .changes
+                .iter()
+                .any(|c| c.rel_path == "b.txt" && c.status == '?'),
+            "{:?}",
+            status.changes
+        );
+        assert!(
+            !status.changes.iter().any(|c| c.rel_path == "a.txt"),
+            "{:?}",
+            status.changes
         );
     }
 

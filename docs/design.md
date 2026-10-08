@@ -180,18 +180,20 @@ Add a row here whenever a new shared component is created.
   section: repo name + branch, outlined Pull / Push (`Pull (N)` /
   `Push (N)` when behind / ahead of upstream), multi-line commit
   `Textarea` + outlined Suggest (path heuristic draft, no AI) + Commit
-  (disabled while message empty), collapsible changes list. Change rows:
-  Material `tree_icon` + path, status letter (`M`/`A`/`D`/`R`/`?`) on the
-  right, ghost Open File (`ExternalLink`, permanent tab) + Undo discard
-  (confirms). Discard-all on the changes header (confirms;
-  `reset --hard` + `clean -fd`). Header Refresh is ghost icon-only.
-  **No staging UI** — Commit is `git add -A` then `git commit -m`. Pull
-  is `--ff-only`. Click a change opens a **read-only** side-by-side
-  preview tab (equal HEAD | Working Tree panes; deleted lines
-  danger-fill / inserted success-fill; overview ruler ticks on each
-  pane's scroll edge; not editable). System `git` on PATH; errors
-  toast. Refresh on view open / workspace change / after actions /
-  Refresh. Not: stage UI, branch switch, stash, merge UI, amend.
+  (disabled while message empty or nothing selected), collapsible
+  changes list with select-all + per-file checkboxes (default none
+  selected; Commit/`Suggest` use selection only; `git add -- <paths>`
+  then commit). Change rows:
+  checkbox + Material `tree_icon` + path, status letter on the right,
+  ghost Open File + Undo discard (confirms). Discard-all on the changes
+  header (confirms; `reset --hard` + `clean -fd`). Header Refresh is
+  ghost icon-only. Pull is `--ff-only`. Click a change opens a
+  **read-only** side-by-side preview tab (equal HEAD | Working Tree
+  panes; deleted lines danger-fill / inserted success-fill; overview
+  ruler ticks; not editable). System `git` on PATH; errors toast.
+  Refresh on view open / workspace change / after actions / Refresh.
+  Not: persistent index staging UI, branch switch, stash, merge UI,
+  amend.
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`), with `margins.bottom` clearing the status
   bar (`STATUS_BAR_HEIGHT` + 16px edge). Don't set placement/margins per toast.

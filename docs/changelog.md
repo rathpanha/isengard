@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Git commit selection defaults to none selected.
+- **2026-10-08** — Git commit selection: per-file + select-all checkboxes;
+  Suggest/Commit use selection only (`git add -- paths`).
 - **2026-10-08** — Git Pull/Push labels show behind/ahead counts vs
   upstream (`Pull (N)` / `Push (N)`).
 - **2026-10-08** — Git Commit disabled while the message is empty/whitespace.

@@ -1,12 +1,13 @@
 //! Left-sidebar Git view (stacked repos: status + pull/push/commit).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{InputEvent, Textarea, TextareaState},
     list::ListItem,
@@ -17,7 +18,7 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 use crate::file_tree::tree_icon;
 
 use super::engine::{
-    GitChange, RepoStatus, commit_all, discard_all, discard_file, load_workspace_status,
+    GitChange, RepoStatus, commit_paths, discard_all, discard_file, load_workspace_status,
     pull_ff_only, push, suggest_commit_message,
 };
 
@@ -56,6 +57,8 @@ struct RepoSection {
     busy: bool,
     /// Whether the changes list is visible.
     changes_expanded: bool,
+    /// `rel_path` values included in the next commit / Suggest.
+    selected: HashSet<String>,
 }
 
 pub struct GitPanel {
@@ -129,6 +132,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         let mut old_messages: HashMap<PathBuf, String> = HashMap::new();
+        let mut old_selection: HashMap<PathBuf, HashSet<String>> = HashMap::new();
         for section in &self.sections {
             self.expanded
                 .insert(section.status.root.clone(), section.changes_expanded);
@@ -136,6 +140,7 @@ impl GitPanel {
                 section.status.root.clone(),
                 section.message.read(cx).value().to_string(),
             );
+            old_selection.insert(section.status.root.clone(), section.selected.clone());
         }
 
         self._message_subs.clear();
@@ -150,6 +155,8 @@ impl GitPanel {
             });
             let draft = old_messages.remove(&status.root).unwrap_or_default();
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
+            let selected =
+                merge_selection(old_selection.remove(&status.root), &status.changes);
             let message = cx.new(|cx| {
                 let mut state = TextareaState::new(window, cx).placeholder("Commit message");
                 if !draft.is_empty() {
@@ -169,6 +176,7 @@ impl GitPanel {
                 message,
                 busy: false,
                 changes_expanded,
+                selected,
             });
         }
         self.sections = sections;
@@ -199,14 +207,21 @@ impl GitPanel {
         cx.notify();
     }
 
-    /// Fill the commit box from change paths (heuristic draft; does not commit).
+    /// Fill the commit box from **selected** change paths (draft only).
     fn suggest_message(&mut self, root: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
             return;
         };
-        let Some(msg) = suggest_commit_message(&section.status.changes) else {
+        let selected: Vec<GitChange> = section
+            .status
+            .changes
+            .iter()
+            .filter(|c| section.selected.contains(&c.rel_path))
+            .cloned()
+            .collect();
+        let Some(msg) = suggest_commit_message(&selected) else {
             cx.emit(GitPanelEvent::ToastError(
-                "No changes to describe".into(),
+                "No files selected".into(),
             ));
             return;
         };
@@ -214,6 +229,41 @@ impl GitPanel {
         message.update(cx, |state, cx| {
             state.set_value(msg, window, cx);
         });
+    }
+
+    fn set_change_selected(
+        &mut self,
+        root: &Path,
+        rel_path: &str,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(section) = self.section_mut(root) else {
+            return;
+        };
+        if selected {
+            section.selected.insert(rel_path.to_owned());
+        } else {
+            section.selected.remove(rel_path);
+        }
+        cx.notify();
+    }
+
+    fn set_all_selected(&mut self, root: &Path, selected: bool, cx: &mut Context<Self>) {
+        let Some(section) = self.section_mut(root) else {
+            return;
+        };
+        if selected {
+            section.selected = section
+                .status
+                .changes
+                .iter()
+                .map(|c| c.rel_path.clone())
+                .collect();
+        } else {
+            section.selected.clear();
+        }
+        cx.notify();
     }
 
     /// After confirmation: discard one change and refresh.
@@ -257,7 +307,7 @@ impl GitPanel {
         {
             return;
         }
-        let message = if matches!(kind, Mutation::Commit) {
+        let (message, commit_paths_list) = if matches!(kind, Mutation::Commit) {
             let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
                 return;
             };
@@ -268,9 +318,14 @@ impl GitPanel {
                 ));
                 return;
             }
-            Some(msg)
+            let paths: Vec<String> = section.selected.iter().cloned().collect();
+            if paths.is_empty() {
+                cx.emit(GitPanelEvent::ToastError("No files selected".into()));
+                return;
+            }
+            (Some(msg), Some(paths))
         } else {
-            None
+            (None, None)
         };
 
         self.set_busy(&root, true, cx);
@@ -289,7 +344,9 @@ impl GitPanel {
                     match kind {
                         Mutation::Commit => {
                             let msg = message.unwrap_or_default();
-                            commit_all(&root_bg, &msg).map(|_| "Committed".to_owned())
+                            let paths = commit_paths_list.unwrap_or_default();
+                            commit_paths(&root_bg, &msg, &paths)
+                                .map(|_| "Committed".to_owned())
                         }
                         Mutation::Pull => pull_ff_only(&root_bg).map(|out| {
                             if out.is_empty() {
@@ -417,6 +474,9 @@ impl Render for GitPanel {
                 // Separator only between repos — never under a lone / last section.
                 let show_sep = si + 1 < section_count;
                 let message_empty = section.message.read(cx).value().trim().is_empty();
+                let selected_count = section.selected.len();
+                let all_selected = change_count > 0 && selected_count == change_count;
+                let nothing_selected = selected_count == 0;
 
                 // Fixed commit-box height — `min_h` + `h_full` let the first
                 // section steal leftover flex and look uneven vs the next.
@@ -521,7 +581,7 @@ impl Render for GitPanel {
                                     .child(
                                         outline_btn(format!("git-suggest-{si}").into())
                                             .label("Suggest")
-                                            .disabled(busy || change_count == 0)
+                                            .disabled(busy || nothing_selected)
                                             .on_click({
                                                 let root = root.clone();
                                                 cx.listener(move |this, _, window, cx| {
@@ -532,7 +592,7 @@ impl Render for GitPanel {
                                     .child(
                                         outline_btn(format!("git-commit-{si}").into())
                                             .label("Commit")
-                                            .disabled(busy || message_empty)
+                                            .disabled(busy || message_empty || nothing_selected)
                                             .on_click({
                                                 let root = root.clone();
                                                 cx.listener(move |this, _, window, cx| {
@@ -563,6 +623,25 @@ impl Render for GitPanel {
                             .gap_1()
                             .px_2()
                             .pb_2()
+                            .when(change_count > 0, |row| {
+                                row.child(
+                                    Checkbox::new(format!("git-select-all-{si}"))
+                                        .small()
+                                        .checked(all_selected)
+                                        .tooltip(if all_selected {
+                                            "Deselect All"
+                                        } else {
+                                            "Select All"
+                                        })
+                                        .disabled(busy)
+                                        .on_click({
+                                            let root = root.clone();
+                                            cx.listener(move |this, checked: &bool, _, cx| {
+                                                this.set_all_selected(&root, *checked, cx);
+                                            })
+                                        }),
+                                )
+                            })
                             .child(
                                 h_flex()
                                     .id(ElementId::Name(SharedString::from(format!(
@@ -595,7 +674,7 @@ impl Render for GitPanel {
                                                 "No changes".into()
                                             } else {
                                                 format!(
-                                                    "{change_count} change{}",
+                                                    "{selected_count}/{change_count} change{}",
                                                     if change_count == 1 { "" } else { "s" }
                                                 )
                                             }),
@@ -658,11 +737,13 @@ impl Render for GitPanel {
                             'R' | 'C' => theme.warning,
                             _ => theme.warning,
                         };
+                        let is_selected = section.selected.contains(&change.rel_path);
                         rows.push(render_change_row(
                             si,
                             ci,
                             &root,
                             change,
+                            is_selected,
                             badge,
                             muted,
                             dark,
@@ -723,11 +804,27 @@ impl Render for GitPanel {
     }
 }
 
+fn merge_selection(
+    prev_selected: Option<HashSet<String>>,
+    changes: &[GitChange],
+) -> HashSet<String> {
+    // Default: nothing selected. Across refresh, keep only still-present picks.
+    let Some(prev_sel) = prev_selected else {
+        return HashSet::new();
+    };
+    changes
+        .iter()
+        .map(|c| c.rel_path.clone())
+        .filter(|rel| prev_sel.contains(rel))
+        .collect()
+}
+
 fn render_change_row(
     si: usize,
     ci: usize,
     repo: &Path,
     change: &GitChange,
+    is_selected: bool,
     badge: Hsla,
     muted: Hsla,
     dark: bool,
@@ -751,6 +848,19 @@ fn render_change_row(
         .px_2()
         .py_0p5()
         .items_center()
+        .child(
+            Checkbox::new(format!("git-sel-{si}-{ci}"))
+                .small()
+                .checked(is_selected)
+                .disabled(busy)
+                .on_click({
+                    let root = repo.clone();
+                    let rel = rel.clone();
+                    cx.listener(move |this, checked: &bool, _, cx| {
+                        this.set_change_selected(&root, &rel, *checked, cx);
+                    })
+                }),
+        )
         .child(
             ListItem::new(ElementId::Name(SharedString::from(format!(
                 "git-change-open-{si}-{ci}"
