@@ -206,6 +206,13 @@ Add a row here whenever a new shared component is created.
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`), with `margins.bottom` clearing the status
   bar (`STATUS_BAR_HEIGHT` + 16px edge). Don't set placement/margins per toast.
+  Runtime failures that would otherwise only hit the log (dialog errors, PTY
+  spawn, save/open failures, cancelled save during close/quit) use
+  `notify_error` so the user sees why nothing happened.
+- **Close Folder vs Close Workspace:** File menu label follows
+  `Workspace::is_named_workspace()` (workspace file or multi-root →
+  "Close Workspace"; single folder → "Close Folder"). Disabled on welcome
+  with nothing open.
 - **Links vs buttons:** navigation-like actions on the welcome screen
   (Open Folder, recent folders) are `Button::link()`; commands in dialogs are
   regular buttons with one `primary`.
@@ -230,14 +237,15 @@ Add a row here whenever a new shared component is created.
     Delete; multi-root roots also get "Remove Folder from Workspace".
     Right-click empty space in the tree panel (not on a row) → New File /
     New Folder under the workspace root (single-root folder, or first
-    root when multi). Mini toolbar at the top of the tree (ghost
-    `xsmall` icon buttons, `gap_1`, trailing-aligned, `border_b`, tooltips
-    — same chrome as the terminal tab strip): New File /
-    New Folder (`assets::IconName::FilePlus` / `FolderPlus`, embedded via
+    root when multi). Mini toolbar at the top of the tree (`justify_between`,
+    `border_b`): left = folder / workspace `display_name` (`text_sm`,
+    medium, truncated); right = ghost New File / New Folder icons
+    (`assets::IconName::FilePlus` / `FolderPlus`, embedded via
     `icon_assets!` + `AppAssets` in `main.rs` — not in default Kit
     `Assets`). Creates in the selected directory (or
     parent of a selected file); with no selection, the first workspace
-    root. No folder-name label above the tree (title bar owns the name).
+    root. Window title still shows the same name (plus ` (Workspace)` when
+    named/multi-root).
     With the tree focused (`Tree` key context): `F2` renames; `Delete` /
     `Backspace` moves to the OS Trash (toast, no confirm). **Rename**,
     **New File**, and **New Folder** are inline in the tree (Kit `Input`
@@ -249,6 +257,24 @@ Add a row here whenever a new shared component is created.
   the same order stacked (workspace group, separator, folder/file group).
   Distinct Kit icons: `LayoutDashboard`, `FolderClosed`, `FolderOpen`, `File`,
   `FileText`.
+- **Menu actions vs focus:** Title-bar/`AppMenuBar` restores the prior
+  focus then defers `dispatch_action`, then dismiss restores focus again.
+  Explorer moves focus to the Tree (stable). Git left focus on the chrome
+  button (ephemeral) — Close was dropped after paint. Fix: focus the app
+  handle when opening Git; Close defers one tick; app-level `cx.on_action`
+  fallbacks use a `WeakEntity<IsengardApp>` (window root is Kit `Root`,
+  not the app).
+- **Menus by state** (omit, don’t grey out — fewer dead options):
+  - **Welcome (no folder):** File = open/new only (+ Save / Close Tab if
+    untitled tabs). No Add Folder, Save Workspace As, Close Folder. Edit /
+    View menus hidden until a tab or folder exists (font zoom is
+    editor-only — not on empty welcome).
+  - **Folder or workspace open:** File also Add Folder to Workspace…,
+    Save Workspace As…, Close Folder / Close Workspace. Edit includes
+    Find in Files. View includes sidebar / Explorer / Search / Source
+    Control / terminal.
+  - **Tabs open:** Save, Save All, Close Tab, Edit clipboard/find, Toggle
+    Preview, Increase / Decrease / Reset Font Size.
 - **New File:** opens an in-memory `Untitled-N` tab (welcome or workspace); no
   file on disk until Save. Save dialog defaults to the workspace target dir
   (tree selection, else active root). Close tab / quit asks Save / Don't Save

@@ -71,6 +71,24 @@ impl Workspace {
         self.file.is_some() || self.is_multi_root()
     }
 
+    /// File menu / dialog wording: workspace file or multi-root → workspace.
+    pub fn close_menu_label(&self) -> &'static str {
+        if self.is_named_workspace() {
+            "Close Workspace"
+        } else {
+            "Close Folder"
+        }
+    }
+
+    /// Lowercase noun for confirm copy ("closing this folder/workspace").
+    pub fn kind_noun(&self) -> &'static str {
+        if self.is_named_workspace() {
+            "workspace"
+        } else {
+            "folder"
+        }
+    }
+
     /// Adds a root folder; returns `false` if it was already present.
     pub fn add_folder(&mut self, folder: &Path) -> bool {
         if self.folders.iter().any(|f| f == folder) {
@@ -277,6 +295,20 @@ mod tests {
             w.add_folder(Path::new(f));
         }
         w
+    }
+
+    #[test]
+    fn close_label_folder_vs_workspace() {
+        assert_eq!(ws(&["/code/app"]).close_menu_label(), "Close Folder");
+        assert_eq!(ws(&["/code/app"]).kind_noun(), "folder");
+        assert_eq!(
+            ws(&["/a", "/b"]).close_menu_label(),
+            "Close Workspace"
+        );
+        let mut named = ws(&["/code/app"]);
+        named.file = Some(PathBuf::from("/code/app.isengard-workspace"));
+        assert_eq!(named.close_menu_label(), "Close Workspace");
+        assert_eq!(named.kind_noun(), "workspace");
     }
 
     #[test]

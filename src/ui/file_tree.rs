@@ -250,10 +250,12 @@ impl FileTreePanel {
     }
 
     /// Renders the file tree.
+    /// `title` — folder or workspace display name in the toolbar (left).
     /// `on_open_file(path, permanent, …)` — `permanent` is true on double-click.
     /// `edit` — when set, that row shows an inline name `Input` instead of the label.
     pub fn render(
         &self,
+        title: SharedString,
         edit: Option<(&TreeEditTarget, &Entity<InputState>)>,
         on_open_file: impl Fn(PathBuf, bool, &mut Window, &mut App) + 'static,
         cx: &App,
@@ -450,9 +452,9 @@ impl FileTreePanel {
                 .text_color(theme.sidebar_foreground)
                 .text_sm();
 
-        // Toolbar always offers create when the tree fills the panel (no blank
-        // space left to right-click). Parent resolved on click: selection's
-        // dir, parent of selected file, else first workspace root.
+        // Toolbar: folder/workspace name | New File / New Folder. Parent for
+        // create resolved on click: selection's dir, parent of selected file,
+        // else first workspace root.
         let toolbar_roots: Vec<PathBuf> =
             self.roots.iter().map(|r| r.path().to_path_buf()).collect();
         let tree_state_toolbar = self.state.clone();
@@ -460,52 +462,69 @@ impl FileTreePanel {
             .id("file-tree-toolbar")
             .w_full()
             .items_center()
-            .justify_end()
-            .gap_1()
+            .justify_between()
+            .gap_2()
             .px_2()
             .py_1()
             .border_b_1()
             .border_color(theme.border)
-            .child({
-                let tree_state = tree_state_toolbar.clone();
-                let roots = toolbar_roots.clone();
-                Button::new("tree-new-file")
-                    .ghost()
-                    .cursor_pointer()
-                    .small()
-                    .icon(LucideIcon::FilePlus)
-                    .tooltip("New File")
-                    .on_click(
-                        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                            let Some(parent) = toolbar_create_parent(&tree_state, &roots, &*cx)
-                            else {
-                                return;
-                            };
-                            tree_state.update(cx, |state, cx| state.focus(window, cx));
-                            window.dispatch_action(Box::new(NewFileIn(parent)), cx);
-                        },
-                    )
-            })
-            .child({
-                let tree_state = tree_state_toolbar;
-                let roots = toolbar_roots;
-                Button::new("tree-new-folder")
-                    .ghost()
-                    .cursor_pointer()
-                    .small()
-                    .icon(LucideIcon::FolderPlus)
-                    .tooltip("New Folder")
-                    .on_click(
-                        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                            let Some(parent) = toolbar_create_parent(&tree_state, &roots, &*cx)
-                            else {
-                                return;
-                            };
-                            tree_state.update(cx, |state, cx| state.focus(window, cx));
-                            window.dispatch_action(Box::new(NewFolderIn(parent)), cx);
-                        },
-                    )
-            });
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .truncate()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(title),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_1()
+                    .child({
+                        let tree_state = tree_state_toolbar.clone();
+                        let roots = toolbar_roots.clone();
+                        Button::new("tree-new-file")
+                            .ghost()
+                            .cursor_pointer()
+                            .small()
+                            .icon(LucideIcon::FilePlus)
+                            .tooltip("New File")
+                            .on_click(
+                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                    let Some(parent) =
+                                        toolbar_create_parent(&tree_state, &roots, &*cx)
+                                    else {
+                                        return;
+                                    };
+                                    tree_state.update(cx, |state, cx| state.focus(window, cx));
+                                    window.dispatch_action(Box::new(NewFileIn(parent)), cx);
+                                },
+                            )
+                    })
+                    .child({
+                        let tree_state = tree_state_toolbar;
+                        let roots = toolbar_roots;
+                        Button::new("tree-new-folder")
+                            .ghost()
+                            .cursor_pointer()
+                            .small()
+                            .icon(LucideIcon::FolderPlus)
+                            .tooltip("New Folder")
+                            .on_click(
+                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                    let Some(parent) =
+                                        toolbar_create_parent(&tree_state, &roots, &*cx)
+                                    else {
+                                        return;
+                                    };
+                                    tree_state.update(cx, |state, cx| state.focus(window, cx));
+                                    window.dispatch_action(Box::new(NewFolderIn(parent)), cx);
+                                },
+                            )
+                    }),
+            );
 
         // Fill the panel so right-click on empty space (below rows) can create
         // at the workspace root — single-root never shows a root row to target.

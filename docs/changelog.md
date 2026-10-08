@@ -3,6 +3,16 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Close Folder/Workspace: stable app focus after Git tab,
+  WeakEntity menu fallback, defer close past AppMenuBar dismiss (Git chrome
+  focus was ephemeral and dropped the action).
+- **2026-10-08** — Explorer tree toolbar: folder/workspace name left,
+  New File / New Folder right (`justify_between`).
+- **2026-10-08** — Font size menu items only when an editor tab is open
+  (hidden on empty welcome).
+- **2026-10-08** — Title-bar menus omit dead actions by state (welcome /
+  folder / tabs); Close Folder vs Close Workspace; toast on dialog/PTY/
+  save-cancel failures that previously failed silently.
 - **2026-10-08** — Git Push toast uses git’s own success text (e.g.
   `Everything up-to-date` from stderr), not a synthetic "Pushed".
 - **2026-10-08** — Git busy: disable sibling actions; spinner only on the

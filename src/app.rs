@@ -46,6 +46,7 @@ use crate::git::{
 use crate::search::{
     SearchMatch, SearchPanel, SearchPanelEvent, SearchQuery, apply_replace, run_search,
 };
+use crate::menus;
 use crate::terminal::TerminalPanel;
 use crate::theme;
 use crate::ui::components::{center_dialog, notify_error, notify_success};
@@ -288,6 +289,39 @@ impl Render for TerminalCwdPicker {
     }
 }
 
+/// Weak handle to the window content — Kit wraps it in `Root`, so menu
+/// fallbacks must not `downcast` the window to [`IsengardApp`].
+struct ActiveIsengard(WeakEntity<IsengardApp>);
+
+impl Global for ActiveIsengard {}
+
+/// Run `f` on the live [`IsengardApp`], preferring the active window.
+fn with_active_app(
+    cx: &mut App,
+    f: impl FnOnce(&mut IsengardApp, &mut Window, &mut Context<IsengardApp>),
+) {
+    let Some(app_entity) = cx
+        .try_global::<ActiveIsengard>()
+        .and_then(|g| g.0.upgrade())
+    else {
+        return;
+    };
+    let Some(window) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
+        return;
+    };
+    let _ = window.update(cx, |_root, window, cx| {
+        app_entity.update(cx, |app, cx| {
+            // Menu dispatch restores ephemeral sidebar-chrome focus; park on
+            // the app handle so Close/etc. always hit a live dispatch path.
+            app.focus_handle.focus(window, cx);
+            f(app, window, cx);
+        });
+    });
+}
+
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -313,8 +347,106 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("backspace", DeleteSelectedTreeItem, Some("Tree")),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
-    // Fallback when the app view is not on the focus path (e.g. while a dialog is open).
+    // App-level fallbacks: title-bar menus restore whatever had focus (tree /
+    // git chrome / nothing). That path often misses the Isengard root's
+    // `.on_action` handlers — same reason Quit already had a global listener.
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
+    cx.on_action(|_: &CloseWorkspace, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_close_workspace(&CloseWorkspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &NewFile, cx| {
+        with_active_app(cx, |app, window, cx| app.on_new_file(&NewFile, window, cx));
+    });
+    cx.on_action(|_: &NewWorkspace, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_new_workspace(&NewWorkspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &OpenFolder, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_open_folder(&OpenFolder, window, cx);
+        });
+    });
+    cx.on_action(|_: &OpenFile, cx| {
+        with_active_app(cx, |app, window, cx| app.on_open_file(&OpenFile, window, cx));
+    });
+    cx.on_action(|_: &OpenWorkspace, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_open_workspace(&OpenWorkspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &AddFolderToWorkspace, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_add_folder_to_workspace(&AddFolderToWorkspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &SaveWorkspaceAs, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_save_workspace_as(&SaveWorkspaceAs, window, cx);
+        });
+    });
+    cx.on_action(|_: &Save, cx| {
+        with_active_app(cx, |app, window, cx| app.on_save(&Save, window, cx));
+    });
+    cx.on_action(|_: &SaveAll, cx| {
+        with_active_app(cx, |app, window, cx| app.on_save_all(&SaveAll, window, cx));
+    });
+    cx.on_action(|_: &CloseTab, cx| {
+        with_active_app(cx, |app, window, cx| app.on_close_tab(&CloseTab, window, cx));
+    });
+    cx.on_action(|_: &FindInFiles, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_find_in_files(&FindInFiles, window, cx);
+        });
+    });
+    cx.on_action(|_: &ShowFileTree, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_show_file_tree(&ShowFileTree, window, cx);
+        });
+    });
+    cx.on_action(|_: &ShowGit, cx| {
+        with_active_app(cx, |app, window, cx| app.on_show_git(&ShowGit, window, cx));
+    });
+    cx.on_action(|_: &ToggleSidebar, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_toggle_sidebar(&ToggleSidebar, window, cx);
+        });
+    });
+    cx.on_action(|_: &ToggleTerminal, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_toggle_terminal(&ToggleTerminal, window, cx);
+        });
+    });
+    cx.on_action(|_: &NewTerminal, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_new_terminal(&NewTerminal, window, cx);
+        });
+    });
+    cx.on_action(|_: &TogglePreview, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_toggle_preview(&TogglePreview, window, cx);
+        });
+    });
+    cx.on_action(|_: &IncreaseFontSize, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_increase_font(&IncreaseFontSize, window, cx);
+        });
+    });
+    cx.on_action(|_: &DecreaseFontSize, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_decrease_font(&DecreaseFontSize, window, cx);
+        });
+    });
+    cx.on_action(|_: &ResetFontSize, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_reset_font(&ResetFontSize, window, cx);
+        });
+    });
+    cx.on_action(|_: &About, cx| {
+        with_active_app(cx, |app, window, cx| app.on_about(&About, window, cx));
+    });
 }
 
 struct EditorTab {
@@ -528,6 +660,7 @@ impl IsengardApp {
 
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
+        cx.set_global(ActiveIsengard(cx.weak_entity()));
 
         let terminal = cx.new(|_| TerminalPanel::new(&[]));
 
@@ -575,6 +708,7 @@ impl IsengardApp {
             _ => {}
         }
 
+        app.refresh_menus(cx);
         app
     }
 
@@ -644,7 +778,21 @@ impl IsengardApp {
         self.file_tree.set_folders(self.workspace.folders(), cx);
         self.refresh_git_panel(window, cx);
         window.set_window_title(&self.window_title());
+        self.refresh_menus(cx);
         cx.notify();
+    }
+
+    /// Rebuild File/Edit/View for welcome vs folder/workspace (+ tabs).
+    fn refresh_menus(&self, cx: &mut Context<Self>) {
+        menus::update(
+            cx,
+            &self.app_menu_bar,
+            menus::MenuContext {
+                has_folder: !self.workspace.is_empty(),
+                has_tabs: !self.tabs.is_empty(),
+                close_label: self.workspace.close_menu_label(),
+            },
+        );
     }
 
     fn refresh_git_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -701,9 +849,21 @@ impl IsengardApp {
             return self.apply_switch(switch, window, cx);
         }
         let after_discard = switch.clone();
+        let noun = self.workspace.kind_noun();
+        let abort = if matches!(switch, Switch::Close) {
+            Some(if noun == "workspace" {
+                "Save cancelled — workspace still open"
+            } else {
+                "Save cancelled — folder still open"
+            })
+        } else {
+            Some("Save cancelled — switch aborted")
+        };
         self.open_choice_dialog(
             "Unsaved changes",
-            "Some files have unsaved changes. Save them before closing this workspace?",
+            format!(
+                "Some files have unsaved changes. Save them before closing this {noun}?"
+            ),
             "Don't Save",
             "Save All",
             move |this, window, cx| this.apply_switch(after_discard.clone(), window, cx),
@@ -711,6 +871,7 @@ impl IsengardApp {
                 let switch = switch.clone();
                 this.request_save_all(
                     move |this, window, cx| this.apply_switch(switch.clone(), window, cx),
+                    abort,
                     window,
                     cx,
                 );
@@ -962,8 +1123,38 @@ impl IsengardApp {
             .unwrap_or_default();
         let name = format!("{}.{WORKSPACE_EXTENSION}", self.workspace.display_name());
         let path = cx.prompt_for_new_path(&dir, Some(&name));
+        let abort_close = matches!(next, Some(Switch::Close));
         cx.spawn_in(window, async move |this, window| {
-            let path = path.await.ok()?.ok()??;
+            let path = match path.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => {
+                    if abort_close {
+                        this.update_in(window, |_, window, cx| {
+                            notify_error(
+                                "Save cancelled — workspace still open",
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                    }
+                    return;
+                }
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Save dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Save dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
             this.update_in(window, |this, window, cx| {
                 let path = if Workspace::is_workspace_file(&path) {
                     path
@@ -989,7 +1180,7 @@ impl IsengardApp {
                     }
                 }
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -1062,6 +1253,7 @@ impl IsengardApp {
             self.file_tree.select_path(path, cx);
             self.focus_after_tree_open(permanent, window, cx);
             self.persist_session(cx);
+            self.refresh_menus(cx);
             cx.notify();
             return;
         }
@@ -1118,6 +1310,7 @@ impl IsengardApp {
         self.file_tree.select_path(path, cx);
         self.focus_after_tree_open(permanent, window, cx);
         self.persist_session(cx);
+        self.refresh_menus(cx);
         cx.notify();
     }
 
@@ -1200,15 +1393,17 @@ impl IsengardApp {
 
     /// Saves `path`, prompting for a location when the buffer is untitled.
     /// `after` runs with the final on-disk path on success.
+    /// `abort_message` toasts when the user cancels an untitled save dialog.
     fn request_save(
         &mut self,
         path: PathBuf,
         after: impl Fn(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static,
+        abort_message: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if document::is_untitled(&path) {
-            self.prompt_save_untitled(path, Rc::new(after), window, cx);
+            self.prompt_save_untitled(path, Rc::new(after), abort_message, window, cx);
             return;
         }
         match self.save_tab(&path, cx) {
@@ -1221,6 +1416,7 @@ impl IsengardApp {
         &mut self,
         old_path: PathBuf,
         after: AfterSave,
+        abort_message: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1241,14 +1437,39 @@ impl IsengardApp {
         };
         let prompt = cx.prompt_for_new_path(&dir, Some(&suggested));
         cx.spawn_in(window, async move |this, window| {
-            let new_path = prompt.await.ok()?.ok()??;
+            let new_path = match prompt.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => {
+                    if let Some(msg) = abort_message {
+                        this.update_in(window, |_, window, cx| {
+                            notify_error(msg, window, cx);
+                        })
+                        .ok();
+                    }
+                    return;
+                }
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Save dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Save dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
             this.update_in(window, |this, window, cx| {
                 match this.materialize_untitled(&old_path, new_path.clone(), window, cx) {
                     Ok(()) => after(this, new_path, window, cx),
                     Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
                 }
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -1312,9 +1533,11 @@ impl IsengardApp {
     }
 
     /// Saves every dirty tab (prompts for each untitled), then runs `after`.
+    /// `abort_message` toasts when an untitled save dialog is cancelled mid-queue.
     fn request_save_all(
         &mut self,
         after: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        abort_message: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1324,13 +1547,14 @@ impl IsengardApp {
             .filter(|t| t.is_modified)
             .map(|t| t.path.clone())
             .collect();
-        self.request_save_queue(dirty, Rc::new(after), window, cx);
+        self.request_save_queue(dirty, Rc::new(after), abort_message, window, cx);
     }
 
     fn request_save_queue(
         &mut self,
         mut paths: Vec<PathBuf>,
         after: AfterSaveAll,
+        abort_message: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1349,8 +1573,15 @@ impl IsengardApp {
                 self.prompt_save_untitled(
                     path,
                     Rc::new(move |this, _, window, cx| {
-                        this.request_save_queue(rest.clone(), after.clone(), window, cx);
+                        this.request_save_queue(
+                            rest.clone(),
+                            after.clone(),
+                            abort_message,
+                            window,
+                            cx,
+                        );
                     }),
+                    abort_message,
                     window,
                     cx,
                 );
@@ -1410,6 +1641,7 @@ impl IsengardApp {
                 let paths = paths.clone();
                 this.request_save_all(
                     move |this, window, cx| this.close_tabs(&paths, window, cx),
+                    Some("Save cancelled — tabs still open"),
                     window,
                     cx,
                 );
@@ -1436,6 +1668,7 @@ impl IsengardApp {
         }
         self.focus_active_editor(window, cx);
         self.persist_session(cx);
+        self.refresh_menus(cx);
         cx.notify();
     }
 
@@ -1519,6 +1752,7 @@ impl IsengardApp {
                 this.request_save(
                     path.clone(),
                     |this, saved, window, cx| this.close_tab(&saved, window, cx),
+                    Some("Save cancelled — tab still open"),
                     window,
                     cx,
                 );
@@ -1872,7 +2106,12 @@ impl IsengardApp {
             "Save All & Quit",
             |this, _, cx| this.quit(cx),
             |this, window, cx| {
-                this.request_save_all(|this, _, cx| this.quit(cx), window, cx);
+                this.request_save_all(
+                    |this, _, cx| this.quit(cx),
+                    Some("Save cancelled — quit aborted"),
+                    window,
+                    cx,
+                );
             },
             window,
             cx,
@@ -1963,6 +2202,7 @@ impl IsengardApp {
             untitled_save_dir: save_dir,
         });
         self.focus_active_editor(window, cx);
+        self.refresh_menus(cx);
         cx.notify();
     }
 
@@ -2027,15 +2267,32 @@ impl IsengardApp {
             prompt: Some("Select Folders for Workspace".into()),
         });
         cx.spawn_in(window, async move |this, window| {
-            let folders = paths.await.ok()?.ok()??;
+            let folders = match paths.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) => return,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Open dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Open dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
             let folders: Vec<PathBuf> = folders.into_iter().filter(|f| f.is_dir()).collect();
             if folders.is_empty() {
-                return None;
+                return;
             }
             this.update_in(window, |this, window, cx| {
                 this.prompt_save_new_workspace(folders, window, cx);
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -2059,7 +2316,24 @@ impl IsengardApp {
             .unwrap_or_else(|| format!("Untitled.{WORKSPACE_EXTENSION}"));
         let path = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, window| {
-            let path = path.await.ok()?.ok()??;
+            let path = match path.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => return,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Save dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Save dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
             this.update_in(window, |this, window, cx| {
                 let path = if Workspace::is_workspace_file(&path) {
                     path
@@ -2084,7 +2358,7 @@ impl IsengardApp {
                     }
                 }
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -2112,7 +2386,27 @@ impl IsengardApp {
             ),
         });
         cx.spawn_in(window, async move |this, window| {
-            let path = paths.await.ok()?.ok()??.into_iter().next()?;
+            let path = match paths.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) => None,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Open dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    None
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Open dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    None
+                }
+            };
+            let Some(path) = path else {
+                return;
+            };
             this.update_in(window, |this, window, cx| {
                 if directories {
                     this.open_folder(&path, window, cx);
@@ -2122,7 +2416,7 @@ impl IsengardApp {
                     this.open_file(&path, true, window, cx);
                 }
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -2140,11 +2434,31 @@ impl IsengardApp {
             prompt: Some("Open Workspace".into()),
         });
         cx.spawn_in(window, async move |this, window| {
-            let path = paths.await.ok()?.ok()??.into_iter().next()?;
+            let path = match paths.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) => None,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Open dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    None
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Open dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    None
+                }
+            };
+            let Some(path) = path else {
+                return;
+            };
             this.update_in(window, |this, window, cx| {
                 this.open_workspace_file(&path, window, cx)
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -2162,11 +2476,28 @@ impl IsengardApp {
             prompt: Some("Add Folder to Workspace".into()),
         });
         cx.spawn_in(window, async move |this, window| {
-            let paths = paths.await.ok()?.ok()??;
+            let paths = match paths.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) => return,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Open dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Open dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
             this.update_in(window, |this, window, cx| {
                 this.add_folders(&paths, window, cx)
             })
-            .ok()
+            .ok();
         })
         .detach();
     }
@@ -2265,23 +2596,35 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.workspace.is_empty() || !self.tabs.is_empty() {
-            self.request_switch(Switch::Close, window, cx);
+        if self.workspace.is_empty() && self.tabs.is_empty() {
+            return notify_error("Nothing open to close", window, cx);
         }
+        // AppMenuBar focuses the prior target then `dispatch_action` (deferred),
+        // then dismiss restores focus again. Git chrome buttons are ephemeral —
+        // run close on the next tick after parking on our stable handle.
+        self.focus_handle.focus(window, cx);
+        cx.spawn_in(window, async move |this, window| {
+            this.update_in(window, |this, window, cx| {
+                this.focus_handle.focus(window, cx);
+                this.request_switch(Switch::Close, window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn on_save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.tabs.active().map(|t| t.path.clone()) else {
             return;
         };
-        self.request_save(path, |_, _, _, _| {}, window, cx);
+        self.request_save(path, |_, _, _, _| {}, None, window, cx);
     }
 
     fn on_save_all(&mut self, _: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_unsaved() {
             return;
         }
-        self.request_save_all(|_, _, _| {}, window, cx);
+        self.request_save_all(|_, _, _| {}, None, window, cx);
     }
 
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -2481,6 +2824,9 @@ impl IsengardApp {
         self.sidebar_visible = true;
         self.persist_session(cx);
         self.refresh_git_panel(window, cx);
+        // Don't leave focus on the Explorer/Git chrome button — that handle
+        // goes stale after paint and menu Close then misses the app.
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -3016,7 +3362,7 @@ impl IsengardApp {
     /// No-op on the welcome screen (needs at least one workspace folder).
     fn open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.folders().is_empty() {
-            return;
+            return notify_error("Open a folder before starting a terminal", window, cx);
         }
         if self.terminal.read(cx).has_sessions() {
             self.terminal
@@ -3032,7 +3378,7 @@ impl IsengardApp {
     fn create_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let folders = self.workspace.folders().to_vec();
         if folders.is_empty() {
-            return;
+            return notify_error("Open a folder before starting a terminal", window, cx);
         }
         if folders.len() > 1 {
             self.pick_terminal_cwd(folders, false, window, cx);
@@ -3048,8 +3394,12 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminal
+        let result = self
+            .terminal
             .update(cx, |term, cx| term.add_session(cwd, window, cx));
+        if let Err(err) = result {
+            return notify_error(err, window, cx);
+        }
         self.persist_session(cx);
         cx.notify();
     }
@@ -3678,6 +4028,7 @@ impl Render for IsengardApp {
                         .as_ref()
                         .map(|edit| (&edit.target, &edit.input));
                     self.file_tree.render(
+                        self.workspace.display_name().into(),
                         edit,
                         move |path, permanent, window, cx| {
                             _ = app.update(cx, |this, cx| {

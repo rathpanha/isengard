@@ -95,7 +95,7 @@ impl TerminalPanel {
         self.tabs.clear();
         self.active = 0;
         for cwd in cwds.iter().filter(|p| p.is_dir()) {
-            if let Some(tab) = self.spawn_tab(cwd.clone(), cx) {
+            if let Ok(tab) = self.spawn_tab(cwd.clone(), cx) {
                 self.tabs.push(tab);
             }
         }
@@ -118,15 +118,14 @@ impl TerminalPanel {
         cwd: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let Some(tab) = self.spawn_tab(cwd, cx) else {
-            return;
-        };
+    ) -> Result<(), String> {
+        let tab = self.spawn_tab(cwd, cx)?;
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
         self.visible = true;
         self.focus_active(window, cx);
         cx.notify();
+        Ok(())
     }
 
     pub fn select_tab(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -164,14 +163,14 @@ impl TerminalPanel {
         }
     }
 
-    fn spawn_tab(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Option<TerminalTab> {
+    fn spawn_tab(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Result<TerminalTab, String> {
         let cols = 80u16;
         let rows = 24u16;
         let (session, writer, reader) = match PtySession::spawn(&cwd, cols, rows) {
             Ok(parts) => parts,
             Err(err) => {
                 log::error!("terminal: failed to spawn PTY: {err:#}");
-                return None;
+                return Err(format!("Failed to start terminal: {err:#}"));
             }
         };
 
@@ -201,7 +200,7 @@ impl TerminalPanel {
         let id = self.next_id;
         self.next_id += 1;
         let title = self.title_for(&cwd);
-        Some(TerminalTab {
+        Ok(TerminalTab {
             id,
             title,
             cwd,

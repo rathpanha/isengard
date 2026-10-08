@@ -11,10 +11,12 @@ tabs, highlighted editor, status bar):
   on Save / dirty close). Recent workspaces then recent folders (max 8 each,
   × to remove; empty lists hidden). Details in [design.md](design.md).
 - **Workspaces:** multi-root folders in one window; `.isengard-workspace` JSON
-  (relative folder paths); Add Folder / Open / Save As / Close; root context
-  menu remove; switching closes tabs (unsaved + untitled-workspace prompts).
-  Session restore (tabs with cursor/scroll + expanded tree dirs) per
-  folder/workspace in `config.json` `sessions` — see design for restore rules.
+  (relative folder paths); Add Folder / Open / Save As / Close Folder or
+  Close Workspace (label tracks single-folder vs named/multi-root); root
+  context menu remove; switching closes tabs (unsaved + untitled-workspace
+  prompts). Session restore (tabs with cursor/scroll + expanded tree dirs)
+  per folder/workspace in `config.json` `sessions` — see design for restore
+  rules. Save cancelled mid-close/quit toasts instead of failing silently.
 - **File tree:** Kit `Tree` while a workspace is open; lazy load; dirs first,
   case-insensitive; hides `.git` / `.DS_Store`; full Material Icon Theme;
   gitignored rows shown muted; indent guides (design owns the pixel rules).
@@ -62,11 +64,12 @@ tabs, highlighted editor, status bar):
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root). Linux in-window close × confirms unsaved changes.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
-  (Isengard / File / Edit / View). Status bar while a workspace is open
-  (panel toggles; path / Ln·Col when a file tab is active). Notifications
-  bottom-right. Logo on welcome + platform app icon (see architecture
-  Development setup / icon matrix). Main window size/position (+ maximized)
-  restored from `config.json` on launch.
+  (Isengard / File / Edit / View). Menu items omit by state (welcome vs
+  folder/workspace vs tabs) — see design. Status bar while a workspace is
+  open (panel toggles; path / Ln·Col when a file tab is active).
+  Notifications bottom-right. Logo on welcome + platform app icon (see
+  architecture Development setup / icon matrix). Main window size/position
+  (+ maximized) restored from `config.json` on launch.
 - **Theme:** JetBrains Mono Nerd Font; square corners; **dark mode only**;
   editor font-size zoom.
 
