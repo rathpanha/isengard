@@ -431,6 +431,13 @@ fn outline_btn(id: SharedString) -> Button {
     Button::new(id).outline().cursor_pointer().small()
 }
 
+/// Kit only paints `.loading()` when the button has an `.icon()` — label-only
+/// busy buttons need a placeholder (swapped for the spinner).
+fn with_busy(btn: Button, busy: bool) -> Button {
+    btn.when(busy, |b| b.icon(LucideIcon::Loader).loading(true))
+        .disabled(busy)
+}
+
 impl EventEmitter<GitPanelEvent> for GitPanel {}
 
 impl Render for GitPanel {
@@ -518,46 +525,50 @@ impl Render for GitPanel {
                             .gap_1()
                             .px_2()
                             .child(
-                                outline_btn(format!("git-pull-{si}").into())
-                                    .label(if section.status.behind > 0 {
-                                        format!("Pull ({})", section.status.behind)
-                                    } else {
-                                        "Pull".into()
+                                with_busy(
+                                    outline_btn(format!("git-pull-{si}").into()).label(
+                                        if section.status.behind > 0 {
+                                            format!("Pull ({})", section.status.behind)
+                                        } else {
+                                            "Pull".into()
+                                        },
+                                    ),
+                                    busy,
+                                )
+                                .on_click({
+                                    let root = root.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.run_mutation(
+                                            root.clone(),
+                                            Mutation::Pull,
+                                            window,
+                                            cx,
+                                        );
                                     })
-                                    .loading(busy)
-                                    .disabled(busy)
-                                    .on_click({
-                                        let root = root.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.run_mutation(
-                                                root.clone(),
-                                                Mutation::Pull,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                    }),
+                                }),
                             )
                             .child(
-                                outline_btn(format!("git-push-{si}").into())
-                                    .label(if section.status.ahead > 0 {
-                                        format!("Push ({})", section.status.ahead)
-                                    } else {
-                                        "Push".into()
+                                with_busy(
+                                    outline_btn(format!("git-push-{si}").into()).label(
+                                        if section.status.ahead > 0 {
+                                            format!("Push ({})", section.status.ahead)
+                                        } else {
+                                            "Push".into()
+                                        },
+                                    ),
+                                    busy,
+                                )
+                                .on_click({
+                                    let root = root.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.run_mutation(
+                                            root.clone(),
+                                            Mutation::Push,
+                                            window,
+                                            cx,
+                                        );
                                     })
-                                    .loading(busy)
-                                    .disabled(busy)
-                                    .on_click({
-                                        let root = root.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.run_mutation(
-                                                root.clone(),
-                                                Mutation::Push,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                    }),
+                                }),
                             ),
                     )
                     .child(
@@ -581,33 +592,37 @@ impl Render for GitPanel {
                                     .justify_end()
                                     .gap_1()
                                     .child(
-                                        outline_btn(format!("git-suggest-{si}").into())
-                                            .label("Suggest")
-                                            .loading(busy)
-                                            .disabled(busy || nothing_selected)
-                                            .on_click({
-                                                let root = root.clone();
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.suggest_message(&root, window, cx);
-                                                })
-                                            }),
+                                        with_busy(
+                                            outline_btn(format!("git-suggest-{si}").into())
+                                                .label("Suggest"),
+                                            busy,
+                                        )
+                                        .disabled(busy || nothing_selected)
+                                        .on_click({
+                                            let root = root.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.suggest_message(&root, window, cx);
+                                            })
+                                        }),
                                     )
                                     .child(
-                                        outline_btn(format!("git-commit-{si}").into())
-                                            .label("Commit")
-                                            .loading(busy)
-                                            .disabled(busy || message_empty || nothing_selected)
-                                            .on_click({
-                                                let root = root.clone();
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.run_mutation(
-                                                        root.clone(),
-                                                        Mutation::Commit,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            }),
+                                        with_busy(
+                                            outline_btn(format!("git-commit-{si}").into())
+                                                .label("Commit"),
+                                            busy,
+                                        )
+                                        .disabled(busy || message_empty || nothing_selected)
+                                        .on_click({
+                                            let root = root.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.run_mutation(
+                                                    root.clone(),
+                                                    Mutation::Commit,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                        }),
                                     ),
                             ),
                     )
