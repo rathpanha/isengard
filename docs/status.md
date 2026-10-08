@@ -54,9 +54,10 @@ tabs, highlighted editor, status bar):
   Replace in File / Replace All (confirm); click match to open (result row +
   editor highlight). Results list paints at most 500 hits.
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
-  bottom border only); collapsible changes with Material icons + status
+  border only between repos); collapsible changes with Material icons + status
   on the right; Open File icon + per-file / discard-all (confirm);
-  commit textarea + outlined Pull/Push/Commit; commit-all (no stage UI);
+  commit textarea + Suggest (heuristic) + outlined Pull(N)/Push(N)/Commit;
+  commit-all (no stage UI);
   pull `--ff-only` / push; click opens read-only side-by-side diff
   preview with line highlights. No stage UI, branch UI, or conflict
   resolver.

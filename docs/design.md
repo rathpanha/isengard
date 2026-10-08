@@ -175,9 +175,12 @@ Add a row here whenever a new shared component is created.
   most 500 hit rows (shows truncated).
 - **Source Control (sidebar):** strip order Explorer | Source Control |
   Search. Stacked flush sections (no cards) — one per unique Git worktree
-  (shared `.git` → one section), separated only by a bottom border. Per
-  section: repo name + branch, outlined Pull / Push, multi-line commit
-  `Textarea` + outlined Commit, collapsible changes list. Change rows:
+  (shared `.git` → one section); bottom-border separators only *between*
+  repos (none for a single repo or under the last). Per
+  section: repo name + branch, outlined Pull / Push (`Pull (N)` /
+  `Push (N)` when behind / ahead of upstream), multi-line commit
+  `Textarea` + outlined Suggest (path heuristic draft, no AI) + Commit
+  (disabled while message empty), collapsible changes list. Change rows:
   Material `tree_icon` + path, status letter (`M`/`A`/`D`/`R`/`?`) on the
   right, ghost Open File (`ExternalLink`, permanent tab) + Undo discard
   (confirms). Discard-all on the changes header (confirms;

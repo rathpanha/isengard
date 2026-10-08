@@ -23,6 +23,10 @@ pub struct RepoStatus {
     pub root: PathBuf,
     pub branch: String,
     pub changes: Vec<GitChange>,
+    /// Commits on HEAD not in `@{upstream}` (`0` if no upstream).
+    pub ahead: u32,
+    /// Commits on `@{upstream}` not in HEAD (`0` if no upstream).
+    pub behind: u32,
     /// Set when `git` itself failed for this repo.
     pub error: Option<String>,
 }
@@ -120,19 +124,38 @@ pub fn discover_repos(folders: &[PathBuf]) -> Vec<PathBuf> {
 pub fn load_repo_status(root: &Path) -> RepoStatus {
     let branch = git(root, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_else(|_| "HEAD".into());
+    let (ahead, behind) = ahead_behind_upstream(root);
     match git(root, &["status", "--porcelain=v1", "-uall"]) {
         Ok(out) => RepoStatus {
             root: root.to_path_buf(),
             branch,
             changes: parse_porcelain(&out, root),
+            ahead,
+            behind,
             error: None,
         },
         Err(error) => RepoStatus {
             root: root.to_path_buf(),
             branch,
             changes: Vec::new(),
+            ahead,
+            behind,
             error: Some(error),
         },
+    }
+}
+
+/// Ahead / behind vs `@{upstream}` (`(0, 0)` if none / error).
+pub fn ahead_behind_upstream(root: &Path) -> (u32, u32) {
+    let ahead = rev_list_count(root, "@{upstream}..HEAD");
+    let behind = rev_list_count(root, "HEAD..@{upstream}");
+    (ahead, behind)
+}
+
+fn rev_list_count(root: &Path, range: &str) -> u32 {
+    match git(root, &["rev-list", "--count", range]) {
+        Ok(s) => s.trim().parse().unwrap_or(0),
+        Err(_) => 0,
     }
 }
 
@@ -193,6 +216,83 @@ pub fn discard_all(root: &Path) -> Result<(), String> {
     git(root, &["reset", "--hard", "HEAD"])?;
     git(root, &["clean", "-fd"])?;
     Ok(())
+}
+
+/// Non-AI commit subject from change paths (draft only — never auto-commit).
+///
+/// Examples: `Add foo.rs`, `docs: Update README.md`, `Update a.rs, b.rs (+3 more)`.
+pub fn suggest_commit_message(changes: &[GitChange]) -> Option<String> {
+    if changes.is_empty() {
+        return None;
+    }
+    let verb = suggest_verb(changes);
+    let prefix = conventional_prefix(changes);
+    let names: Vec<&str> = changes
+        .iter()
+        .map(|c| file_stem_name(&c.rel_path))
+        .collect();
+    const MAX_NAMES: usize = 3;
+    let mut body = String::new();
+    body.push_str(prefix);
+    body.push_str(verb);
+    body.push(' ');
+    for (i, name) in names.iter().take(MAX_NAMES).enumerate() {
+        if i > 0 {
+            body.push_str(", ");
+        }
+        body.push_str(name);
+    }
+    if names.len() > MAX_NAMES {
+        body.push_str(&format!(" (+{} more)", names.len() - MAX_NAMES));
+    }
+    Some(body)
+}
+
+fn suggest_verb(changes: &[GitChange]) -> &'static str {
+    let all_new = changes.iter().all(|c| c.status == '?' || c.status == 'A');
+    let all_del = changes.iter().all(|c| c.status == 'D');
+    if all_new {
+        "Add"
+    } else if all_del {
+        "Remove"
+    } else {
+        "Update"
+    }
+}
+
+/// Uniform top-level folder → conventional commit type; otherwise empty.
+fn conventional_prefix(changes: &[GitChange]) -> &'static str {
+    let mut kind: Option<&'static str> = None;
+    for c in changes {
+        let next = path_commit_kind(&c.rel_path);
+        match kind {
+            None => kind = Some(next),
+            Some(k) if k == next => {}
+            Some(_) => return "",
+        }
+    }
+    match kind {
+        Some("docs") => "docs: ",
+        Some("test") => "test: ",
+        _ => "",
+    }
+}
+
+fn path_commit_kind(rel: &str) -> &'static str {
+    let top = rel.split(['/', '\\']).next().unwrap_or(rel);
+    let top = top.to_ascii_lowercase();
+    match top.as_str() {
+        "docs" | "doc" => "docs",
+        "test" | "tests" | "spec" | "specs" => "test",
+        _ => "other",
+    }
+}
+
+fn file_stem_name(rel: &str) -> &str {
+    Path::new(rel)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(rel)
 }
 
 /// Parse `git status --porcelain=v1` lines into changes.
@@ -505,5 +605,164 @@ R  old.rs -> renamed.rs\n\
         let (old, new) = file_sides(&root, "b.txt", '?', None).unwrap();
         assert!(old.is_empty());
         assert_eq!(new, "only\n");
+    }
+
+    #[test]
+    fn ahead_counts_commits_not_in_upstream() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&root)
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&root)
+            .status();
+        fs::write(root.join("a.txt"), "1\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "a.txt"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "base"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(ahead_behind_upstream(&root), (0, 0), "no upstream yet");
+
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-b", "feature"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("a.txt"), "2\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["commit", "-am", "ahead"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["branch", "--set-upstream-to=master"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+                || Command::new("git")
+                    .args(["branch", "--set-upstream-to=main"])
+                    .current_dir(&root)
+                    .status()
+                    .unwrap()
+                    .success()
+        );
+        assert_eq!(ahead_behind_upstream(&root), (1, 0));
+        let status = load_repo_status(&root);
+        assert_eq!(status.ahead, 1);
+        assert_eq!(status.behind, 0);
+
+        // Switch to master/main: it is behind feature by 1 once we point
+        // upstream the other way — instead commit on base and re-check from feature.
+        let base = if root.join(".git/refs/heads/master").exists() {
+            "master"
+        } else {
+            "main"
+        };
+        assert!(
+            Command::new("git")
+                .args(["checkout", base])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("a.txt"), "base2\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["commit", "-am", "on-base"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "feature"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        // feature diverged: 1 ahead (its commit), 1 behind (base's new commit).
+        assert_eq!(ahead_behind_upstream(&root), (1, 1));
+    }
+
+    #[test]
+    fn suggest_message_add_update_docs_and_truncation() {
+        assert_eq!(suggest_commit_message(&[]), None);
+        let added = vec![GitChange {
+            path: PathBuf::from("/r/new.rs"),
+            rel_path: "src/new.rs".into(),
+            old_rel_path: None,
+            status: '?',
+        }];
+        assert_eq!(
+            suggest_commit_message(&added).as_deref(),
+            Some("Add new.rs")
+        );
+
+        let docs = vec![
+            GitChange {
+                path: PathBuf::from("/r/docs/a.md"),
+                rel_path: "docs/a.md".into(),
+                old_rel_path: None,
+                status: 'M',
+            },
+            GitChange {
+                path: PathBuf::from("/r/docs/b.md"),
+                rel_path: "docs/b.md".into(),
+                old_rel_path: None,
+                status: 'M',
+            },
+        ];
+        assert_eq!(
+            suggest_commit_message(&docs).as_deref(),
+            Some("docs: Update a.md, b.md")
+        );
+
+        let many: Vec<_> = (0..5)
+            .map(|i| GitChange {
+                path: PathBuf::from(format!("/r/f{i}.rs")),
+                rel_path: format!("f{i}.rs"),
+                old_rel_path: None,
+                status: 'M',
+            })
+            .collect();
+        assert_eq!(
+            suggest_commit_message(&many).as_deref(),
+            Some("Update f0.rs, f1.rs, f2.rs (+2 more)")
+        );
     }
 }

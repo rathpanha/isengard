@@ -3,6 +3,13 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Git Pull/Push labels show behind/ahead counts vs
+  upstream (`Pull (N)` / `Push (N)`).
+- **2026-10-08** — Git Commit disabled while the message is empty/whitespace.
+- **2026-10-08** — Git repo sections: bottom border only between repos
+  (not under a single or last section).
+- **2026-10-08** — Git panel Suggest fills commit box from change paths
+  (Add/Update/Remove + optional docs:/test:; no AI, does not commit).
 - **2026-10-08** — Git change rows: Open File icon (permanent tab, like
   the tree) next to discard.
 - **2026-10-08** — Git diff overview ruler: absolute overlay (flex sibling

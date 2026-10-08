@@ -18,7 +18,7 @@ use crate::file_tree::tree_icon;
 
 use super::engine::{
     GitChange, RepoStatus, commit_all, discard_all, discard_file, load_workspace_status,
-    pull_ff_only, push,
+    pull_ff_only, push, suggest_commit_message,
 };
 
 const MAX_RENDERED_CHANGES: usize = 500;
@@ -197,6 +197,23 @@ impl GitPanel {
         let expanded = section.changes_expanded;
         self.expanded.insert(root.to_path_buf(), expanded);
         cx.notify();
+    }
+
+    /// Fill the commit box from change paths (heuristic draft; does not commit).
+    fn suggest_message(&mut self, root: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
+            return;
+        };
+        let Some(msg) = suggest_commit_message(&section.status.changes) else {
+            cx.emit(GitPanelEvent::ToastError(
+                "No changes to describe".into(),
+            ));
+            return;
+        };
+        let message = section.message.clone();
+        message.update(cx, |state, cx| {
+            state.set_value(msg, window, cx);
+        });
     }
 
     /// After confirmation: discard one change and refresh.
@@ -388,6 +405,7 @@ impl Render for GitPanel {
             );
         } else {
             let mut painted = 0usize;
+            let section_count = self.sections.len();
             'sections: for (si, section) in self.sections.iter().enumerate() {
                 let root = section.status.root.clone();
                 let busy = section.busy;
@@ -396,6 +414,9 @@ impl Render for GitPanel {
                 let expanded = section.changes_expanded;
                 let change_count = section.status.changes.len();
                 let chevron = if expanded { "▾" } else { "▸" };
+                // Separator only between repos — never under a lone / last section.
+                let show_sep = si + 1 < section_count;
+                let message_empty = section.message.read(cx).value().trim().is_empty();
 
                 // Fixed commit-box height — `min_h` + `h_full` let the first
                 // section steal leftover flex and look uneven vs the next.
@@ -405,8 +426,7 @@ impl Render for GitPanel {
                     .w_full()
                     .flex_shrink_0()
                     .gap_2()
-                    .border_b_1()
-                    .border_color(theme.border)
+                    .when(show_sep, |el| el.border_b_1().border_color(theme.border))
                     .child(
                         h_flex()
                             .w_full()
@@ -439,7 +459,11 @@ impl Render for GitPanel {
                             .px_2()
                             .child(
                                 outline_btn(format!("git-pull-{si}").into())
-                                    .label("Pull")
+                                    .label(if section.status.behind > 0 {
+                                        format!("Pull ({})", section.status.behind)
+                                    } else {
+                                        "Pull".into()
+                                    })
                                     .disabled(busy)
                                     .on_click({
                                         let root = root.clone();
@@ -455,7 +479,11 @@ impl Render for GitPanel {
                             )
                             .child(
                                 outline_btn(format!("git-push-{si}").into())
-                                    .label("Push")
+                                    .label(if section.status.ahead > 0 {
+                                        format!("Push ({})", section.status.ahead)
+                                    } else {
+                                        "Push".into()
+                                    })
                                     .disabled(busy)
                                     .on_click({
                                         let root = root.clone();
@@ -486,22 +514,37 @@ impl Render for GitPanel {
                                     .child(Textarea::new(&section.message).size_full()),
                             )
                             .child(
-                                h_flex().w_full().justify_end().child(
-                                    outline_btn(format!("git-commit-{si}").into())
-                                        .label("Commit")
-                                        .disabled(busy)
-                                        .on_click({
-                                            let root = root.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.run_mutation(
-                                                    root.clone(),
-                                                    Mutation::Commit,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                        }),
-                                ),
+                                h_flex()
+                                    .w_full()
+                                    .justify_end()
+                                    .gap_1()
+                                    .child(
+                                        outline_btn(format!("git-suggest-{si}").into())
+                                            .label("Suggest")
+                                            .disabled(busy || change_count == 0)
+                                            .on_click({
+                                                let root = root.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.suggest_message(&root, window, cx);
+                                                })
+                                            }),
+                                    )
+                                    .child(
+                                        outline_btn(format!("git-commit-{si}").into())
+                                            .label("Commit")
+                                            .disabled(busy || message_empty)
+                                            .on_click({
+                                                let root = root.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.run_mutation(
+                                                        root.clone(),
+                                                        Mutation::Commit,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            }),
+                                    ),
                             ),
                     )
                     .when_some(section.status.error.clone(), |el, err| {
