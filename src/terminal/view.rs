@@ -806,14 +806,14 @@ impl TerminalView {
         };
 
         // Ctrl/Cmd+click opens a URL under the cursor when present.
-        if event.modifiers.secondary() {
-            if let Some(link) = self.link_at(point) {
-                if let Err(err) = links::open_url(&link.url) {
-                    log::warn!("terminal: open URL failed: {err}");
-                }
-                cx.notify();
-                return;
+        if event.modifiers.secondary()
+            && let Some(link) = self.link_at(point)
+        {
+            if let Err(err) = links::open_url(&link.url) {
+                log::warn!("terminal: open URL failed: {err}");
             }
+            cx.notify();
+            return;
         }
 
         let ty = match event.click_count {
@@ -888,7 +888,7 @@ impl TerminalView {
         &self,
         position: Point<Pixels>,
     ) -> Option<(AlacPoint, alacritty_terminal::index::Side)> {
-        let layout = self.hit_layout.lock().clone()?;
+        let layout = (*self.hit_layout.lock())?;
         pixel_to_cell_and_side(
             position,
             layout.origin,

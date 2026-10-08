@@ -4,6 +4,7 @@ mod config;
 mod editor;
 mod file_tree;
 mod menus;
+mod search;
 #[allow(dead_code, clippy::type_complexity, clippy::manual_range_contains)]
 mod terminal;
 mod theme;
@@ -19,10 +20,22 @@ use gpui_kit::*;
 use crate::app::IsengardApp;
 use crate::config::AppConfig;
 
-// Default `Assets` is only ~101 component icons; FilePlus/FolderPlus live in
-// the full Lucide catalog but are not embedded unless we opt in. Compose just
-// those two (not `AllAssets` — ~1 MiB) with the default bundle.
-gpui_kit::assets::icon_assets!(ExtraIcons, [FilePlus, FolderPlus]);
+// Default `Assets` is only ~101 component icons; extras live in the full
+// Lucide catalog and must be opted in (not `AllAssets` — ~1 MiB).
+gpui_kit::assets::icon_assets!(
+    ExtraIcons,
+    [
+        FilePlus,
+        FolderPlus,
+        FolderTree,
+        Search,
+        CaseSensitive,
+        WholeWord,
+        Regex,
+        Replace,
+        ReplaceAll,
+    ]
+);
 
 struct AppAssets;
 

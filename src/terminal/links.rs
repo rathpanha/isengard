@@ -32,7 +32,7 @@ fn is_url_body(c: char) -> bool {
 }
 
 fn trim_trailing_punct(url: &str) -> &str {
-    url.trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}'))
+    url.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}'])
 }
 
 fn looks_like_url(s: &str) -> bool {

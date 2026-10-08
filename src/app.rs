@@ -1,13 +1,25 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
+/// Callback after a single tab save (path may change when materializing untitled).
+type AfterSave = Rc<dyn Fn(&mut IsengardApp, PathBuf, &mut Window, &mut Context<IsengardApp>)>;
+/// Callback after Save All / a save queue finishes.
+type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Context<IsengardApp>)>;
+
+use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
-    input::{Editor, EditorState, InputEvent, InputState, TabSize},
+    input::{
+        Editor, EditorState, InputEvent, InputState, Position, RangeDecoration,
+        RangeDecorationCollection, RangeDecorationStyle, RopeExt as _, TabSize,
+    },
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
@@ -28,6 +40,9 @@ use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
+use crate::search::{
+    SearchMatch, SearchPanel, SearchPanelEvent, SearchQuery, apply_replace, run_search,
+};
 use crate::terminal::TerminalPanel;
 use crate::theme;
 use crate::ui::components::{center_dialog, notify_error, notify_success};
@@ -57,6 +72,10 @@ actions!(
         ResetFontSize,
         TogglePreview,
         ToggleSidebar,
+        /// Show the project Search sidebar (`⌘⇧F` / `Ctrl+Shift+F`).
+        FindInFiles,
+        /// Switch the sidebar to the file tree.
+        ShowFileTree,
         ToggleTerminal,
         NewTerminal,
         /// Fired by the terminal panel after tabs change (close / need persist).
@@ -120,6 +139,13 @@ enum Switch {
     Folder(PathBuf),
     Workspace(Workspace),
     Close,
+}
+
+/// Which view fills the left sidebar (same panel width).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarView {
+    Files,
+    Search,
 }
 
 /// Folder list for the multi-root “Open Terminal in…” dialog.
@@ -249,6 +275,7 @@ pub fn init(cx: &mut App) {
         // Yield to terminal paste (`Ctrl+Shift+V` / `⌘⇧V` elsewhere) when focused.
         KeyBinding::new("secondary-shift-v", TogglePreview, Some("!Terminal")),
         KeyBinding::new("secondary-b", ToggleSidebar, None),
+        KeyBinding::new("secondary-shift-f", FindInFiles, None),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         // Tree selection only — do not steal Delete/F2 from the editor.
@@ -326,6 +353,15 @@ pub struct IsengardApp {
     /// The open folders; the file tree mirrors `workspace.folders()`.
     workspace: Workspace,
     file_tree: FileTreePanel,
+    search: Entity<SearchPanel>,
+    sidebar_view: SidebarView,
+    /// Bumps on each query change so stale background searches are ignored.
+    search_generation: u64,
+    /// Flipped to abort an in-flight `run_search` when a newer query arrives.
+    search_cancel: Arc<AtomicBool>,
+    /// Fill decorations for project-search hits in the active preview editor.
+    /// Dropping the handle does not clear them — we `dispose` on replace.
+    search_hit_decorations: Option<RangeDecorationCollection>,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
     /// Bottom integrated terminal (lazy; created on first show).
@@ -358,6 +394,25 @@ impl IsengardApp {
                 this.persist_session(cx);
             });
 
+        let search = cx.new(|cx| SearchPanel::new(window, cx));
+        let search_subscription =
+            cx.subscribe_in(&search, window, |this, _, event: &SearchPanelEvent, window, cx| {
+                match event {
+                    SearchPanelEvent::QueryChanged(query) => {
+                        this.schedule_search(query.clone(), cx);
+                    }
+                    SearchPanelEvent::OpenMatch(hit) => {
+                        this.open_search_match(hit, window, cx);
+                    }
+                    SearchPanelEvent::ReplaceInFile(path) => {
+                        this.replace_in_file(path.clone(), window, cx);
+                    }
+                    SearchPanelEvent::ReplaceAll => {
+                        this.confirm_replace_all(window, cx);
+                    }
+                }
+            });
+
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
@@ -377,6 +432,11 @@ impl IsengardApp {
             focus_handle,
             workspace: Workspace::default(),
             file_tree,
+            search,
+            sidebar_view: SidebarView::Files,
+            search_generation: 0,
+            search_cancel: Arc::new(AtomicBool::new(false)),
+            search_hit_decorations: None,
             tabs: TabList::default(),
             app_menu_bar,
             terminal,
@@ -386,7 +446,7 @@ impl IsengardApp {
             allow_quit: false,
             restoring_session: false,
             tree_edit: None,
-            _subscriptions: vec![tree_subscription],
+            _subscriptions: vec![tree_subscription, search_subscription],
         };
 
         // Otherwise start on the welcome screen.
@@ -984,7 +1044,7 @@ impl IsengardApp {
     fn prompt_save_untitled(
         &mut self,
         old_path: PathBuf,
-        after: Rc<dyn Fn(&mut Self, PathBuf, &mut Window, &mut Context<Self>)>,
+        after: AfterSave,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1094,7 +1154,7 @@ impl IsengardApp {
     fn request_save_queue(
         &mut self,
         mut paths: Vec<PathBuf>,
-        after: Rc<dyn Fn(&mut Self, &mut Window, &mut Context<Self>)>,
+        after: AfterSaveAll,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1770,10 +1830,10 @@ impl IsengardApp {
                 .map(|t| t.path.clone())
                 .filter(|p| !document::is_untitled(p))
         });
-        if let Some(hint) = hint {
-            if let Some(root) = folders.iter().find(|r| hint.starts_with(r)) {
-                return Some(root.clone());
-            }
+        if let Some(hint) = hint
+            && let Some(root) = folders.iter().find(|r| hint.starts_with(r))
+        {
+            return Some(root.clone());
         }
         folders.first().cloned()
     }
@@ -2198,6 +2258,305 @@ impl IsengardApp {
         self.sidebar_visible = !self.sidebar_visible;
         self.persist_session(cx);
         cx.notify();
+    }
+
+    fn on_find_in_files(
+        &mut self,
+        _: &FindInFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.is_empty() {
+            return;
+        }
+        self.sidebar_view = SidebarView::Search;
+        self.sidebar_visible = true;
+        self.persist_session(cx);
+        self.search.update(cx, |panel, cx| panel.focus_find(window, cx));
+        cx.notify();
+    }
+
+    fn on_show_file_tree(
+        &mut self,
+        _: &ShowFileTree,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.is_empty() {
+            return;
+        }
+        self.sidebar_view = SidebarView::Files;
+        self.sidebar_visible = true;
+        self.persist_session(cx);
+        self.focus_file_tree(window, cx);
+        cx.notify();
+    }
+
+    fn open_buffer_texts(&self, cx: &App) -> HashMap<PathBuf, String> {
+        let mut map = HashMap::new();
+        for tab in self.tabs.iter() {
+            if document::is_untitled(&tab.path) {
+                continue;
+            }
+            if let Some(state) = tab.editor_state() {
+                map.insert(tab.path.clone(), state.read(cx).value().to_string());
+            }
+        }
+        map
+    }
+
+    fn schedule_search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        // Abort any walk still chewing through the previous pattern.
+        self.search_cancel.store(true, Ordering::Relaxed);
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let search_gen = self.search_generation;
+        if query.pattern.is_empty() {
+            self.search
+                .update(cx, |panel, cx| panel.clear_results(cx));
+            return;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.search_cancel = cancel.clone();
+        self.search
+            .update(cx, |panel, cx| panel.set_searching(true, cx));
+        let roots = self.workspace.folders().to_vec();
+        let buffers = self.open_buffer_texts(cx);
+        cx.spawn(async move |this, cx| {
+            // Debounce typing; generation check drops superseded timers.
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            let still = this
+                .update(cx, |this, _| this.search_generation == search_gen)
+                .ok()?;
+            if !still {
+                return None;
+            }
+            let outcome = cx
+                .background_spawn(async move {
+                    run_search(&roots, &query, &buffers, &cancel)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.search_generation != search_gen {
+                    return;
+                }
+                let labels: HashMap<PathBuf, String> = outcome
+                    .groups
+                    .iter()
+                    .map(|g| {
+                        (
+                            g.path.clone(),
+                            this.workspace.relative_label(&g.path),
+                        )
+                    })
+                    .collect();
+                this.search
+                    .update(cx, |panel, cx| panel.set_outcome(outcome, labels, cx));
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    fn open_search_match(
+        &mut self,
+        hit: &SearchMatch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_file(&hit.path, false, window, cx);
+        let siblings: Vec<SearchMatch> = self
+            .search
+            .read(cx)
+            .groups()
+            .iter()
+            .find(|g| g.path == hit.path)
+            .map(|g| g.matches.clone())
+            .unwrap_or_else(|| vec![hit.clone()]);
+        let Some(state) = self
+            .tabs
+            .iter()
+            .find(|t| t.path == hit.path)
+            .and_then(|t| t.editor_state())
+            .cloned()
+        else {
+            return;
+        };
+        if let Some(prev) = self.search_hit_decorations.take() {
+            prev.dispose(cx);
+        }
+        let fill = cx.theme().warning.opacity(0.35);
+        let hit_line = hit.line as u32;
+        let hit_col = hit.col as u32;
+        let hit_end = (hit.col + hit.match_len) as u32;
+        let collection = state.update(cx, |state, cx| {
+            let decorations: Vec<RangeDecoration> = siblings
+                .iter()
+                .map(|m| {
+                    let start = state.text().position_to_offset(&Position {
+                        line: m.line as u32,
+                        character: m.col as u32,
+                    });
+                    let end = state.text().position_to_offset(&Position {
+                        line: m.line as u32,
+                        character: (m.col + m.match_len) as u32,
+                    });
+                    RangeDecoration::new(start..end)
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(fill)
+                })
+                .collect();
+            let collection = state.create_range_decorations_collection(decorations, cx);
+            let start = state.text().position_to_offset(&Position {
+                line: hit_line,
+                character: hit_col,
+            });
+            let end = state.text().position_to_offset(&Position {
+                line: hit_line,
+                character: hit_end,
+            });
+            // Selects the clicked hit and scrolls it into view (`move_to` inside).
+            state.set_selected_range(start..end, cx);
+            state.focus(window, cx);
+            collection
+        });
+        self.search_hit_decorations = Some(collection);
+    }
+
+    fn replace_in_file(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let query = self.search.read(cx).query(cx);
+        if query.pattern.is_empty() {
+            return;
+        }
+        if let Err(err) = self.apply_replace_to_path(&path, &query, window, cx) {
+            return notify_error(format!("Replace failed: {err:#}"), window, cx);
+        }
+        self.rescan_search(cx);
+    }
+
+    fn confirm_replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = self.search.read(cx);
+        let files = panel.file_count();
+        let matches = panel.match_count();
+        if files == 0 || matches == 0 {
+            return;
+        }
+        self.open_choice_dialog(
+            "Replace All?",
+            format!("Replace {matches} occurrences across {files} files?"),
+            "Don't Replace",
+            "Replace All",
+            |_, _, _| {},
+            |this, window, cx| this.replace_all(window, cx),
+            window,
+            cx,
+        );
+    }
+
+    fn replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let query = self.search.read(cx).query(cx);
+        let paths: Vec<PathBuf> = self
+            .search
+            .read(cx)
+            .groups()
+            .iter()
+            .map(|g| g.path.clone())
+            .collect();
+        for path in paths {
+            if let Err(err) = self.apply_replace_to_path(&path, &query, window, cx) {
+                return notify_error(format!("Replace failed: {err:#}"), window, cx);
+            }
+        }
+        self.rescan_search(cx);
+    }
+
+    fn apply_replace_to_path(
+        &mut self,
+        path: &Path,
+        query: &SearchQuery,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let open_state = self
+            .tabs
+            .iter()
+            .find(|t| t.path == *path)
+            .and_then(|t| t.editor_state().cloned());
+        if let Some(state) = open_state {
+            let text = state.read(cx).value().to_string();
+            let (new_text, count) =
+                apply_replace(&text, query).map_err(anyhow::Error::msg)?;
+            if count == 0 {
+                return Ok(());
+            }
+            state.update(cx, |state, cx| {
+                state.set_value(new_text, window, cx);
+            });
+            if let Some(tab) = self.tabs.find_mut(|t| t.path == *path) {
+                tab.is_modified = true;
+                tab.preview = false;
+            }
+            cx.notify();
+            return Ok(());
+        }
+        let text = document::read_text(path)?;
+        let (new_text, count) = apply_replace(&text, query).map_err(anyhow::Error::msg)?;
+        if count > 0 {
+            document::write_text(path, &new_text)?;
+        }
+        Ok(())
+    }
+
+    fn rescan_search(&mut self, cx: &mut Context<Self>) {
+        let query = self.search.read(cx).query(cx);
+        self.schedule_search(query, cx);
+    }
+
+    /// Explorer / Search toggle strip above the active sidebar view.
+    fn render_sidebar_chrome(&self, cx: &mut Context<Self>) -> AnyElement {
+        let files = self.sidebar_view == SidebarView::Files;
+        h_flex()
+            .id("sidebar-view-toggle")
+            .w_full()
+            .items_center()
+            .justify_start()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().sidebar)
+            .child(
+                Button::new("sidebar-files")
+                    .ghost()
+                    .cursor_pointer()
+                    .small()
+                    .icon(LucideIcon::FolderTree)
+                    .tooltip("Explorer")
+                    .selected(files)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_show_file_tree(&ShowFileTree, window, cx);
+                    })),
+            )
+            .child(
+                Button::new("sidebar-search")
+                    .ghost()
+                    .cursor_pointer()
+                    .small()
+                    .icon(LucideIcon::Search)
+                    .tooltip("Search")
+                    .selected(!files)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_find_in_files(&FindInFiles, window, cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     fn on_toggle_terminal(
@@ -2665,7 +3024,7 @@ impl IsengardApp {
                     Button::new("toggle-sidebar")
                         .ghost()
                         .cursor_pointer()
-                        .xsmall()
+                        .small()
                         .icon(if sidebar_visible {
                             IconName::PanelLeftClose
                         } else {
@@ -2710,7 +3069,7 @@ impl IsengardApp {
                     Button::new("toggle-terminal")
                         .ghost()
                         .cursor_pointer()
-                        .xsmall()
+                        .small()
                         .icon(IconName::SquareTerminal)
                         .tooltip(if term_visible {
                             "Minimize Terminal"
@@ -2768,20 +3127,31 @@ impl Render for IsengardApp {
         let main = if self.show_welcome() {
             welcome::render(self, cx).into_any_element()
         } else if self.file_tree.is_open() && self.sidebar_visible {
-            let app = cx.entity().downgrade();
-            let edit = self
-                .tree_edit
-                .as_ref()
-                .map(|edit| (&edit.target, &edit.input));
-            let tree = self.file_tree.render(
-                edit,
-                move |path, permanent, window, cx| {
-                    _ = app.update(cx, |this, cx| {
-                        this.open_file(&path, permanent, window, cx)
-                    });
-                },
-                cx,
-            );
+            let chrome = self.render_sidebar_chrome(cx);
+            let body = match self.sidebar_view {
+                SidebarView::Files => {
+                    let app = cx.entity().downgrade();
+                    let edit = self
+                        .tree_edit
+                        .as_ref()
+                        .map(|edit| (&edit.target, &edit.input));
+                    self.file_tree.render(
+                        edit,
+                        move |path, permanent, window, cx| {
+                            _ = app.update(cx, |this, cx| {
+                                this.open_file(&path, permanent, window, cx)
+                            });
+                        },
+                        cx,
+                    )
+                }
+                SidebarView::Search => self.search.clone().into_any_element(),
+            };
+            let sidebar = v_flex()
+                .size_full()
+                .min_w_0()
+                .child(chrome)
+                .child(div().flex_1().min_h_0().min_w_0().overflow_hidden().child(body));
             let width = px(self.sidebar_width.max(100.));
             let app = cx.entity().downgrade();
             let split_id = self
@@ -2797,7 +3167,7 @@ impl Render for IsengardApp {
                 .child(
                     resizable_panel()
                         .size(width)
-                        .child(div().size_full().min_w_0().overflow_hidden().child(tree)),
+                        .child(div().size_full().min_w_0().overflow_hidden().child(sidebar)),
                 )
                 .child(resizable_panel().child(self.render_editor_with_terminal(cx)))
                 .into_any_element()
@@ -2841,6 +3211,8 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_reset_font))
             .on_action(cx.listener(Self::on_toggle_preview))
             .on_action(cx.listener(Self::on_toggle_sidebar))
+            .on_action(cx.listener(Self::on_find_in_files))
+            .on_action(cx.listener(Self::on_show_file_tree))
             .on_action(cx.listener(Self::on_toggle_terminal))
             .on_action(cx.listener(Self::on_new_terminal))
             .on_action(cx.listener(Self::on_terminal_tabs_changed))

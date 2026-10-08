@@ -44,9 +44,15 @@ tabs, highlighted editor, status bar):
   `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when focused); URL hover
   continuous underline + pointer; Ctrl/Cmd+click opens.
   Scrollback UI still minimal.
-- **Sidebar:** hide/show file tree without closing the workspace (View >
-  Toggle Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility
-  persist per workspace session.
+- **Sidebar:** hide/show without closing the workspace (View > Toggle
+  Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist
+  per workspace session. Explorer ↔ Search via top sidebar strip (`⌘⇧F` /
+  Find in Files): project find + replace across roots.
+- **Project search:** parallel `ignore` walk + `regex` / `aho-corasick`
+  prefilter; cancels in-flight scans on new query; skips `node_modules`/
+  `target`/media/binaries and files >1 MiB; open buffers preferred over disk;
+  Replace in File / Replace All (confirm); click match to open (result row +
+  editor highlight). Results list paints at most 500 hits.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root). Linux in-window close × confirms unsaved changes.

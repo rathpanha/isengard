@@ -156,6 +156,22 @@ Add a row here whenever a new shared component is created.
   Width + visibility remembered per workspace in `sessions` (default 260px /
   visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /
   `Ctrl+B`.
+- **Project Search (sidebar):** left panel switches between Explorer (file
+  tree) and Search (same width — not a second column). Toggle via the
+  sidebar top strip (`FolderTree` / `Search`, `.small()`), View >
+  Explorer / Search, Edit > Find in Files, or `⌘⇧F` / `Ctrl+Shift+F`.
+  Find + replace fields; toggles for case / whole word / regex (Lucide
+  `CaseSensitive` / `WholeWord` / `Regex`). Results list: file headers
+  (Material `tree_icon` + workspace-relative path) + match rows (`Ln` +
+  line preview with the match span on `theme.warning` fill);
+  click opens a preview tab, selects the hit, and fills every match in that
+  file (`RangeDecoration`). Replace in File applies
+  to the selected result's file; Replace All confirms first (choice dialog).
+  Open editor buffers win over disk for search/replace; closed files write
+  UTF-8 to disk. Honors `.gitignore` (even without a `.git` dir); skips
+  binaries / media extensions / well-known build dirs (`node_modules`,
+  `target`, …) / files >1 MiB. Caps at 10k matches / 2k files; UI paints at
+  most 500 hit rows (shows truncated).
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`), with `margins.bottom` clearing the status
   bar (`STATUS_BAR_HEIGHT` + 16px edge). Don't set placement/margins per toast.

@@ -3,6 +3,20 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Project search speed: parallel walk, cancel on new query,
+  skip build/media dirs & >1 MiB files, aho-corasick prefilter, paint ≤500 hits.
+- **2026-10-08** — Project search: highlight match in result rows and in the
+  editor on preview click (`RangeDecoration` fill + selection).
+- **2026-10-08** — Project search file headers use Material `tree_icon`
+  (same as tree/tabs).
+- **2026-10-08** — Explorer / Search toggle back at the top of the sidebar
+  (status bar only shows/hides the panel).
+- **2026-10-08** — Sidebar icon buttons use `.small()` (was `.xsmall`);
+  search find/replace rows use `gap_3`; status line only when non-empty.
+- **2026-10-08** — Embed Lucide `FolderTree` / `Search` (+ search option icons).
+- **2026-10-08** — Project Find & Replace in the left sidebar (Explorer ↔
+  Search); `⌘⇧F` / Edit > Find in Files; replace-all confirm; `.gitignore`
+  + open-buffer aware (`src/search`).
 - **2026-10-08** — Toast icon/text vertically centred via custom notification
   content (`notify_success` / `notify_error`); tab/recent × stay `.ghost()`.
 - **2026-10-08** — Kit semantic variants: discard dialog buttons

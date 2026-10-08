@@ -91,9 +91,11 @@ prints that nothing is needed (macOS / Git Bash on Windows).
 
 ```
 src/
-├── main.rs              app bootstrap: `AppAssets` (default Kit icons + FilePlus/
-│                        FolderPlus), gpui_kit::init, fonts, theme, key bindings,
-│                        menus, window (QuitMode::LastWindowClosed)
+├── main.rs              app bootstrap: `AppAssets` (default Kit icons +
+│                        FilePlus/FolderPlus/FolderTree/Search/CaseSensitive/
+│                        WholeWord/Regex/Replace/ReplaceAll), gpui_kit::init,
+│                        fonts, theme, key bindings, menus, window
+│                        (QuitMode::LastWindowClosed)
 ├── app.rs               IsengardApp view: actions, tabs, dialogs, layout, status bar
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
@@ -111,6 +113,10 @@ src/
 │   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)
 │   ├── indent_guides.rs vertical tree lines from flat entry depths
 │   └── icons.rs         Material Icon Theme (full set) → tree_icon(path, …)
+├── search/              project Find & Replace (sidebar Search view)
+│   ├── engine.rs        parallel WalkBuilder + regex/aho-corasick; cancel;
+│   │                    size/ext/dir skips; open-buffer override; replace
+│   └── panel.rs         SearchPanel UI (inputs, toggles, capped results)
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
 │   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
 │   ├── pty.rs           portable-pty session + default shell / cwd
@@ -250,5 +256,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 `Language` in `editor/language.rs`. Direct dep `cc = "~1.2.1"` keeps
 `tree-sitter-sequel` (SQL) resolvable against `embed-resource`. Terminal deps:
 `alacritty_terminal = "0.25.1"`, `portable-pty = "0.9"` (plus `parking_lot`,
-`flume`, `ropey` for the adapted view). Do not depend on crates.io
+`flume`, `ropey` for the adapted view). Project search: `regex = "1"`,
+`aho-corasick = "1"`, existing `ignore = "0.4"` (parallel `WalkBuilder`,
+`require_git(false)`, `max_filesize`). Do not depend on crates.io
 `gpui-terminal` — it targets a different GPUI; our panel is a local adaptation.

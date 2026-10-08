@@ -472,7 +472,7 @@ impl FileTreePanel {
                 Button::new("tree-new-file")
                     .ghost()
                     .cursor_pointer()
-                    .xsmall()
+                    .small()
                     .icon(LucideIcon::FilePlus)
                     .tooltip("New File")
                     .on_click(
@@ -492,7 +492,7 @@ impl FileTreePanel {
                 Button::new("tree-new-folder")
                     .ghost()
                     .cursor_pointer()
-                    .xsmall()
+                    .small()
                     .icon(LucideIcon::FolderPlus)
                     .tooltip("New Folder")
                     .on_click(
