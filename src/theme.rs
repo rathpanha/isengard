@@ -20,6 +20,11 @@ const NOTIFICATION_EDGE: f32 = 16.0;
 /// bottom-right toasts sit above the footer, not on top of it.
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 
+/// Shared height for sidebar chrome, explorer/git toolbars, editor tab strip,
+/// and Edit/Preview mode bar — keeps the two header bands aligned across the
+/// sidebar | editor split. Matches Kit `Tab::large()` (36px).
+pub const PANEL_HEADER_ROW_H: f32 = 36.0;
+
 fn load_highlight(name: &str, json: &str) -> Arc<HighlightTheme> {
     let style: HighlightThemeStyle =
         serde_json::from_str(json).unwrap_or_else(|err| panic!("{name} highlight theme: {err}"));

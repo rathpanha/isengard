@@ -3273,11 +3273,11 @@ impl IsengardApp {
         h_flex()
             .id("sidebar-view-toggle")
             .w_full()
+            .h(px(theme::PANEL_HEADER_ROW_H))
             .items_center()
             .justify_start()
             .gap_1()
             .px_2()
-            .py_1()
             .border_b_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().sidebar)
@@ -3570,7 +3570,9 @@ impl IsengardApp {
         let tab_bar = h_flex()
             .id("editor-tabs")
             .w_full()
+            .h(px(theme::PANEL_HEADER_ROW_H))
             .flex_shrink_0()
+            .items_center()
             .overflow_x_scroll()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -3601,6 +3603,8 @@ impl IsengardApp {
                             // Icon+label as children (not Tab::prefix): Kit's
                             // inner left pad insets the icon; prefix would sit
                             // outside that pad and leave a 12px gap before the name.
+                            // `.large()` = 36px — matches `theme::PANEL_HEADER_ROW_H`.
+                            .large()
                             .aria_label(tab.label())
                             .child(
                                 // Same icon↔label gap as file-tree rows.
@@ -3663,11 +3667,11 @@ impl IsengardApp {
             let preview = rendered_preview;
             h_flex()
                 .w_full()
+                .h(px(theme::PANEL_HEADER_ROW_H))
                 .items_center()
                 .justify_end()
                 .gap_2()
                 .px_2()
-                .py_1()
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .child(

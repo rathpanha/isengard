@@ -95,6 +95,11 @@ Add a row here whenever a new shared component is created.
 
 - **Dirty tabs:** unsaved buffer shows a 6px square in `theme.blue` before
   the close × (block style — no round “dot”).
+- **Panel header row height:** sidebar chrome (Explorer / Git / Search),
+  explorer + git toolbars, editor tab strip, and Edit / Preview mode bar
+  all use `theme::PANEL_HEADER_ROW_H` (36px, Kit `Tab::large()`). Two
+  horizontal bands line up across the sidebar | editor split when a
+  preview-capable tab is open.
 - **Markdown / SVG preview:** `.md` and `.svg` tabs show an Edit / Preview
   `ButtonGroup` under the tab bar. Markdown preview uses
   `TextView::markdown`; SVG preview renders the buffer via
@@ -238,11 +243,11 @@ Add a row here whenever a new shared component is created.
     Right-click empty space in the tree panel (not on a row) → New File /
     New Folder under the workspace root (single-root folder, or first
     root when multi). Mini toolbar at the top of the tree (`justify_between`,
-    `border_b`): left = folder / workspace `display_name` (`text_sm`,
-    medium, truncated); right = ghost New File / New Folder icons
-    (`assets::IconName::FilePlus` / `FolderPlus`, embedded via
-    `icon_assets!` + `AppAssets` in `main.rs` — not in default Kit
-    `Assets`). Creates in the selected directory (or
+    `border_b`, height `PANEL_HEADER_ROW_H`): left = folder / workspace
+    `display_name` (`text_sm`, medium, truncated); right = ghost New File /
+    New Folder icons (`assets::IconName::FilePlus` / `FolderPlus`,
+    embedded via `icon_assets!` + `AppAssets` in `main.rs` — not in
+    default Kit `Assets`). Creates in the selected directory (or
     parent of a selected file); with no selection, the first workspace
     root. Window title still shows the same name (plus ` (Workspace)` when
     named/multi-root).

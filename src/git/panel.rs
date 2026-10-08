@@ -812,10 +812,10 @@ impl Render for GitPanel {
             .child(
                 h_flex()
                     .w_full()
+                    .h(px(crate::theme::PANEL_HEADER_ROW_H))
                     .items_center()
                     .justify_between()
                     .px_2()
-                    .py_1()
                     .border_b_1()
                     .border_color(theme.border)
                     .child(

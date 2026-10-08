@@ -461,11 +461,11 @@ impl FileTreePanel {
         let toolbar = h_flex()
             .id("file-tree-toolbar")
             .w_full()
+            .h(px(crate::theme::PANEL_HEADER_ROW_H))
             .items_center()
             .justify_between()
             .gap_2()
             .px_2()
-            .py_1()
             .border_b_1()
             .border_color(theme.border)
             .child(

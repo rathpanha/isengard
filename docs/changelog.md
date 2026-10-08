@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Panel header rows share `PANEL_HEADER_ROW_H` (36px):
+  sidebar chrome, explorer/git toolbars, editor tabs (`Tab::large`), Edit/
+  Preview bar — bands align across the split.
 - **2026-10-08** — Close Folder/Workspace: stable app focus after Git tab,
   WeakEntity menu fallback, defer close past AppMenuBar dismiss (Git chrome
   focus was ephemeral and dropped the action).
