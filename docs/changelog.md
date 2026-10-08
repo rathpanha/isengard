@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Git Push toast uses git’s own success text (e.g.
+  `Everything up-to-date` from stderr), not a synthetic "Pushed".
+- **2026-10-08** — Git busy: disable sibling actions; spinner only on the
+  button that started Pull/Push/Commit/discard.
 - **2026-10-08** — Git label-only busy buttons (Pull/Push/Suggest/Commit)
   set a `Loader` icon so Kit `.loading()` actually paints a spinner.
 - **2026-10-08** — In-flight Button `.loading()` rule in design.md; git +

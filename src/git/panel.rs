@@ -54,7 +54,8 @@ struct RepoSection {
     /// Display label (workspace-relative root name).
     label: String,
     message: Entity<TextareaState>,
-    busy: bool,
+    /// Which action is in flight (siblings disable; only this one spins).
+    busy: Option<BusyOp>,
     /// Whether the changes list is visible.
     changes_expanded: bool,
     /// `rel_path` values included in the next commit / Suggest.
@@ -174,7 +175,7 @@ impl GitPanel {
                 status,
                 label,
                 message,
-                busy: false,
+                busy: None,
                 changes_expanded,
                 selected,
             });
@@ -190,7 +191,7 @@ impl GitPanel {
             .find(|s| s.status.root == root)
     }
 
-    fn set_busy(&mut self, root: &Path, busy: bool, cx: &mut Context<Self>) {
+    fn set_busy(&mut self, root: &Path, busy: Option<BusyOp>, cx: &mut Context<Self>) {
         if let Some(section) = self.section_mut(root) {
             section.busy = busy;
             cx.notify();
@@ -303,7 +304,7 @@ impl GitPanel {
         if self
             .sections
             .iter()
-            .any(|s| s.status.root == root && s.busy)
+            .any(|s| s.status.root == root && s.busy.is_some())
         {
             return;
         }
@@ -328,7 +329,8 @@ impl GitPanel {
             (None, None)
         };
 
-        self.set_busy(&root, true, cx);
+        let busy_op = BusyOp::from_mutation(&kind);
+        self.set_busy(&root, Some(busy_op), cx);
         let folders = self.folders.clone();
         let labels: HashMap<PathBuf, String> = self
             .sections
@@ -357,7 +359,7 @@ impl GitPanel {
                         }),
                         Mutation::Push => push(&root_bg).map(|out| {
                             if out.is_empty() {
-                                "Pushed".into()
+                                "Everything up-to-date".into()
                             } else {
                                 out
                             }
@@ -381,7 +383,7 @@ impl GitPanel {
                 .await;
 
             this.update_in(window, |this, window, cx| {
-                this.set_busy(&root, false, cx);
+                this.set_busy(&root, None, cx);
                 match result {
                     Ok(msg) => {
                         if clear_message
@@ -418,6 +420,28 @@ enum Mutation {
     DiscardAll,
 }
 
+/// Which control is spinning while the repo is locked.
+#[derive(Clone, PartialEq, Eq)]
+enum BusyOp {
+    Commit,
+    Pull,
+    Push,
+    DiscardAll,
+    DiscardFile(String),
+}
+
+impl BusyOp {
+    fn from_mutation(kind: &Mutation) -> Self {
+        match kind {
+            Mutation::Commit => Self::Commit,
+            Mutation::Pull => Self::Pull,
+            Mutation::Push => Self::Push,
+            Mutation::DiscardAll => Self::DiscardAll,
+            Mutation::DiscardFile { rel_path, .. } => Self::DiscardFile(rel_path.clone()),
+        }
+    }
+}
+
 fn short_toast(s: &str) -> String {
     let line = s.lines().next().unwrap_or(s).trim();
     if line.chars().count() > 120 {
@@ -433,9 +457,8 @@ fn outline_btn(id: SharedString) -> Button {
 
 /// Kit only paints `.loading()` when the button has an `.icon()` — label-only
 /// busy buttons need a placeholder (swapped for the spinner).
-fn with_busy(btn: Button, busy: bool) -> Button {
-    btn.when(busy, |b| b.icon(LucideIcon::Loader).loading(true))
-        .disabled(busy)
+fn with_loading(btn: Button, loading: bool) -> Button {
+    btn.when(loading, |b| b.icon(LucideIcon::Loader).loading(true))
 }
 
 impl EventEmitter<GitPanelEvent> for GitPanel {}
@@ -472,7 +495,8 @@ impl Render for GitPanel {
             let section_count = self.sections.len();
             'sections: for (si, section) in self.sections.iter().enumerate() {
                 let root = section.status.root.clone();
-                let busy = section.busy;
+                let busy_op = section.busy.clone();
+                let busy = busy_op.is_some();
                 let branch = section.status.branch.clone();
                 let label = section.label.clone();
                 let expanded = section.changes_expanded;
@@ -525,7 +549,7 @@ impl Render for GitPanel {
                             .gap_1()
                             .px_2()
                             .child(
-                                with_busy(
+                                with_loading(
                                     outline_btn(format!("git-pull-{si}").into()).label(
                                         if section.status.behind > 0 {
                                             format!("Pull ({})", section.status.behind)
@@ -533,8 +557,9 @@ impl Render for GitPanel {
                                             "Pull".into()
                                         },
                                     ),
-                                    busy,
+                                    busy_op == Some(BusyOp::Pull),
                                 )
+                                .disabled(busy)
                                 .on_click({
                                     let root = root.clone();
                                     cx.listener(move |this, _, window, cx| {
@@ -548,7 +573,7 @@ impl Render for GitPanel {
                                 }),
                             )
                             .child(
-                                with_busy(
+                                with_loading(
                                     outline_btn(format!("git-push-{si}").into()).label(
                                         if section.status.ahead > 0 {
                                             format!("Push ({})", section.status.ahead)
@@ -556,8 +581,9 @@ impl Render for GitPanel {
                                             "Push".into()
                                         },
                                     ),
-                                    busy,
+                                    busy_op == Some(BusyOp::Push),
                                 )
+                                .disabled(busy)
                                 .on_click({
                                     let root = root.clone();
                                     cx.listener(move |this, _, window, cx| {
@@ -592,24 +618,21 @@ impl Render for GitPanel {
                                     .justify_end()
                                     .gap_1()
                                     .child(
-                                        with_busy(
-                                            outline_btn(format!("git-suggest-{si}").into())
-                                                .label("Suggest"),
-                                            busy,
-                                        )
-                                        .disabled(busy || nothing_selected)
-                                        .on_click({
-                                            let root = root.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.suggest_message(&root, window, cx);
-                                            })
-                                        }),
+                                        outline_btn(format!("git-suggest-{si}").into())
+                                            .label("Suggest")
+                                            .disabled(busy || nothing_selected)
+                                            .on_click({
+                                                let root = root.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.suggest_message(&root, window, cx);
+                                                })
+                                            }),
                                     )
                                     .child(
-                                        with_busy(
+                                        with_loading(
                                             outline_btn(format!("git-commit-{si}").into())
                                                 .label("Commit"),
-                                            busy,
+                                            busy_op == Some(BusyOp::Commit),
                                         )
                                         .disabled(busy || message_empty || nothing_selected)
                                         .on_click({
@@ -708,7 +731,7 @@ impl Render for GitPanel {
                                         .small()
                                         .icon(LucideIcon::Undo2)
                                         .tooltip("Discard All Changes")
-                                        .loading(busy)
+                                        .loading(busy_op == Some(BusyOp::DiscardAll))
                                         .disabled(busy)
                                         .on_click({
                                             let root = root.clone();
@@ -769,6 +792,7 @@ impl Render for GitPanel {
                             muted,
                             dark,
                             busy,
+                            busy_op.as_ref(),
                             cx,
                         ));
                     }
@@ -851,6 +875,7 @@ fn render_change_row(
     muted: Hsla,
     dark: bool,
     busy: bool,
+    busy_op: Option<&BusyOp>,
     cx: &mut Context<GitPanel>,
 ) -> AnyElement {
     let repo = repo.to_path_buf();
@@ -858,6 +883,7 @@ fn render_change_row(
     let rel = change.rel_path.clone();
     let old_rel = change.old_rel_path.clone();
     let status = change.status;
+    let discard_loading = matches!(busy_op, Some(BusyOp::DiscardFile(p)) if p == &rel);
     let icon = tree_icon(&change.path, false, false, false, dark);
 
     h_flex()
@@ -960,7 +986,7 @@ fn render_change_row(
                 .small()
                 .icon(LucideIcon::Undo2)
                 .tooltip("Discard Changes")
-                .loading(busy)
+                .loading(discard_loading)
                 .disabled(busy)
                 .on_click({
                     let repo = repo.clone();

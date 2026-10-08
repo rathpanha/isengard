@@ -54,13 +54,13 @@ section here.
     minimize, sidebar toggle, tree New File/Folder): Kit's default `.ghost()`
     — no danger tint on the ×.
   - **In-flight async actions** (git Pull/Push/Commit/Refresh/discard, search
-    while a scan runs, …): Button `.loading(true)` so Kit shows a spinner.
-    Kit only paints that spinner when the button already has an `.icon()` —
-    label-only busy buttons must set a placeholder icon (e.g. `Loader`) while
-    loading. Do **not** grey out with `.disabled(true)` alone for busy —
-    disable may still apply together with loading, or for unrelated reasons
-    (empty message, no selection). Status text ("Searching…") does not
-    replace a loading control when the control itself started the work.
+    while a scan runs, …): Spinner only on the control that started the work;
+    siblings may `.disabled(true)` without `.loading()`. Kit only paints a
+    spinner when the button already has an `.icon()` — label-only busy
+    buttons must set a placeholder icon (e.g. `Loader`) while loading.
+    Do **not** grey out with `.disabled(true)` alone for the acting control.
+    Status text ("Searching…") does not replace a loading control when the
+    control itself started the work.
   - **Choice dialogs** (`open_choice_dialog`): Cancel · secondary · primary —
     Cancel `.outline()`; discard secondary ("Don't Save", "Quit Without
     Saving") `.danger().outline()`; safe primary ("Save", "Save All")

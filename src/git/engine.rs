@@ -49,14 +49,22 @@ fn git_inner(cwd: &Path, args: &[&str], trim_stdout: bool) -> Result<String, Str
         .output()
         .map_err(|err| format!("git failed to start: {err}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if output.status.success() {
-        return Ok(if trim_stdout {
-            stdout.trim_end().to_owned()
-        } else {
-            stdout.into_owned()
-        });
-    }
     let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.success() {
+        if !trim_stdout {
+            return Ok(stdout.into_owned());
+        }
+        let out = stdout.trim_end();
+        if !out.is_empty() {
+            return Ok(out.to_owned());
+        }
+        // `git push` writes "Everything up-to-date" / "To …" on stderr.
+        let err = stderr.trim_end();
+        if !err.is_empty() {
+            return Ok(err.to_owned());
+        }
+        return Ok(String::new());
+    }
     let msg = if !stderr.trim().is_empty() {
         stderr.trim().to_owned()
     } else if !stdout.trim().is_empty() {
@@ -817,5 +825,64 @@ R  old.rs -> renamed.rs\n\
             suggest_commit_message(&many).as_deref(),
             Some("Update f0.rs, f1.rs, f2.rs (+2 more)")
         );
+    }
+
+    #[test]
+    fn push_noop_returns_everything_up_to_date() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        let bare = tmp.path().join("bare.git");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&root)
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&root)
+            .status();
+        assert!(
+            Command::new("git")
+                .args(["commit", "--allow-empty", "-m", "init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["init", "--bare"])
+                .arg(&bare)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["remote", "add", "origin"])
+                .arg(&bare)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["push", "-u", "origin", "HEAD"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let msg = push(&root).unwrap();
+        assert_eq!(msg.trim(), "Everything up-to-date");
     }
 }
