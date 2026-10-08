@@ -59,8 +59,9 @@ use alacritty_terminal::index::{Column, Point as AlacPoint};
 use alacritty_terminal::selection::{Selection as AlacSelection, SelectionType as AlacSelectionType};
 use alacritty_terminal::term::TermMode;
 use gpui_kit::component::input::{Copy as EditCopy, Paste as EditPaste};
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::{ClipboardItem, Edges, prelude::FluentBuilder as _, *};
+
+use crate::ui::components::notify_success;
 use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -953,7 +954,7 @@ impl TerminalView {
         match self.selection_text() {
             Some(text) if !text.is_empty() => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
-                window.push_notification("Copied", cx);
+                notify_success("Copied", window, cx);
                 true
             }
             _ => false,

@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Toast icon/text vertically centred via custom notification
+  content (`notify_success` / `notify_error`); tab/recent × stay `.ghost()`.
+- **2026-10-08** — Kit semantic variants: discard dialog buttons
+  `.danger().outline()`; success/error toasts typed (design §3).
 - **2026-10-08** — Embed Lucide `FilePlus` / `FolderPlus` via `AppAssets`
   (default Kit icons + those two); tree toolbar uses them.
 - **2026-10-08** — File tree toolbar icons: `FilePlus` / `FolderPlus`.

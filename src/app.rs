@@ -10,7 +10,6 @@ use gpui_kit::component::{
     input::{Editor, EditorState, InputEvent, InputState, TabSize},
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
-    notification::Notification,
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     status_bar::StatusBar,
     tab::Tab,
@@ -31,7 +30,7 @@ use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
 use crate::terminal::TerminalPanel;
 use crate::theme;
-use crate::ui::components::center_dialog;
+use crate::ui::components::{center_dialog, notify_error, notify_success};
 use crate::ui::file_tree::{FileTreePanel, TreeEditTarget};
 use crate::ui::welcome;
 use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
@@ -740,8 +739,9 @@ impl IsengardApp {
                         this.config.add_recent_workspace(&path);
                         this.config.save();
                         this.workspace_changed(window, cx);
-                        window.push_notification(
+                        notify_success(
                             format!("Saved workspace {}", document::file_name(&path)),
+                            window,
                             cx,
                         );
                         if let Some(next) = next {
@@ -1238,8 +1238,11 @@ impl IsengardApp {
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
+                            // Secondary is always the discard path today
+                            // ("Don't Save", "Quit Without Saving").
                             Button::new("dialog-secondary")
                                 .cursor_pointer()
+                                .danger()
                                 .outline()
                                 .label(secondary_label)
                                 .on_click(move |_, window, cx| {
@@ -1580,7 +1583,7 @@ impl IsengardApp {
         } else if let Some(parent) = path.parent() {
             self.file_tree.refresh_dir(parent, cx);
         }
-        window.push_notification("Moved to Trash", cx);
+        notify_success("Moved to Trash", window, cx);
         self.persist_session(cx);
         cx.notify();
     }
@@ -1657,7 +1660,7 @@ impl IsengardApp {
                 Some(dir) => Some(dir),
                 None => {
                     return notify_error(
-                        "No folder available for a new file.".into(),
+                        "No folder available for a new file.",
                         window,
                         cx,
                     );
@@ -1834,8 +1837,9 @@ impl IsengardApp {
                 match workspace.save_as(&path) {
                     Ok(()) => {
                         this.request_switch(Switch::Workspace(workspace), window, cx);
-                        window.push_notification(
+                        notify_success(
                             format!("Created workspace {}", document::file_name(&path)),
+                            window,
                             cx,
                         );
                     }
@@ -1939,7 +1943,7 @@ impl IsengardApp {
     ) {
         if self.workspace.is_empty() {
             notify_error(
-                "Open a folder before saving a workspace.".into(),
+                "Open a folder before saving a workspace.",
                 window,
                 cx,
             );
@@ -2850,6 +2854,3 @@ impl Render for IsengardApp {
     }
 }
 
-fn notify_error(message: String, window: &mut Window, cx: &mut App) {
-    window.push_notification(Notification::error(message), cx);
-}

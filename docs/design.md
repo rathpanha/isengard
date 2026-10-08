@@ -46,12 +46,21 @@ section here.
 
 ## 3. Interaction states
 
-- **Destructive actions** (close, remove, delete, discard):
-  - Icon-only close/remove buttons use Kit's default ghost `Button` (no custom
-    red hover). Keep `.cursor_pointer()`, `.xsmall()`, and a tooltip.
-  - Destructive commands with data loss ask first, using
-    `IsengardApp::open_choice_dialog`: buttons in the order Cancel · secondary
-    ("Don't Save") · primary (the safe default, e.g. "Save", "Save All").
+- **Button / notification variants:** use Kit's semantic variants as shipped
+  (`.primary()`, `.danger()`, `.ghost()`, `.link()`, `.outline()`, …) — no
+  custom colours on buttons. Kit's destructive role is `.danger()` (there is
+  no `.destructive()`).
+  - **Icon-only dismiss / chrome** (tab ×, remove from recent, terminal × /
+    minimize, sidebar toggle, tree New File/Folder): Kit's default `.ghost()`
+    — no danger tint on the ×.
+  - **Choice dialogs** (`open_choice_dialog`): Cancel · secondary · primary —
+    Cancel `.outline()`; discard secondary ("Don't Save", "Quit Without
+    Saving") `.danger().outline()`; safe primary ("Save", "Save All")
+    `.primary()`.
+  - **Toasts:** `components::notify_success` / `notify_error` — custom
+    content row (`h_flex` + `items_center`) because Kit's typed
+    `Notification::success`/`error` absolutely places the icon at
+    `top: 18px`, which does not vertically centre with one-line text.
 - **Modal dialogs** sit in the middle of the window — wrap every
   `open_dialog` with `components::center_dialog`. Context menus stay
   click-anchored.
@@ -69,6 +78,7 @@ section here.
 | Component | Use for |
 | --- | --- |
 | `center_dialog(dialog, window)` | Wrap every `open_dialog` builder so the modal sits in the middle of the window (GPUI Kit defaults to top ~10%). Not for context menus. |
+| `notify_success` / `notify_error` | One-line toasts with icon + text vertically centred (workaround for Kit typed-notification icon layout). |
 
 Add a row here whenever a new shared component is created.
 
