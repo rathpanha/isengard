@@ -63,6 +63,7 @@ many to list; `cargo tree` is the full graph).
 | `alacritty_terminal` | VTE / terminal grid state for the integrated panel |
 | `portable-pty` | PTY + default shell spawn (wezterm) |
 | `open` | Open terminal URLs in the system browser |
+| `trash` | Move tree Delete to the OS Trash / Recycle Bin |
 | `parking_lot` / `flume` / `ropey` | Sync + channels for the adapted terminal view |
 | `cc` | Build pin for tree-sitter/SQL + Windows resource embed |
 | `embed-resource` | Windows `.exe` icon (build) |

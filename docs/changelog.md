@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Removed Delete Permanent; tree Delete is Trash-only.
+- **2026-10-08** — Tree click keeps Tree focus (preview open no longer steals
+  it); Delete / F2 work after selecting a file.
+- **2026-10-08** — File tree Delete → OS Trash.
 - **2026-10-08** — File tree rename is inline in the row (no modal); New
   File/Folder still use a name dialog.
 - **2026-10-08** — File tree: context menu New File/Folder (dirs), Rename /

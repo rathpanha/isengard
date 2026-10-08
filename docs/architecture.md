@@ -152,9 +152,9 @@ src/
   `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
   the tree's context menu. Same pattern for `RenamePath` / `DeletePath` /
-  `NewFileIn` / `NewFolderIn`. Selection shortcuts
-  `RenameSelectedTreeItem` / `DeleteSelectedTreeItem` bind only in the Kit
-  `Tree` key context (`f2`, `delete`, `backspace`).
+  `NewFileIn` / `NewFolderIn`. Selection shortcuts bind only in the Kit
+  `Tree` key context: `f2` rename; `delete` / `backspace` → OS Trash
+  (`trash` crate).
 - **File tree**: `FsNode` is the source of truth. Unloaded/empty directories get
   a disabled placeholder child (`"Loading…"` / `"(empty)"`) because GPUI Kit's
   `TreeItem::is_folder()` is just "has children". On `TreeEvent::Expanded` the

@@ -191,6 +191,7 @@ impl FileTreePanel {
         let theme = cx.theme();
         let multi_root = self.roots.len() > 1;
         let on_open_file = Rc::new(on_open_file);
+        let tree_state = self.state.clone();
         let rename_path = rename.map(|(p, _)| p.to_path_buf());
         let rename_input = rename.map(|(_, input)| input.clone());
         let guide_masks = Rc::new(compute_guide_masks(self.state.read(cx)));
@@ -227,6 +228,7 @@ impl FileTreePanel {
                         )
                     });
                     let on_open_file = on_open_file.clone();
+                    let tree_state = tree_state.clone();
                     let is_file = !entry.is_folder() && !is_placeholder;
                     let is_renaming = rename_path.as_ref().is_some_and(|p| p == &path);
                     let rename_input = rename_input.clone().filter(|_| is_renaming);
@@ -246,6 +248,19 @@ impl FileTreePanel {
                             item.cursor_pointer()
                         })
                         .rounded(cx.theme().radius)
+                        // Kit selects on mouse-down but does not focus the Tree;
+                        // without this, Delete/F2 stay bound to the editor.
+                        .when(!is_renaming && !entry.is_disabled(), |item| {
+                            item.on_mouse_down(MouseButton::Left, {
+                                let tree_state = tree_state.clone();
+                                move |_, window, cx| {
+                                    tree_state.update(cx, |state, cx| state.focus(window, cx));
+                                }
+                            })
+                            .on_mouse_down(MouseButton::Right, move |_, window, cx| {
+                                tree_state.update(cx, |state, cx| state.focus(window, cx));
+                            })
+                        })
                         .child(
                             h_flex()
                                 .w_full()
@@ -327,7 +342,7 @@ impl FileTreePanel {
                     }
                     menu = menu
                         .menu("Rename", Box::new(RenamePath(path.clone())))
-                        .menu("Delete…", Box::new(DeletePath(path.clone())));
+                        .menu("Delete", Box::new(DeletePath(path.clone())));
                     if is_workspace_root {
                         menu = menu.separator().menu(
                             "Remove Folder from Workspace",

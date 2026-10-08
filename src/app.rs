@@ -64,7 +64,7 @@ actions!(
         TerminalTabsChanged,
         /// Rename the tree selection (F2 while Tree focused).
         RenameSelectedTreeItem,
-        /// Delete the tree selection (Delete/Backspace while Tree focused).
+        /// Move the tree selection to Trash (Delete/Backspace while Tree focused).
         DeleteSelectedTreeItem,
         About,
         Quit,
@@ -89,7 +89,7 @@ pub struct RemoveWorkspaceFolder(pub PathBuf);
 #[action(namespace = isengard, no_json)]
 pub struct RenamePath(pub PathBuf);
 
-/// Deletes a tree path (context menu).
+/// Moves a tree path to the OS Trash (context menu).
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]
 pub struct DeletePath(pub PathBuf);
@@ -839,6 +839,9 @@ impl IsengardApp {
     /// Opens `path` in a tab. `permanent == false` is a preview tab (italic);
     /// another preview open replaces it. Double-click / edit / `permanent`
     /// pins the tab.
+    ///
+    /// Preview opens keep keyboard focus on the file tree so Delete / F2 still
+    /// work; permanent opens focus the editor.
     fn open_file(
         &mut self,
         path: &Path,
@@ -850,7 +853,12 @@ impl IsengardApp {
             if permanent {
                 self.pin_tab(ix, cx);
             }
-            self.activate_tab(ix, window, cx);
+            if self.tabs.activate(ix) {
+                self.file_tree.select_path(path, cx);
+                self.persist_session(cx);
+                cx.notify();
+            }
+            self.focus_after_tree_open(permanent, window, cx);
             return;
         }
 
@@ -874,7 +882,7 @@ impl IsengardApp {
                 untitled_save_dir: None,
             });
             self.file_tree.select_path(path, cx);
-            self.focus_handle.focus(window, cx);
+            self.focus_after_tree_open(permanent, window, cx);
             self.persist_session(cx);
             cx.notify();
             return;
@@ -930,9 +938,28 @@ impl IsengardApp {
             untitled_save_dir: None,
         });
         self.file_tree.select_path(path, cx);
-        self.focus_active_editor(window, cx);
+        self.focus_after_tree_open(permanent, window, cx);
         self.persist_session(cx);
         cx.notify();
+    }
+
+    fn focus_file_tree(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.file_tree
+            .state()
+            .update(cx, |state, cx| state.focus(window, cx));
+    }
+
+    fn focus_after_tree_open(
+        &self,
+        permanent: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if permanent {
+            self.focus_active_editor(window, cx);
+        } else {
+            self.focus_file_tree(window, cx);
+        }
     }
 
     fn pin_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -1369,57 +1396,6 @@ impl IsengardApp {
         });
     }
 
-    fn open_delete_confirm(
-        &self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let name = document::file_name(&path);
-        let kind = if path.is_dir() { "folder" } else { "file" };
-        let dirty = self
-            .tabs
-            .iter()
-            .any(|t| t.is_modified && (t.path == path || t.path.starts_with(&path)));
-        let mut message = format!(
-            "Delete the {kind} \"{name}\"? This cannot be undone."
-        );
-        if dirty {
-            message.push_str(" Unsaved changes in open tabs will be lost.");
-        }
-        let app = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, window, _| {
-            let app = app.clone();
-            let path_delete = path.clone();
-            center_dialog(
-                dialog.title("Delete").child(message.clone()).footer(
-                    DialogFooter::new()
-                        .gap_2()
-                        .child(
-                            Button::new("delete-cancel")
-                                .cursor_pointer()
-                                .outline()
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("delete-confirm")
-                                .cursor_pointer()
-                                .outline()
-                                .label("Delete")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = app.update(cx, |this, cx| {
-                                        this.delete_path(&path_delete, window, cx);
-                                    });
-                                }),
-                        ),
-                ),
-                window,
-            )
-        });
-    }
-
     fn begin_inline_rename(
         &mut self,
         path: PathBuf,
@@ -1656,13 +1632,8 @@ impl IsengardApp {
         if !open.is_empty() {
             self.close_tabs(&open, window, cx);
         }
-        let result = if path.is_dir() {
-            std::fs::remove_dir_all(path)
-        } else {
-            std::fs::remove_file(path)
-        };
-        if let Err(err) = result {
-            return notify_error(format!("Delete failed: {err}"), window, cx);
+        if let Err(err) = trash::delete(path) {
+            return notify_error(format!("Move to Trash failed: {err}"), window, cx);
         }
         let was_root = self.workspace.remove_folder(path);
         if was_root {
@@ -1671,6 +1642,7 @@ impl IsengardApp {
         } else if let Some(parent) = path.parent() {
             self.file_tree.refresh_dir(parent, cx);
         }
+        window.push_notification("Moved to Trash", cx);
         self.persist_session(cx);
         cx.notify();
     }
@@ -2066,7 +2038,7 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_delete_confirm(action.0.clone(), window, cx);
+        self.delete_path(&action.0, window, cx);
     }
 
     fn on_new_file_in(
@@ -2105,7 +2077,7 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(path) = self.file_tree.selected_path(cx) {
-            self.open_delete_confirm(path, window, cx);
+            self.delete_path(&path, window, cx);
         }
     }
 

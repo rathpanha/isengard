@@ -87,9 +87,10 @@ Add a row here whenever a new shared component is created.
   `img(path)` pane (no text editor). Status bar shows "Image". SVG is not in
   this list — it uses Edit/Preview above.
 - **Preview tabs:** single-click a file in the tree → italic preview tab
-  (only one; the next preview replaces it unless dirty, then it pins).
-  Double-click the file or the tab, or edit the buffer → permanent. File >
-  Open File / CLI opens permanent.
+  (only one; the next preview replaces it unless dirty, then it pins) and
+  **keeps Tree focus** so Delete / F2 still hit the selection. Double-click
+  the file or the tab, or edit the buffer → permanent and focus moves to the
+  editor. File > Open File / CLI opens permanent (editor focused).
 - **Tab context menu:** right-click a tab → Close, Close Others (disabled when
   only one tab), Close All. Dirty tabs get one Save All / Don't Save dialog
   for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not
@@ -165,13 +166,13 @@ Add a row here whenever a new shared component is created.
   - Multi-root tree: each root is a top-level item; a root missing on disk is
     shown disabled as `<name> (missing)` with a folder icon.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`):
-    files — Rename, Delete…; folders — New File…, New Folder…, Rename,
-    Delete…; multi-root roots also get "Remove Folder from Workspace".
-    With the tree focused (`Tree` key context): `F2` renames the selection,
-    `Delete` / `Backspace` deletes it (confirm dialog; permanent).
-    **Rename** is inline in the tree row (Kit `Input` replaces the label;
-    Enter/blur commits, Escape cancels). New File / New Folder still use a
-    centred name dialog.
+    files — Rename, Delete; folders — New File…, New Folder…, Rename,
+    Delete; multi-root roots also get "Remove Folder from Workspace". With
+    the tree focused (`Tree` key context): `F2` renames; `Delete` /
+    `Backspace` moves to the OS Trash (toast, no confirm). **Rename** is
+    inline in the tree row (Kit `Input` replaces the label; Enter/blur
+    commits, Escape cancels). New File / New Folder still use a centred
+    name dialog.
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
   (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps
