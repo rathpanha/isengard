@@ -80,6 +80,37 @@ pub fn unique_new_file_path(dir: &Path) -> PathBuf {
     }
 }
 
+/// Next free `New Folder` / `New Folder 1` / … under `dir`.
+pub fn unique_new_folder_path(dir: &Path) -> PathBuf {
+    let first = dir.join("New Folder");
+    if !first.exists() {
+        return first;
+    }
+    let mut n = 1u32;
+    loop {
+        let path = dir.join(format!("New Folder {n}"));
+        if !path.exists() {
+            return path;
+        }
+        n += 1;
+    }
+}
+
+/// Validates a single path segment for New File / New Folder / Rename.
+pub fn validate_entry_name(name: &str) -> Result<&str, &'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Name is required.");
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err("Name cannot contain path separators.");
+    }
+    if name == "." || name == ".." {
+        return Err("Invalid name.");
+    }
+    Ok(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +160,22 @@ mod tests {
         assert_eq!(unique_new_file_path(dir), dir.join("untitled1.txt"));
         std::fs::write(dir.join("untitled1.txt"), "").unwrap();
         assert_eq!(unique_new_file_path(dir), dir.join("untitled2.txt"));
+    }
+
+    #[test]
+    fn unique_new_folder_skips_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        assert_eq!(unique_new_folder_path(dir), dir.join("New Folder"));
+        std::fs::create_dir(dir.join("New Folder")).unwrap();
+        assert_eq!(unique_new_folder_path(dir), dir.join("New Folder 1"));
+    }
+
+    #[test]
+    fn validates_entry_names() {
+        assert_eq!(validate_entry_name("  app.rs  ").unwrap(), "app.rs");
+        assert!(validate_entry_name("").is_err());
+        assert!(validate_entry_name("a/b").is_err());
+        assert!(validate_entry_name("..").is_err());
     }
 }

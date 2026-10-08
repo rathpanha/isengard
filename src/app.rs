@@ -7,7 +7,7 @@ use gpui_kit::component::{
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
-    input::{Editor, EditorState, InputEvent, TabSize},
+    input::{Editor, EditorState, Input, InputEvent, InputState, TabSize},
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
     notification::Notification,
@@ -62,15 +62,47 @@ actions!(
         NewTerminal,
         /// Fired by the terminal panel after tabs change (close / need persist).
         TerminalTabsChanged,
+        /// Rename the tree selection (F2 while Tree focused).
+        RenameSelectedTreeItem,
+        /// Delete the tree selection (Delete/Backspace while Tree focused).
+        DeleteSelectedTreeItem,
         About,
         Quit,
     ]
 );
 
+/// Active inline rename in the file tree (Enter/Blur commits, Escape cancels).
+struct TreeRenameEdit {
+    path: PathBuf,
+    input: Entity<InputState>,
+    _events: Subscription,
+    _keys: Subscription,
+}
+
 /// Removes one root folder from the workspace (tree context menu on a root).
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]
 pub struct RemoveWorkspaceFolder(pub PathBuf);
+
+/// Renames a tree path (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct RenamePath(pub PathBuf);
+
+/// Deletes a tree path (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct DeletePath(pub PathBuf);
+
+/// Creates a new file inside this directory (tree context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct NewFileIn(pub PathBuf);
+
+/// Creates a new folder inside this directory (tree context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct NewFolderIn(pub PathBuf);
 
 /// Closes the tab for this path (tab context menu; may not be the active tab).
 #[derive(Action, Clone, PartialEq, Deserialize)]
@@ -202,6 +234,64 @@ impl Render for TerminalCwdPicker {
     }
 }
 
+/// Single-line name prompt for New File / New Folder / Rename in the tree.
+struct NamePrompt {
+    input: Entity<InputState>,
+    app: WeakEntity<IsengardApp>,
+    on_confirm: Rc<dyn Fn(&mut IsengardApp, String, &mut Window, &mut Context<IsengardApp>)>,
+    _keys: Subscription,
+}
+
+impl NamePrompt {
+    fn new(
+        input: Entity<InputState>,
+        app: WeakEntity<IsengardApp>,
+        on_confirm: Rc<dyn Fn(&mut IsengardApp, String, &mut Window, &mut Context<IsengardApp>)>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let entity = cx.weak_entity();
+        // ponytail: dialog focus trap eats on_key_down; intercept until Kit
+        // exposes the dialog focus handle to content.
+        let _keys = cx.intercept_keystrokes(move |event, window, cx| {
+            let Some(entity) = entity.upgrade() else {
+                return;
+            };
+            match event.keystroke.key.as_str() {
+                "enter" => {
+                    entity.update(cx, |this, cx| this.confirm(window, cx));
+                    cx.stop_propagation();
+                }
+                "escape" => {
+                    window.close_dialog(cx);
+                    cx.stop_propagation();
+                }
+                _ => {}
+            }
+        });
+        Self {
+            input,
+            app,
+            on_confirm,
+            _keys,
+        }
+    }
+
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.input.read(cx).value().to_string();
+        window.close_dialog(cx);
+        let on_confirm = self.on_confirm.clone();
+        _ = self.app.update(cx, |this, cx| {
+            on_confirm(this, name, window, cx);
+        });
+    }
+}
+
+impl Render for NamePrompt {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Input::new(&self.input).id("entry-name").w_full()
+    }
+}
+
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -220,6 +310,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
+        // Tree selection only — do not steal Delete/F2 from the editor.
+        KeyBinding::new("f2", RenameSelectedTreeItem, Some("Tree")),
+        KeyBinding::new("delete", DeleteSelectedTreeItem, Some("Tree")),
+        KeyBinding::new("backspace", DeleteSelectedTreeItem, Some("Tree")),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     // Fallback when the app view is not on the focus path (e.g. while a dialog is open).
@@ -303,6 +397,8 @@ pub struct IsengardApp {
     allow_quit: bool,
     /// Suppresses session writes while batch-restoring tabs.
     restoring_session: bool,
+    /// Inline rename field over a tree row (not a modal).
+    tree_rename: Option<TreeRenameEdit>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -348,6 +444,7 @@ impl IsengardApp {
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
             allow_quit: false,
             restoring_session: false,
+            tree_rename: None,
             _subscriptions: vec![tree_subscription],
         };
 
@@ -1223,6 +1320,396 @@ impl IsengardApp {
         );
     }
 
+    /// Name prompt for New File / New Folder / Rename (Enter confirms, Escape cancels).
+    fn open_name_dialog(
+        &self,
+        title: impl Into<SharedString>,
+        initial: impl Into<SharedString>,
+        confirm_label: &'static str,
+        on_confirm: impl Fn(&mut Self, String, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let app = cx.entity().downgrade();
+        let initial = initial.into();
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
+        input.update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.select_all(window, cx);
+        });
+        let prompt = cx.new(|cx| {
+            NamePrompt::new(input.clone(), app, Rc::new(on_confirm), cx)
+        });
+        let title = title.into();
+        window.open_dialog(cx, move |dialog, window, _| {
+            let prompt_ok = prompt.clone();
+            center_dialog(
+                dialog.title(title.clone()).child(prompt.clone()).footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("name-dialog-cancel")
+                                .cursor_pointer()
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("name-dialog-ok")
+                                .cursor_pointer()
+                                .primary()
+                                .label(confirm_label)
+                                .on_click(move |_, window, cx| {
+                                    prompt_ok.update(cx, |prompt, cx| prompt.confirm(window, cx));
+                                }),
+                        ),
+                ),
+                window,
+            )
+        });
+    }
+
+    fn open_delete_confirm(
+        &self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = document::file_name(&path);
+        let kind = if path.is_dir() { "folder" } else { "file" };
+        let dirty = self
+            .tabs
+            .iter()
+            .any(|t| t.is_modified && (t.path == path || t.path.starts_with(&path)));
+        let mut message = format!(
+            "Delete the {kind} \"{name}\"? This cannot be undone."
+        );
+        if dirty {
+            message.push_str(" Unsaved changes in open tabs will be lost.");
+        }
+        let app = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, window, _| {
+            let app = app.clone();
+            let path_delete = path.clone();
+            center_dialog(
+                dialog.title("Delete").child(message.clone()).footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("delete-cancel")
+                                .cursor_pointer()
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("delete-confirm")
+                                .cursor_pointer()
+                                .outline()
+                                .label("Delete")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = app.update(cx, |this, cx| {
+                                        this.delete_path(&path_delete, window, cx);
+                                    });
+                                }),
+                        ),
+                ),
+                window,
+            )
+        });
+    }
+
+    fn begin_inline_rename(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.path_in_workspace(&path) {
+            return;
+        }
+        // Drop any in-progress edit first (drops Escape intercept).
+        self.tree_rename = None;
+        self.file_tree.select_path(&path, cx);
+        let current = document::file_name(&path);
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(current));
+        input.update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.select_all(window, cx);
+        });
+        let events = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+            match event {
+                InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                    this.commit_inline_rename(window, cx);
+                }
+                _ => {}
+            }
+        });
+        let weak = cx.weak_entity();
+        let keys = cx.intercept_keystrokes(move |event, window, cx| {
+            if event.keystroke.key.as_str() != "escape" {
+                return;
+            }
+            let Some(entity) = weak.upgrade() else {
+                return;
+            };
+            entity.update(cx, |this, cx| {
+                if this.tree_rename.is_some() {
+                    this.cancel_inline_rename(window, cx);
+                    cx.stop_propagation();
+                }
+            });
+        });
+        self.tree_rename = Some(TreeRenameEdit {
+            path,
+            input,
+            _events: events,
+            _keys: keys,
+        });
+        cx.notify();
+    }
+
+    fn commit_inline_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(edit) = self.tree_rename.take() else {
+            return;
+        };
+        let name = edit.input.read(cx).value().to_string();
+        if let Err(err) = self.rename_path(&edit.path, &name, window, cx) {
+            notify_error(err, window, cx);
+            // Keep the same field so Escape-intercept / Enter still work.
+            edit.input.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.select_all(window, cx);
+            });
+            self.tree_rename = Some(edit);
+            cx.notify();
+            return;
+        }
+        self.file_tree
+            .state()
+            .update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
+    fn cancel_inline_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tree_rename.take().is_none() {
+            return;
+        }
+        self.file_tree
+            .state()
+            .update(cx, |state, cx| state.focus(window, cx));
+        cx.notify();
+    }
+
+    fn prompt_new_file_in(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if !dir.is_dir() || !self.path_in_workspace(&dir) {
+            return;
+        }
+        let suggested = document::unique_new_file_path(&dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled.txt".into());
+        let dir_for_confirm = dir;
+        self.open_name_dialog(
+            "New File",
+            suggested,
+            "Create",
+            move |this, name, window, cx| {
+                this.create_file_in(&dir_for_confirm, &name, window, cx);
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn prompt_new_folder_in(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if !dir.is_dir() || !self.path_in_workspace(&dir) {
+            return;
+        }
+        let suggested = document::unique_new_folder_path(&dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "New Folder".into());
+        let dir_for_confirm = dir;
+        self.open_name_dialog(
+            "New Folder",
+            suggested,
+            "Create",
+            move |this, name, window, cx| {
+                this.create_folder_in(&dir_for_confirm, &name, window, cx);
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn path_in_workspace(&self, path: &Path) -> bool {
+        self.workspace
+            .folders()
+            .iter()
+            .any(|root| path == root.as_path() || path.starts_with(root))
+    }
+
+    fn create_file_in(
+        &mut self,
+        dir: &Path,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = match document::validate_entry_name(name) {
+            Ok(name) => name,
+            Err(err) => return notify_error(err.into(), window, cx),
+        };
+        let path = dir.join(name);
+        if path.exists() {
+            return notify_error(
+                format!("\"{name}\" already exists."),
+                window,
+                cx,
+            );
+        }
+        if let Err(err) = std::fs::write(&path, "") {
+            return notify_error(format!("Could not create file: {err}"), window, cx);
+        }
+        self.file_tree.refresh_dir(dir, cx);
+        self.file_tree.select_path(&path, cx);
+        self.open_file(&path, true, window, cx);
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    fn create_folder_in(
+        &mut self,
+        dir: &Path,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = match document::validate_entry_name(name) {
+            Ok(name) => name,
+            Err(err) => return notify_error(err.into(), window, cx),
+        };
+        let path = dir.join(name);
+        if path.exists() {
+            return notify_error(
+                format!("\"{name}\" already exists."),
+                window,
+                cx,
+            );
+        }
+        if let Err(err) = std::fs::create_dir(&path) {
+            return notify_error(format!("Could not create folder: {err}"), window, cx);
+        }
+        self.file_tree.refresh_dir(dir, cx);
+        self.file_tree.select_path(&path, cx);
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    fn rename_path(
+        &mut self,
+        path: &Path,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if !self.path_in_workspace(path) {
+            return Err("Path is not in the workspace.".into());
+        }
+        let name = document::validate_entry_name(name).map_err(|e| e.to_string())?;
+        let Some(parent) = path.parent() else {
+            return Err("Cannot rename this path.".into());
+        };
+        let new_path = parent.join(name);
+        if new_path == path {
+            return Ok(());
+        }
+        if new_path.exists() {
+            return Err(format!("\"{name}\" already exists."));
+        }
+        std::fs::rename(path, &new_path).map_err(|err| format!("Rename failed: {err}"))?;
+        self.remap_open_paths(path, &new_path, cx);
+        if self.workspace.replace_folder(path, &new_path) {
+            self.persist_workspace(window, cx);
+            self.workspace_changed(window, cx);
+        } else {
+            self.file_tree.refresh_dir(parent, cx);
+        }
+        self.file_tree.select_path(&new_path, cx);
+        self.persist_session(cx);
+        cx.notify();
+        Ok(())
+    }
+
+    fn delete_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.path_in_workspace(path) {
+            return;
+        }
+        let open: Vec<PathBuf> = self
+            .tabs
+            .iter()
+            .filter(|t| t.path == path || t.path.starts_with(path))
+            .map(|t| t.path.clone())
+            .collect();
+        if !open.is_empty() {
+            self.close_tabs(&open, window, cx);
+        }
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        if let Err(err) = result {
+            return notify_error(format!("Delete failed: {err}"), window, cx);
+        }
+        let was_root = self.workspace.remove_folder(path);
+        if was_root {
+            self.persist_workspace(window, cx);
+            self.workspace_changed(window, cx);
+        } else if let Some(parent) = path.parent() {
+            self.file_tree.refresh_dir(parent, cx);
+        }
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    /// Retargets open tabs whose path equals `from` or lives under it.
+    fn remap_open_paths(&mut self, from: &Path, to: &Path, cx: &mut Context<Self>) {
+        let indexes: Vec<usize> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.path == from || t.path.starts_with(from))
+            .map(|(ix, _)| ix)
+            .collect();
+        for ix in indexes {
+            let Some(tab) = self.tabs.get_mut(ix) else {
+                continue;
+            };
+            let new_path = if tab.path == from {
+                to.to_path_buf()
+            } else if let Ok(rest) = tab.path.strip_prefix(from) {
+                to.join(rest)
+            } else {
+                continue;
+            };
+            tab.path = new_path.clone();
+            if let TabBody::Text {
+                language, state, ..
+            } = &mut tab.body
+            {
+                let lang = Language::from_path(&new_path);
+                *language = lang;
+                let name = lang.highlighter_name();
+                state.update(cx, |state, cx| {
+                    state.set_highlighter(name, cx);
+                });
+            }
+        }
+    }
+
     /// Returns `true` if the app may close now; otherwise asks the user first.
     fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.allow_quit || !self.has_unsaved() {
@@ -1561,6 +2048,64 @@ impl IsengardApp {
             self.persist_workspace(window, cx);
             self.workspace_changed(window, cx);
             self.persist_session(cx);
+        }
+    }
+
+    fn on_rename_path(
+        &mut self,
+        action: &RenamePath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.begin_inline_rename(action.0.clone(), window, cx);
+    }
+
+    fn on_delete_path(
+        &mut self,
+        action: &DeletePath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_delete_confirm(action.0.clone(), window, cx);
+    }
+
+    fn on_new_file_in(
+        &mut self,
+        action: &NewFileIn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_new_file_in(action.0.clone(), window, cx);
+    }
+
+    fn on_new_folder_in(
+        &mut self,
+        action: &NewFolderIn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_new_folder_in(action.0.clone(), window, cx);
+    }
+
+    fn on_rename_selected_tree_item(
+        &mut self,
+        _: &RenameSelectedTreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.file_tree.selected_path(cx) {
+            self.begin_inline_rename(path, window, cx);
+        }
+    }
+
+    fn on_delete_selected_tree_item(
+        &mut self,
+        _: &DeleteSelectedTreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.file_tree.selected_path(cx) {
+            self.open_delete_confirm(path, window, cx);
         }
     }
 
@@ -2310,7 +2855,12 @@ impl Render for IsengardApp {
             welcome::render(self, cx).into_any_element()
         } else if self.file_tree.is_open() && self.sidebar_visible {
             let app = cx.entity().downgrade();
+            let rename = self
+                .tree_rename
+                .as_ref()
+                .map(|edit| (edit.path.as_path(), &edit.input));
             let tree = self.file_tree.render(
+                rename,
                 move |path, permanent, window, cx| {
                     _ = app.update(cx, |this, cx| {
                         this.open_file(&path, permanent, window, cx)
@@ -2357,6 +2907,12 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_add_folder_to_workspace))
             .on_action(cx.listener(Self::on_save_workspace_as))
             .on_action(cx.listener(Self::on_remove_workspace_folder))
+            .on_action(cx.listener(Self::on_rename_path))
+            .on_action(cx.listener(Self::on_delete_path))
+            .on_action(cx.listener(Self::on_new_file_in))
+            .on_action(cx.listener(Self::on_new_folder_in))
+            .on_action(cx.listener(Self::on_rename_selected_tree_item))
+            .on_action(cx.listener(Self::on_delete_selected_tree_item))
             .on_action(cx.listener(Self::on_close_workspace))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))

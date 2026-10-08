@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — File tree rename is inline in the row (no modal); New
+  File/Folder still use a name dialog.
+- **2026-10-08** — File tree: context menu New File/Folder (dirs), Rename /
+  Delete; `F2` / `Delete`/`Backspace` on tree selection.
 - **2026-10-08** — Terminal selection: `write_to_primary` only on
   linux/freebsd so macOS/`cargo run` compiles again.
 - **2026-10-07** — New File in workspace stays in-memory until Save; Linux

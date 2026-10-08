@@ -86,6 +86,18 @@ impl Workspace {
         self.folders.len() != before
     }
 
+    /// Renames a root folder path in place (e.g. after a disk rename).
+    pub fn replace_folder(&mut self, old: &Path, new: &Path) -> bool {
+        if old == new || self.folders.iter().any(|f| f == new) {
+            return false;
+        }
+        if let Some(folder) = self.folders.iter_mut().find(|f| *f == old) {
+            *folder = new.to_path_buf();
+            return true;
+        }
+        false
+    }
+
     /// Workspace file stem, "Untitled" for an unsaved multi-root workspace,
     /// otherwise the single folder's name.
     pub fn display_name(&self) -> String {
@@ -312,6 +324,15 @@ mod tests {
         named.file = Some(PathBuf::from("/code/demo.isengard-workspace"));
         assert_eq!(named.title(), "demo (Workspace)");
         assert_eq!(Workspace::default().title(), "");
+    }
+
+    #[test]
+    fn replace_folder_updates_root() {
+        let mut w = ws(&["/code/a", "/code/b"]);
+        assert!(w.replace_folder(Path::new("/code/a"), Path::new("/code/a2")));
+        assert_eq!(w.folders(), [PathBuf::from("/code/a2"), PathBuf::from("/code/b")]);
+        assert!(!w.replace_folder(Path::new("/code/missing"), Path::new("/code/x")));
+        assert!(!w.replace_folder(Path::new("/code/b"), Path::new("/code/a2")));
     }
 
     #[test]

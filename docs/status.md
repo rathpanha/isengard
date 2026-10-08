@@ -18,6 +18,11 @@ tabs, highlighted editor, status bar):
 - **File tree:** Kit `Tree` while a workspace is open; lazy load; dirs first,
   case-insensitive; hides `.git` / `.DS_Store`; full Material Icon Theme;
   gitignored rows shown muted; indent guides (design owns the pixel rules).
+  Context menu: files Rename / Delete; folders New File / New Folder /
+  Rename / Delete (multi-root roots also Remove Folder from Workspace).
+  Rename is inline in the row (Enter/blur commit, Escape cancel). With the
+  tree focused: `F2` rename, `Delete` / `Backspace` delete (confirm first;
+  permanent delete, not trash).
 - **Tabs:** Kit `Tab`s in `h_flex` (not `TabBar` — needed for per-tab
   `ContextMenu`); Material file icon + name as tab children; Close / Close
   Others / Close All; preview tabs; dirty mark; Markdown/SVG Edit–Preview;
@@ -62,12 +67,14 @@ shortcuts. Check these first if something is off.
   feature and `#[gpui_kit::test]` — worth adding for tab close, dialogs, tree.
 - Modified flag is set on any edit and not cleared by undoing back to the saved
   text.
-- No Save As / rename / delete; no file watching; no "Open Recent"
-  in the native menu (welcome screen only). Gitignore rules refresh on folder
-  open / expand, not on every save of `.gitignore`. `.env` / `.gitignore` /
-  lockfiles / Dockerfile use Bash/JSON/TOML aliases (no dedicated Dockerfile
-  grammar compatible with GPUI's tree-sitter); GraphQL highlights are patched
-  in `editor::highlights` because GPUI Kit ships an empty query.
+- No Save As; no file watching; no "Open Recent" in the native menu
+  (welcome screen only). Tree New File creates on disk (distinct from menu
+  New File / `⌘N`, which stays untitled until Save). Delete is permanent
+  (no Trash). Gitignore rules refresh on folder open / expand, not on every
+  save of `.gitignore`. `.env` / `.gitignore` / lockfiles / Dockerfile use
+  Bash/JSON/TOML aliases (no dedicated Dockerfile grammar compatible with
+  GPUI's tree-sitter); GraphQL highlights are patched in `editor::highlights`
+  because GPUI Kit ships an empty query.
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
   root context menu, switch dialogs. Quitting with an untitled multi-root
   workspace does not offer to save it (only switching does). Workspace

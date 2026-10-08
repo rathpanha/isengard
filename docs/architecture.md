@@ -151,14 +151,21 @@ src/
   `open_choice_dialog` (Cancel / secondary / primary).
   `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
-  the tree's context menu.
+  the tree's context menu. Same pattern for `RenamePath` / `DeletePath` /
+  `NewFileIn` / `NewFolderIn`. Selection shortcuts
+  `RenameSelectedTreeItem` / `DeleteSelectedTreeItem` bind only in the Kit
+  `Tree` key context (`f2`, `delete`, `backspace`).
 - **File tree**: `FsNode` is the source of truth. Unloaded/empty directories get
   a disabled placeholder child (`"Loading…"` / `"(empty)"`) because GPUI Kit's
   `TreeItem::is_folder()` is just "has children". On `TreeEvent::Expanded` the
   node loads its children and the `TreeItem`s are rebuilt via `set_items`
   (selection is restored by id). Tree item ids are absolute paths. Row icons
   come from `file_tree::tree_icon` (full Material Icon Theme via `img()` +
-  `material-icons.json`), not Lucide.
+  `material-icons.json`), not Lucide.   Create/rename/delete refresh the parent
+  dir (or `workspace_changed` when a root moves/vanishes); open tabs under a
+  renamed path are remapped. Inline rename lives on
+  `IsengardApp::tree_rename` (`InputState` + subscriptions); the tree render
+  swaps that row's label for the input.
 - **Terminal:** `IsengardApp::terminal` is an `Entity<TerminalPanel>` (PTY
   session lazy on first show). When the tree is open, `v_resizable("editor-term-split")`
   is the right child of `main-split` (under editor only; tree full height).

@@ -3,13 +3,16 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, h_flex,
+    ActiveTheme as _, Sizable as _, h_flex,
+    input::{Input, InputState},
     list::ListItem,
     tree::{TreeEvent, TreeItem, TreeState, tree},
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
-use crate::app::RemoveWorkspaceFolder;
+use crate::app::{
+    DeletePath, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
+};
 use crate::file_tree::{FsNode, GitIgnoreIndex, compute_guide_masks, tree_icon};
 
 /// Separates a directory path from the suffix of its placeholder child's id.
@@ -178,14 +181,18 @@ impl FileTreePanel {
 
     /// Renders the file tree.
     /// `on_open_file(path, permanent, …)` — `permanent` is true on double-click.
+    /// `rename` — when set, that row shows an inline name `Input` instead of the label.
     pub fn render(
         &self,
+        rename: Option<(&Path, &Entity<InputState>)>,
         on_open_file: impl Fn(PathBuf, bool, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> AnyElement {
         let theme = cx.theme();
         let multi_root = self.roots.len() > 1;
         let on_open_file = Rc::new(on_open_file);
+        let rename_path = rename.map(|(p, _)| p.to_path_buf());
+        let rename_input = rename.map(|(_, input)| input.clone());
         let guide_masks = Rc::new(compute_guide_masks(self.state.read(cx)));
         let ignored_paths = Rc::new({
             let state = self.state.read(cx);
@@ -221,6 +228,8 @@ impl FileTreePanel {
                     });
                     let on_open_file = on_open_file.clone();
                     let is_file = !entry.is_folder() && !is_placeholder;
+                    let is_renaming = rename_path.as_ref().is_some_and(|p| p == &path);
+                    let rename_input = rename_input.clone().filter(|_| is_renaming);
                     let guides = guide_masks.get(ix).cloned().unwrap_or_default();
                     let guide_color = cx.theme().sidebar_border;
                     let muted = cx.theme().muted_foreground;
@@ -233,7 +242,9 @@ impl FileTreePanel {
                         // row content instead so hover is full-bleed.
                         .py_0()
                         .px_0()
-                        .when(!entry.is_disabled(), |item| item.cursor_pointer())
+                        .when(!entry.is_disabled() && !is_renaming, |item| {
+                            item.cursor_pointer()
+                        })
                         .rounded(cx.theme().radius)
                         .child(
                             h_flex()
@@ -268,38 +279,62 @@ impl FileTreePanel {
                                         .flex_1()
                                         .overflow_hidden()
                                         .py_0p5()
-                                        .when(git_ignored, |this| this.opacity(0.6))
+                                        .when(git_ignored && !is_renaming, |this| this.opacity(0.6))
                                         .children(icon)
                                         .child(
                                             div()
                                                 .min_w_0()
                                                 .flex_1()
                                                 .overflow_hidden()
-                                                .truncate()
+                                                .when(!is_renaming, |this| this.truncate())
                                                 .when(is_placeholder, |this| {
                                                     this.text_color(muted)
                                                 })
-                                                .child(item.label.clone()),
+                                                .map(|this| match rename_input {
+                                                    Some(input) => this.child(
+                                                        Input::new(&input)
+                                                            .id("tree-rename-input")
+                                                            .xsmall()
+                                                            .w_full(),
+                                                    ),
+                                                    None => this.child(item.label.clone()),
+                                                }),
                                         ),
                                 ),
                         )
-                        .on_click(move |ev: &ClickEvent, window, cx| {
-                            if is_file {
-                                on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
-                            }
+                        .when(!is_renaming, |item| {
+                            item.on_click(move |ev: &ClickEvent, window, cx| {
+                                if is_file {
+                                    on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
+                                }
+                            })
                         })
                 })
-                .when(multi_root, |tree| {
-                    tree.context_menu(|_, entry, menu, _, _| {
-                        if entry.depth() > 0 {
-                            return menu;
-                        }
-                        let root = PathBuf::from(entry.item().id.as_ref());
-                        menu.menu(
+                .context_menu(move |_, entry, menu, _, _| {
+                    let id = entry.item().id.as_ref();
+                    if id.contains(PLACEHOLDER_SUFFIX) {
+                        return menu;
+                    }
+                    let path = PathBuf::from(id);
+                    let is_dir = entry.is_folder();
+                    let is_workspace_root = multi_root && entry.depth() == 0;
+                    let mut menu = menu;
+                    if is_dir {
+                        menu = menu
+                            .menu("New File…", Box::new(NewFileIn(path.clone())))
+                            .menu("New Folder…", Box::new(NewFolderIn(path.clone())))
+                            .separator();
+                    }
+                    menu = menu
+                        .menu("Rename", Box::new(RenamePath(path.clone())))
+                        .menu("Delete…", Box::new(DeletePath(path.clone())));
+                    if is_workspace_root {
+                        menu = menu.separator().menu(
                             "Remove Folder from Workspace",
-                            Box::new(RemoveWorkspaceFolder(root)),
-                        )
-                    })
+                            Box::new(RemoveWorkspaceFolder(path)),
+                        );
+                    }
+                    menu
                 })
                 .size_full()
                 .min_w_0()

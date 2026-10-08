@@ -164,8 +164,14 @@ Add a row here whenever a new shared component is created.
     cold start still shows the welcome screen.
   - Multi-root tree: each root is a top-level item; a root missing on disk is
     shown disabled as `<name> (missing)` with a folder icon.
-  - Actions on a tree item live in its right-click menu (`Tree::context_menu`),
-    e.g. "Remove Folder from Workspace" on roots.
+  - Actions on a tree item live in its right-click menu (`Tree::context_menu`):
+    files — Rename, Delete…; folders — New File…, New Folder…, Rename,
+    Delete…; multi-root roots also get "Remove Folder from Workspace".
+    With the tree focused (`Tree` key context): `F2` renames the selection,
+    `Delete` / `Backspace` deletes it (confirm dialog; permanent).
+    **Rename** is inline in the tree row (Kit `Input` replaces the label;
+    Enter/blur commits, Escape cancels). New File / New Folder still use a
+    centred name dialog.
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
   (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps
