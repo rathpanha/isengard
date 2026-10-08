@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — New File / New Folder are inline in the tree (same as
+  rename); no name modal.
 - **2026-10-08** — Removed Delete Permanent; tree Delete is Trash-only.
 - **2026-10-08** — Tree click keeps Tree focus (preview open no longer steals
   it); Delete / F2 work after selecting a file.

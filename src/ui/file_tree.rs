@@ -17,8 +17,33 @@ use crate::file_tree::{FsNode, GitIgnoreIndex, compute_guide_masks, tree_icon};
 
 /// Separates a directory path from the suffix of its placeholder child's id.
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
+/// Temporary New File / New Folder row while the name is being typed.
+const CREATING_SUFFIX: &str = "\u{0}creating";
 /// Horizontal space per tree depth level (indent guide column width).
 const INDENT_COL: f32 = 16.;
+
+/// Inline edit target shown in the tree (rename existing, or create under a dir).
+#[derive(Clone, Debug)]
+pub enum TreeEditTarget {
+    Rename(PathBuf),
+    NewFile { parent: PathBuf },
+    NewFolder { parent: PathBuf },
+}
+
+impl TreeEditTarget {
+    pub fn row_id(&self) -> SharedString {
+        match self {
+            Self::Rename(path) => SharedString::from(path.to_string_lossy().into_owned()),
+            Self::NewFile { parent } | Self::NewFolder { parent } => {
+                SharedString::from(format!("{}{CREATING_SUFFIX}", parent.to_string_lossy()))
+            }
+        }
+    }
+
+    pub fn is_folder_icon(&self) -> bool {
+        matches!(self, Self::NewFolder { .. })
+    }
+}
 
 /// The workspace's lazily-loaded folder tree, rendered with GPUI Kit's `Tree`.
 ///
@@ -30,6 +55,8 @@ pub struct FileTreePanel {
     roots: Vec<FsNode>,
     state: Entity<TreeState>,
     gitignores: GitIgnoreIndex,
+    /// Parent dir + is_folder while an inline New File/Folder row is open.
+    creating: Option<(PathBuf, bool)>,
 }
 
 impl FileTreePanel {
@@ -38,6 +65,7 @@ impl FileTreePanel {
             roots: Vec::new(),
             state: cx.new(|cx| TreeState::new(cx)),
             gitignores: GitIgnoreIndex::default(),
+            creating: None,
         }
     }
 
@@ -154,20 +182,55 @@ impl FileTreePanel {
         self.sync(cx);
     }
 
+    /// Shows or clears the temporary New File / New Folder row under `parent`.
+    pub fn set_creating(&mut self, creating: Option<(PathBuf, bool)>, cx: &mut App) {
+        self.creating = creating;
+        if let Some((dir, _)) = &self.creating {
+            for root in &mut self.roots {
+                if dir == root.path() || dir.starts_with(root.path()) {
+                    root.expand_toward(dir);
+                    break;
+                }
+            }
+        }
+        self.refresh_gitignores();
+        self.sync(cx);
+        if let Some((dir, _)) = &self.creating {
+            let id = SharedString::from(format!("{}{CREATING_SUFFIX}", dir.to_string_lossy()));
+            self.state.update(cx, |state, cx| {
+                let ix = state.index_of(&id);
+                state.set_selected_index(ix, cx);
+            });
+        }
+    }
+
     fn refresh_gitignores(&mut self) {
         let roots: Vec<PathBuf> = self.roots.iter().map(|r| r.path().to_path_buf()).collect();
         self.gitignores.rebuild(&roots);
     }
 
     fn sync(&self, cx: &mut App) {
+        let creating = self
+            .creating
+            .as_ref()
+            .map(|(p, is_folder)| (p.as_path(), *is_folder));
         let items: Vec<TreeItem> = match self.roots.as_slice() {
-            [root] => root
-                .children()
-                .unwrap_or_default()
+            [root] => {
+                let mut items: Vec<TreeItem> = root
+                    .children()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|n| to_tree_item(n, creating))
+                    .collect();
+                if creating.is_some_and(|(p, _)| p == root.path()) {
+                    inject_creating_row(&mut items, root.path(), creating.unwrap().1);
+                }
+                items
+            }
+            roots => roots
                 .iter()
-                .map(to_tree_item)
+                .map(|root| to_root_item(root, creating))
                 .collect(),
-            roots => roots.iter().map(to_root_item).collect(),
         };
         self.state.update(cx, |state, cx| {
             let selected = state.selected_item().map(|item| item.id.clone());
@@ -181,10 +244,10 @@ impl FileTreePanel {
 
     /// Renders the file tree.
     /// `on_open_file(path, permanent, …)` — `permanent` is true on double-click.
-    /// `rename` — when set, that row shows an inline name `Input` instead of the label.
+    /// `edit` — when set, that row shows an inline name `Input` instead of the label.
     pub fn render(
         &self,
-        rename: Option<(&Path, &Entity<InputState>)>,
+        edit: Option<(&TreeEditTarget, &Entity<InputState>)>,
         on_open_file: impl Fn(PathBuf, bool, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> AnyElement {
@@ -192,8 +255,9 @@ impl FileTreePanel {
         let multi_root = self.roots.len() > 1;
         let on_open_file = Rc::new(on_open_file);
         let tree_state = self.state.clone();
-        let rename_path = rename.map(|(p, _)| p.to_path_buf());
-        let rename_input = rename.map(|(_, input)| input.clone());
+        let edit_id = edit.map(|(target, _)| target.row_id());
+        let edit_folder_icon = edit.map(|(target, _)| target.is_folder_icon()).unwrap_or(false);
+        let edit_input = edit.map(|(_, input)| input.clone());
         let guide_masks = Rc::new(compute_guide_masks(self.state.read(cx)));
         let ignored_paths = Rc::new({
             let state = self.state.read(cx);
@@ -202,6 +266,7 @@ impl FileTreePanel {
             while let Some(entry) = state.entry(ix) {
                 let path = PathBuf::from(entry.item().id.as_ref());
                 if !path.to_string_lossy().contains(PLACEHOLDER_SUFFIX)
+                    && !path.to_string_lossy().contains(CREATING_SUFFIX)
                     && self.gitignores.is_ignored(&path)
                 {
                     set.insert(path);
@@ -214,13 +279,27 @@ impl FileTreePanel {
         tree(&self.state, move |ix, entry, _selected, _window, cx| {
                     let item = entry.item();
                     let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
+                    let is_creating = item.id.ends_with(CREATING_SUFFIX);
                     let path = PathBuf::from(item.id.as_ref());
                     let is_missing_root = entry.depth() == 0 && entry.is_disabled();
-                    let is_dir = entry.is_folder() || is_missing_root;
-                    let git_ignored = !is_placeholder && ignored_paths.contains(&path);
+                    let is_editing = edit_id.as_ref().is_some_and(|id| id == &item.id);
+                    let is_dir =
+                        entry.is_folder() || is_missing_root || (is_creating && edit_folder_icon);
+                    let git_ignored = !is_placeholder
+                        && !is_creating
+                        && ignored_paths.contains(&path);
                     let icon = (!is_placeholder).then(|| {
+                        let icon_path = if is_creating {
+                            PathBuf::from(if edit_folder_icon {
+                                "New Folder"
+                            } else {
+                                "untitled.txt"
+                            })
+                        } else {
+                            path.clone()
+                        };
                         tree_icon(
-                            &path,
+                            &icon_path,
                             is_dir,
                             entry.is_expanded(),
                             multi_root && entry.depth() == 0,
@@ -229,9 +308,8 @@ impl FileTreePanel {
                     });
                     let on_open_file = on_open_file.clone();
                     let tree_state = tree_state.clone();
-                    let is_file = !entry.is_folder() && !is_placeholder;
-                    let is_renaming = rename_path.as_ref().is_some_and(|p| p == &path);
-                    let rename_input = rename_input.clone().filter(|_| is_renaming);
+                    let is_file = !entry.is_folder() && !is_placeholder && !is_creating;
+                    let row_input = edit_input.clone().filter(|_| is_editing);
                     let guides = guide_masks.get(ix).cloned().unwrap_or_default();
                     let guide_color = cx.theme().sidebar_border;
                     let muted = cx.theme().muted_foreground;
@@ -244,13 +322,13 @@ impl FileTreePanel {
                         // row content instead so hover is full-bleed.
                         .py_0()
                         .px_0()
-                        .when(!entry.is_disabled() && !is_renaming, |item| {
+                        .when(!entry.is_disabled() && !is_editing, |item| {
                             item.cursor_pointer()
                         })
                         .rounded(cx.theme().radius)
                         // Kit selects on mouse-down but does not focus the Tree;
                         // without this, Delete/F2 stay bound to the editor.
-                        .when(!is_renaming && !entry.is_disabled(), |item| {
+                        .when(!is_editing && !entry.is_disabled(), |item| {
                             item.on_mouse_down(MouseButton::Left, {
                                 let tree_state = tree_state.clone();
                                 move |_, window, cx| {
@@ -294,21 +372,21 @@ impl FileTreePanel {
                                         .flex_1()
                                         .overflow_hidden()
                                         .py_0p5()
-                                        .when(git_ignored && !is_renaming, |this| this.opacity(0.6))
+                                        .when(git_ignored && !is_editing, |this| this.opacity(0.6))
                                         .children(icon)
                                         .child(
                                             div()
                                                 .min_w_0()
                                                 .flex_1()
                                                 .overflow_hidden()
-                                                .when(!is_renaming, |this| this.truncate())
+                                                .when(!is_editing, |this| this.truncate())
                                                 .when(is_placeholder, |this| {
                                                     this.text_color(muted)
                                                 })
-                                                .map(|this| match rename_input {
+                                                .map(|this| match row_input {
                                                     Some(input) => this.child(
                                                         Input::new(&input)
-                                                            .id("tree-rename-input")
+                                                            .id("tree-name-input")
                                                             .xsmall()
                                                             .w_full(),
                                                     ),
@@ -317,7 +395,7 @@ impl FileTreePanel {
                                         ),
                                 ),
                         )
-                        .when(!is_renaming, |item| {
+                        .when(!is_editing, |item| {
                             item.on_click(move |ev: &ClickEvent, window, cx| {
                                 if is_file {
                                     on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
@@ -327,7 +405,7 @@ impl FileTreePanel {
                 })
                 .context_menu(move |_, entry, menu, _, _| {
                     let id = entry.item().id.as_ref();
-                    if id.contains(PLACEHOLDER_SUFFIX) {
+                    if id.contains(PLACEHOLDER_SUFFIX) || id.contains(CREATING_SUFFIX) {
                         return menu;
                     }
                     let path = PathBuf::from(id);
@@ -336,8 +414,8 @@ impl FileTreePanel {
                     let mut menu = menu;
                     if is_dir {
                         menu = menu
-                            .menu("New File…", Box::new(NewFileIn(path.clone())))
-                            .menu("New Folder…", Box::new(NewFolderIn(path.clone())))
+                            .menu("New File", Box::new(NewFileIn(path.clone())))
+                            .menu("New Folder", Box::new(NewFolderIn(path.clone())))
                             .separator();
                     }
                     menu = menu
@@ -361,7 +439,7 @@ impl FileTreePanel {
     }
 }
 
-fn to_tree_item(node: &FsNode) -> TreeItem {
+fn to_tree_item(node: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
     let id = node.path().to_string_lossy().into_owned();
     match node {
         FsNode::File { name, .. } => TreeItem::new(id, name.clone()),
@@ -369,18 +447,22 @@ fn to_tree_item(node: &FsNode) -> TreeItem {
             name,
             children,
             expanded,
+            path,
             ..
         } => {
-            let children: Vec<TreeItem> = match children {
+            let mut kids: Vec<TreeItem> = match children {
                 Some(children) if !children.is_empty() => {
-                    children.iter().map(to_tree_item).collect()
+                    children.iter().map(|n| to_tree_item(n, creating)).collect()
                 }
                 // A child is required for the tree to treat this as an expandable folder.
                 Some(_) => vec![placeholder(&id, "(empty)")],
                 None => vec![placeholder(&id, "Loading…")],
             };
+            if creating.is_some_and(|(p, _)| p == path.as_path()) {
+                inject_creating_row(&mut kids, path, creating.unwrap().1);
+            }
             TreeItem::new(id, name.clone())
-                .children(children)
+                .children(kids)
                 .expanded(*expanded)
         }
     }
@@ -388,9 +470,9 @@ fn to_tree_item(node: &FsNode) -> TreeItem {
 
 /// A workspace root as a top-level item; a root that no longer exists on disk
 /// is shown disabled with a "(missing)" label.
-fn to_root_item(root: &FsNode) -> TreeItem {
+fn to_root_item(root: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
     if root.path().is_dir() {
-        to_tree_item(root)
+        to_tree_item(root, creating)
     } else {
         TreeItem::new(
             root.path().to_string_lossy().into_owned(),
@@ -398,6 +480,13 @@ fn to_root_item(root: &FsNode) -> TreeItem {
         )
         .disabled(true)
     }
+}
+
+fn inject_creating_row(children: &mut Vec<TreeItem>, parent: &Path, is_folder: bool) {
+    children.retain(|c| !c.id.ends_with(PLACEHOLDER_SUFFIX));
+    let id = format!("{}{CREATING_SUFFIX}", parent.to_string_lossy());
+    let label = if is_folder { "New Folder" } else { "untitled.txt" };
+    children.insert(0, TreeItem::new(id, label.to_owned()));
 }
 
 fn placeholder(parent_id: &str, label: &str) -> TreeItem {

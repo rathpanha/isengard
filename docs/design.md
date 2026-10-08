@@ -169,10 +169,10 @@ Add a row here whenever a new shared component is created.
     files — Rename, Delete; folders — New File…, New Folder…, Rename,
     Delete; multi-root roots also get "Remove Folder from Workspace". With
     the tree focused (`Tree` key context): `F2` renames; `Delete` /
-    `Backspace` moves to the OS Trash (toast, no confirm). **Rename** is
-    inline in the tree row (Kit `Input` replaces the label; Enter/blur
-    commits, Escape cancels). New File / New Folder still use a centred
-    name dialog.
+    `Backspace` moves to the OS Trash (toast, no confirm). **Rename**,
+    **New File**, and **New Folder** are inline in the tree (Kit `Input`
+    on the row or a temporary create row; Enter/blur commits, Escape
+    cancels; empty create name cancels).
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
   (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps

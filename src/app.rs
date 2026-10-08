@@ -7,7 +7,7 @@ use gpui_kit::component::{
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
-    input::{Editor, EditorState, Input, InputEvent, InputState, TabSize},
+    input::{Editor, EditorState, InputEvent, InputState, TabSize},
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
     notification::Notification,
@@ -32,7 +32,7 @@ use crate::file_tree::tree_icon;
 use crate::terminal::TerminalPanel;
 use crate::theme;
 use crate::ui::components::center_dialog;
-use crate::ui::file_tree::FileTreePanel;
+use crate::ui::file_tree::{FileTreePanel, TreeEditTarget};
 use crate::ui::welcome;
 use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 
@@ -71,9 +71,9 @@ actions!(
     ]
 );
 
-/// Active inline rename in the file tree (Enter/Blur commits, Escape cancels).
-struct TreeRenameEdit {
-    path: PathBuf,
+/// Active inline name edit in the file tree (Enter/Blur commits, Escape cancels).
+struct TreeInlineEdit {
+    target: crate::ui::file_tree::TreeEditTarget,
     input: Entity<InputState>,
     _events: Subscription,
     _keys: Subscription,
@@ -234,64 +234,6 @@ impl Render for TerminalCwdPicker {
     }
 }
 
-/// Single-line name prompt for New File / New Folder / Rename in the tree.
-struct NamePrompt {
-    input: Entity<InputState>,
-    app: WeakEntity<IsengardApp>,
-    on_confirm: Rc<dyn Fn(&mut IsengardApp, String, &mut Window, &mut Context<IsengardApp>)>,
-    _keys: Subscription,
-}
-
-impl NamePrompt {
-    fn new(
-        input: Entity<InputState>,
-        app: WeakEntity<IsengardApp>,
-        on_confirm: Rc<dyn Fn(&mut IsengardApp, String, &mut Window, &mut Context<IsengardApp>)>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let entity = cx.weak_entity();
-        // ponytail: dialog focus trap eats on_key_down; intercept until Kit
-        // exposes the dialog focus handle to content.
-        let _keys = cx.intercept_keystrokes(move |event, window, cx| {
-            let Some(entity) = entity.upgrade() else {
-                return;
-            };
-            match event.keystroke.key.as_str() {
-                "enter" => {
-                    entity.update(cx, |this, cx| this.confirm(window, cx));
-                    cx.stop_propagation();
-                }
-                "escape" => {
-                    window.close_dialog(cx);
-                    cx.stop_propagation();
-                }
-                _ => {}
-            }
-        });
-        Self {
-            input,
-            app,
-            on_confirm,
-            _keys,
-        }
-    }
-
-    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self.input.read(cx).value().to_string();
-        window.close_dialog(cx);
-        let on_confirm = self.on_confirm.clone();
-        _ = self.app.update(cx, |this, cx| {
-            on_confirm(this, name, window, cx);
-        });
-    }
-}
-
-impl Render for NamePrompt {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        Input::new(&self.input).id("entry-name").w_full()
-    }
-}
-
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -397,8 +339,8 @@ pub struct IsengardApp {
     allow_quit: bool,
     /// Suppresses session writes while batch-restoring tabs.
     restoring_session: bool,
-    /// Inline rename field over a tree row (not a modal).
-    tree_rename: Option<TreeRenameEdit>,
+    /// Inline rename / new-file / new-folder field over a tree row (not a modal).
+    tree_edit: Option<TreeInlineEdit>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -444,7 +386,7 @@ impl IsengardApp {
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
             allow_quit: false,
             restoring_session: false,
-            tree_rename: None,
+            tree_edit: None,
             _subscriptions: vec![tree_subscription],
         };
 
@@ -1347,55 +1289,6 @@ impl IsengardApp {
         );
     }
 
-    /// Name prompt for New File / New Folder / Rename (Enter confirms, Escape cancels).
-    fn open_name_dialog(
-        &self,
-        title: impl Into<SharedString>,
-        initial: impl Into<SharedString>,
-        confirm_label: &'static str,
-        on_confirm: impl Fn(&mut Self, String, &mut Window, &mut Context<Self>) + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let app = cx.entity().downgrade();
-        let initial = initial.into();
-        let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
-        input.update(cx, |state, cx| {
-            state.focus(window, cx);
-            state.select_all(window, cx);
-        });
-        let prompt = cx.new(|cx| {
-            NamePrompt::new(input.clone(), app, Rc::new(on_confirm), cx)
-        });
-        let title = title.into();
-        window.open_dialog(cx, move |dialog, window, _| {
-            let prompt_ok = prompt.clone();
-            center_dialog(
-                dialog.title(title.clone()).child(prompt.clone()).footer(
-                    DialogFooter::new()
-                        .gap_2()
-                        .child(
-                            Button::new("name-dialog-cancel")
-                                .cursor_pointer()
-                                .outline()
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("name-dialog-ok")
-                                .cursor_pointer()
-                                .primary()
-                                .label(confirm_label)
-                                .on_click(move |_, window, cx| {
-                                    prompt_ok.update(cx, |prompt, cx| prompt.confirm(window, cx));
-                                }),
-                        ),
-                ),
-                window,
-            )
-        });
-    }
-
     fn begin_inline_rename(
         &mut self,
         path: PathBuf,
@@ -1405,11 +1298,76 @@ impl IsengardApp {
         if !self.path_in_workspace(&path) {
             return;
         }
-        // Drop any in-progress edit first (drops Escape intercept).
-        self.tree_rename = None;
-        self.file_tree.select_path(&path, cx);
-        let current = document::file_name(&path);
-        let input = cx.new(|cx| InputState::new(window, cx).default_value(current));
+        let suggested = document::file_name(&path);
+        self.begin_tree_edit(TreeEditTarget::Rename(path), suggested, window, cx);
+    }
+
+    fn begin_inline_new_file(
+        &mut self,
+        dir: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !dir.is_dir() || !self.path_in_workspace(&dir) {
+            return;
+        }
+        let suggested = document::unique_new_file_path(&dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled.txt".into());
+        self.begin_tree_edit(
+            TreeEditTarget::NewFile { parent: dir },
+            suggested,
+            window,
+            cx,
+        );
+    }
+
+    fn begin_inline_new_folder(
+        &mut self,
+        dir: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !dir.is_dir() || !self.path_in_workspace(&dir) {
+            return;
+        }
+        let suggested = document::unique_new_folder_path(&dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "New Folder".into());
+        self.begin_tree_edit(
+            TreeEditTarget::NewFolder { parent: dir },
+            suggested,
+            window,
+            cx,
+        );
+    }
+
+    fn begin_tree_edit(
+        &mut self,
+        target: TreeEditTarget,
+        suggested: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Drop any in-progress edit first (drops Escape intercept + create row).
+        self.tree_edit = None;
+        self.file_tree.set_creating(None, cx);
+
+        match &target {
+            TreeEditTarget::Rename(path) => self.file_tree.select_path(path, cx),
+            TreeEditTarget::NewFile { parent } => {
+                self.file_tree
+                    .set_creating(Some((parent.clone(), false)), cx);
+            }
+            TreeEditTarget::NewFolder { parent } => {
+                self.file_tree
+                    .set_creating(Some((parent.clone(), true)), cx);
+            }
+        }
+
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(suggested));
         input.update(cx, |state, cx| {
             state.focus(window, cx);
             state.select_all(window, cx);
@@ -1417,7 +1375,7 @@ impl IsengardApp {
         let events = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
             match event {
                 InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                    this.commit_inline_rename(window, cx);
+                    this.commit_tree_edit(window, cx);
                 }
                 _ => {}
             }
@@ -1431,14 +1389,14 @@ impl IsengardApp {
                 return;
             };
             entity.update(cx, |this, cx| {
-                if this.tree_rename.is_some() {
-                    this.cancel_inline_rename(window, cx);
+                if this.tree_edit.is_some() {
+                    this.cancel_tree_edit(window, cx);
                     cx.stop_propagation();
                 }
             });
         });
-        self.tree_rename = Some(TreeRenameEdit {
-            path,
+        self.tree_edit = Some(TreeInlineEdit {
+            target,
             input,
             _events: events,
             _keys: keys,
@@ -1446,78 +1404,72 @@ impl IsengardApp {
         cx.notify();
     }
 
-    fn commit_inline_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(edit) = self.tree_rename.take() else {
+    fn commit_tree_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(edit) = self.tree_edit.take() else {
             return;
         };
         let name = edit.input.read(cx).value().to_string();
-        if let Err(err) = self.rename_path(&edit.path, &name, window, cx) {
+        let opened_new_file = matches!(edit.target, TreeEditTarget::NewFile { .. });
+        let result = match &edit.target {
+            TreeEditTarget::Rename(path) => self.rename_path(path, &name, window, cx),
+            TreeEditTarget::NewFile { parent } => {
+                if name.trim().is_empty() {
+                    self.file_tree.set_creating(None, cx);
+                    self.focus_file_tree(window, cx);
+                    cx.notify();
+                    return;
+                }
+                self.create_file_in(parent, &name, window, cx)
+            }
+            TreeEditTarget::NewFolder { parent } => {
+                if name.trim().is_empty() {
+                    self.file_tree.set_creating(None, cx);
+                    self.focus_file_tree(window, cx);
+                    cx.notify();
+                    return;
+                }
+                self.create_folder_in(parent, &name, window, cx)
+            }
+        };
+        if let Err(err) = result {
             notify_error(err, window, cx);
             // Keep the same field so Escape-intercept / Enter still work.
+            if matches!(
+                edit.target,
+                TreeEditTarget::NewFile { .. } | TreeEditTarget::NewFolder { .. }
+            ) {
+                let is_folder = matches!(edit.target, TreeEditTarget::NewFolder { .. });
+                let parent = match &edit.target {
+                    TreeEditTarget::NewFile { parent } | TreeEditTarget::NewFolder { parent } => {
+                        parent.clone()
+                    }
+                    TreeEditTarget::Rename(_) => unreachable!(),
+                };
+                self.file_tree.set_creating(Some((parent, is_folder)), cx);
+            }
             edit.input.update(cx, |state, cx| {
                 state.focus(window, cx);
                 state.select_all(window, cx);
             });
-            self.tree_rename = Some(edit);
+            self.tree_edit = Some(edit);
             cx.notify();
             return;
         }
-        self.file_tree
-            .state()
-            .update(cx, |state, cx| state.focus(window, cx));
+        self.file_tree.set_creating(None, cx);
+        // New file already focused the editor; rename / new folder keep the tree.
+        if !opened_new_file {
+            self.focus_file_tree(window, cx);
+        }
         cx.notify();
     }
 
-    fn cancel_inline_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tree_rename.take().is_none() {
+    fn cancel_tree_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tree_edit.take().is_none() {
             return;
         }
-        self.file_tree
-            .state()
-            .update(cx, |state, cx| state.focus(window, cx));
+        self.file_tree.set_creating(None, cx);
+        self.focus_file_tree(window, cx);
         cx.notify();
-    }
-
-    fn prompt_new_file_in(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if !dir.is_dir() || !self.path_in_workspace(&dir) {
-            return;
-        }
-        let suggested = document::unique_new_file_path(&dir)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "untitled.txt".into());
-        let dir_for_confirm = dir;
-        self.open_name_dialog(
-            "New File",
-            suggested,
-            "Create",
-            move |this, name, window, cx| {
-                this.create_file_in(&dir_for_confirm, &name, window, cx);
-            },
-            window,
-            cx,
-        );
-    }
-
-    fn prompt_new_folder_in(&mut self, dir: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if !dir.is_dir() || !self.path_in_workspace(&dir) {
-            return;
-        }
-        let suggested = document::unique_new_folder_path(&dir)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "New Folder".into());
-        let dir_for_confirm = dir;
-        self.open_name_dialog(
-            "New Folder",
-            suggested,
-            "Create",
-            move |this, name, window, cx| {
-                this.create_folder_in(&dir_for_confirm, &name, window, cx);
-            },
-            window,
-            cx,
-        );
     }
 
     fn path_in_workspace(&self, path: &Path) -> bool {
@@ -1533,55 +1485,41 @@ impl IsengardApp {
         name: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let name = match document::validate_entry_name(name) {
-            Ok(name) => name,
-            Err(err) => return notify_error(err.into(), window, cx),
-        };
+    ) -> Result<(), String> {
+        let name = document::validate_entry_name(name).map_err(|e| e.to_string())?;
         let path = dir.join(name);
         if path.exists() {
-            return notify_error(
-                format!("\"{name}\" already exists."),
-                window,
-                cx,
-            );
+            return Err(format!("\"{name}\" already exists."));
         }
-        if let Err(err) = std::fs::write(&path, "") {
-            return notify_error(format!("Could not create file: {err}"), window, cx);
-        }
+        std::fs::write(&path, "").map_err(|err| format!("Could not create file: {err}"))?;
+        self.file_tree.set_creating(None, cx);
         self.file_tree.refresh_dir(dir, cx);
         self.file_tree.select_path(&path, cx);
         self.open_file(&path, true, window, cx);
         self.persist_session(cx);
         cx.notify();
+        Ok(())
     }
 
     fn create_folder_in(
         &mut self,
         dir: &Path,
         name: &str,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let name = match document::validate_entry_name(name) {
-            Ok(name) => name,
-            Err(err) => return notify_error(err.into(), window, cx),
-        };
+    ) -> Result<(), String> {
+        let name = document::validate_entry_name(name).map_err(|e| e.to_string())?;
         let path = dir.join(name);
         if path.exists() {
-            return notify_error(
-                format!("\"{name}\" already exists."),
-                window,
-                cx,
-            );
+            return Err(format!("\"{name}\" already exists."));
         }
-        if let Err(err) = std::fs::create_dir(&path) {
-            return notify_error(format!("Could not create folder: {err}"), window, cx);
-        }
+        std::fs::create_dir(&path).map_err(|err| format!("Could not create folder: {err}"))?;
+        self.file_tree.set_creating(None, cx);
         self.file_tree.refresh_dir(dir, cx);
         self.file_tree.select_path(&path, cx);
         self.persist_session(cx);
         cx.notify();
+        Ok(())
     }
 
     fn rename_path(
@@ -2047,7 +1985,7 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.prompt_new_file_in(action.0.clone(), window, cx);
+        self.begin_inline_new_file(action.0.clone(), window, cx);
     }
 
     fn on_new_folder_in(
@@ -2056,7 +1994,7 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.prompt_new_folder_in(action.0.clone(), window, cx);
+        self.begin_inline_new_folder(action.0.clone(), window, cx);
     }
 
     fn on_rename_selected_tree_item(
@@ -2827,12 +2765,12 @@ impl Render for IsengardApp {
             welcome::render(self, cx).into_any_element()
         } else if self.file_tree.is_open() && self.sidebar_visible {
             let app = cx.entity().downgrade();
-            let rename = self
-                .tree_rename
+            let edit = self
+                .tree_edit
                 .as_ref()
-                .map(|edit| (edit.path.as_path(), &edit.input));
+                .map(|edit| (&edit.target, &edit.input));
             let tree = self.file_tree.render(
-                rename,
+                edit,
                 move |path, permanent, window, cx| {
                     _ = app.update(cx, |this, cx| {
                         this.open_file(&path, permanent, window, cx)

@@ -163,9 +163,10 @@ src/
   come from `file_tree::tree_icon` (full Material Icon Theme via `img()` +
   `material-icons.json`), not Lucide.   Create/rename/delete refresh the parent
   dir (or `workspace_changed` when a root moves/vanishes); open tabs under a
-  renamed path are remapped. Inline rename lives on
-  `IsengardApp::tree_rename` (`InputState` + subscriptions); the tree render
-  swaps that row's label for the input.
+  renamed path are remapped. Inline rename / new-file / new-folder live on
+  `IsengardApp::tree_edit` (`TreeEditTarget` + `InputState`); create injects
+  a temporary `\0creating` row under the parent via
+  `FileTreePanel::set_creating`.
 - **Terminal:** `IsengardApp::terminal` is an `Entity<TerminalPanel>` (PTY
   session lazy on first show). When the tree is open, `v_resizable("editor-term-split")`
   is the right child of `main-split` (under editor only; tree full height).

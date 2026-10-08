@@ -20,10 +20,10 @@ tabs, highlighted editor, status bar):
   gitignored rows shown muted; indent guides (design owns the pixel rules).
   Context menu: files Rename / Delete; folders New File / New Folder /
   Rename / Delete (multi-root roots also Remove Folder from Workspace).
-  Rename is inline in the row (Enter/blur commit, Escape cancel). Clicking
-  a tree row focuses the Tree (preview open does not steal focus); `F2`
-  rename; `Delete` / `Backspace` → OS Trash. Double-click focuses the
-  editor.
+  Rename / New File / New Folder are inline in the tree (Enter/blur
+  commit, Escape cancel). Clicking a tree row focuses the Tree (preview
+  open does not steal focus); `F2` rename; `Delete` / `Backspace` → OS
+  Trash. Double-click focuses the editor.
 - **Tabs:** Kit `Tab`s in `h_flex` (not `TabBar` — needed for per-tab
   `ContextMenu`); Material file icon + name as tab children; Close / Close
   Others / Close All; preview tabs; dirty mark; Markdown/SVG Edit–Preview;
@@ -69,9 +69,9 @@ shortcuts. Check these first if something is off.
 - Modified flag is set on any edit and not cleared by undoing back to the saved
   text.
 - No Save As; no file watching; no "Open Recent" in the native menu
-  (welcome screen only). Tree New File creates on disk (distinct from menu
-  New File / `⌘N`, which stays untitled until Save). Tree Delete always
-  goes to Trash (no permanent-delete path). Gitignore rules refresh on
+  (welcome screen only). Tree New File creates on disk after the inline
+  name (distinct from menu New File / `⌘N`, which stays untitled until
+  Save). Tree Delete always goes to Trash. Gitignore rules refresh on
   folder open / expand, not on every save of `.gitignore`. `.env` /
   `.gitignore` / lockfiles / Dockerfile use Bash/JSON/TOML aliases (no
   dedicated Dockerfile grammar compatible with GPUI's tree-sitter); GraphQL
