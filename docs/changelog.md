@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-08** — Remember main window size/position/maximized in
+  `config.json` across launches.
 - **2026-10-08** — Project search speed: parallel walk, cancel on new query,
   skip build/media dirs & >1 MiB files, aho-corasick prefilter, paint ≤500 hits.
 - **2026-10-08** — Project search: highlight match in result rows and in the

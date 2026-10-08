@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_EDITOR_FONT_SIZE: f32 = 14.0;
 pub const MIN_FONT_SIZE: f32 = 9.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
+/// Default main window size (also the first-launch fallback).
+pub const DEFAULT_WINDOW_WIDTH: f32 = 1280.0;
+pub const DEFAULT_WINDOW_HEIGHT: f32 = 800.0;
+pub const MIN_WINDOW_WIDTH: f32 = 640.0;
+pub const MIN_WINDOW_HEIGHT: f32 = 400.0;
 /// Default file-tree sidebar width in the main horizontal split.
 pub const DEFAULT_SIDEBAR_WIDTH: f32 = 260.0;
 /// Default integrated terminal height in the editor vertical split.
@@ -116,6 +121,19 @@ pub struct AppConfig {
     pub font_size: f32,
     /// Claude model used by the (upcoming) AI panel.
     pub model: String,
+    /// Last windowed (or restore-from-maximized) width in pixels.
+    pub window_width: f32,
+    /// Last windowed (or restore-from-maximized) height in pixels.
+    pub window_height: f32,
+    /// Last window origin X, if known (absent → center on open).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_x: Option<f32>,
+    /// Last window origin Y, if known (absent → center on open).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_y: Option<f32>,
+    /// Whether the window was maximized when last saved.
+    #[serde(default)]
+    pub window_maximized: bool,
     /// Most recently opened first.
     pub recent_folders: Vec<PathBuf>,
     /// `.isengard-workspace` files, most recently opened first.
@@ -129,6 +147,11 @@ impl Default for AppConfig {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
             model: "claude-sonnet-4-5".to_owned(),
+            window_width: DEFAULT_WINDOW_WIDTH,
+            window_height: DEFAULT_WINDOW_HEIGHT,
+            window_x: None,
+            window_y: None,
+            window_maximized: false,
             recent_folders: Vec::new(),
             recent_workspaces: Vec::new(),
             sessions: BTreeMap::new(),
@@ -177,6 +200,43 @@ impl AppConfig {
 
     pub fn change_font_size(&mut self, delta: f32) {
         self.font_size = (self.font_size + delta).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+    }
+
+    /// Clamp and store window geometry. Returns whether anything changed.
+    pub fn set_window_geometry(
+        &mut self,
+        width: f32,
+        height: f32,
+        x: f32,
+        y: f32,
+        maximized: bool,
+    ) -> bool {
+        let width = width.max(MIN_WINDOW_WIDTH);
+        let height = height.max(MIN_WINDOW_HEIGHT);
+        let next_x = Some(x);
+        let next_y = Some(y);
+        if (self.window_width - width).abs() < 0.5
+            && (self.window_height - height).abs() < 0.5
+            && self.window_x == next_x
+            && self.window_y == next_y
+            && self.window_maximized == maximized
+        {
+            return false;
+        }
+        self.window_width = width;
+        self.window_height = height;
+        self.window_x = next_x;
+        self.window_y = next_y;
+        self.window_maximized = maximized;
+        true
+    }
+
+    /// Size used when opening the main window (clamped).
+    pub fn window_size(&self) -> (f32, f32) {
+        (
+            self.window_width.max(MIN_WINDOW_WIDTH),
+            self.window_height.max(MIN_WINDOW_HEIGHT),
+        )
     }
 
     pub fn add_recent_folder(&mut self, folder: &Path) {
@@ -365,6 +425,29 @@ mod tests {
         config.add_recent_folder(Path::new("/code/app"));
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path), config);
+    }
+
+    #[test]
+    fn window_geometry_persists_and_legacy_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut config = AppConfig::default();
+        assert!(config.set_window_geometry(1600., 900., 12., 34., true));
+        assert!(!config.set_window_geometry(1600., 900., 12., 34., true));
+        config.save_to(&path).unwrap();
+        let loaded = AppConfig::load_from(&path);
+        assert_eq!(loaded.window_width, 1600.);
+        assert_eq!(loaded.window_height, 900.);
+        assert_eq!(loaded.window_x, Some(12.));
+        assert_eq!(loaded.window_y, Some(34.));
+        assert!(loaded.window_maximized);
+
+        // Older configs without window_* fields still load.
+        std::fs::write(&path, r#"{"font_size":14.0,"model":"x"}"#).unwrap();
+        let legacy = AppConfig::load_from(&path);
+        assert_eq!(legacy.window_width, DEFAULT_WINDOW_WIDTH);
+        assert_eq!(legacy.window_height, DEFAULT_WINDOW_HEIGHT);
+        assert!(!legacy.window_maximized);
     }
 
     #[test]

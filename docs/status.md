@@ -60,7 +60,8 @@ tabs, highlighted editor, status bar):
   (Isengard / File / Edit / View). Status bar while a workspace is open
   (panel toggles; path / Ln·Col when a file tab is active). Notifications
   bottom-right. Logo on welcome + platform app icon (see architecture
-  Development setup / icon matrix).
+  Development setup / icon matrix). Main window size/position (+ maximized)
+  restored from `config.json` on launch.
 - **Theme:** JetBrains Mono Nerd Font; square corners; **dark mode only**;
   editor font-size zoom.
 

@@ -50,6 +50,29 @@ use crate::ui::file_tree::{FileTreePanel, TreeEditTarget};
 use crate::ui::welcome;
 use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 
+#[derive(Clone, Copy)]
+struct WindowGeometrySnapshot {
+    width: f32,
+    height: f32,
+    x: f32,
+    y: f32,
+    maximized: bool,
+    fullscreen: bool,
+}
+
+fn window_geometry_snapshot(window: &Window) -> WindowGeometrySnapshot {
+    let wb = window.window_bounds();
+    let bounds = wb.get_bounds();
+    WindowGeometrySnapshot {
+        width: bounds.size.width.into(),
+        height: bounds.size.height.into(),
+        x: bounds.origin.x.into(),
+        y: bounds.origin.y.into(),
+        maximized: matches!(wb, WindowBounds::Maximized(_)),
+        fullscreen: matches!(wb, WindowBounds::Fullscreen(_)),
+    }
+}
+
 actions!(
     isengard,
     [
@@ -374,6 +397,8 @@ pub struct IsengardApp {
     allow_quit: bool,
     /// Suppresses session writes while batch-restoring tabs.
     restoring_session: bool,
+    /// Debounce token for persisting window bounds while resizing.
+    window_geometry_generation: u64,
     /// Inline rename / new-file / new-folder field over a tree row (not a modal).
     tree_edit: Option<TreeInlineEdit>,
     _subscriptions: Vec<Subscription>,
@@ -416,10 +441,15 @@ impl IsengardApp {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                this.persist_window_geometry(window);
                 this.persist_session(cx);
                 this.confirm_quit(window, cx)
             })
             .unwrap_or(true)
+        });
+
+        let bounds_sub = cx.observe_window_bounds(window, |this, window, cx| {
+            this.schedule_persist_window_geometry(window, cx);
         });
 
         let focus_handle = cx.focus_handle();
@@ -445,8 +475,9 @@ impl IsengardApp {
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
             allow_quit: false,
             restoring_session: false,
+            window_geometry_generation: 0,
             tree_edit: None,
-            _subscriptions: vec![tree_subscription, search_subscription],
+            _subscriptions: vec![tree_subscription, search_subscription, bounds_sub],
         };
 
         // Otherwise start on the welcome screen.
@@ -625,6 +656,49 @@ impl IsengardApp {
             term.clear_sessions(cx);
             term.hide(cx);
         });
+    }
+
+    /// Debounced write of window size/position into `config.json`.
+    fn schedule_persist_window_geometry(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.window_geometry_generation = self.window_geometry_generation.wrapping_add(1);
+        let geometry_gen = self.window_geometry_generation;
+        // Capture geometry now — by the time the timer fires the Window borrow is gone.
+        let snapshot = window_geometry_snapshot(window);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            this.update(cx, |this, _| {
+                if this.window_geometry_generation != geometry_gen {
+                    return;
+                }
+                if this.apply_window_geometry_snapshot(snapshot) {
+                    this.config.save();
+                }
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    fn persist_window_geometry(&mut self, window: &Window) {
+        if self.apply_window_geometry_snapshot(window_geometry_snapshot(window)) {
+            self.config.save();
+        }
+    }
+
+    fn apply_window_geometry_snapshot(&mut self, snap: WindowGeometrySnapshot) -> bool {
+        // Skip fullscreen: restore size is already in Maximized/Windowed variants.
+        if snap.fullscreen {
+            return false;
+        }
+        self.config.set_window_geometry(
+            snap.width,
+            snap.height,
+            snap.x,
+            snap.y,
+            snap.maximized,
+        )
     }
 
     /// Writes the current tabs + cursor/scroll + expanded dirs + terminals under this workspace's key.

@@ -189,6 +189,9 @@ Add a row here whenever a new shared component is created.
     directories from `config.json` `sessions`. Multi-root roots stay collapsed
     unless they were expanded when saved. Unsaved edits are not restored;
     cold start still shows the welcome screen.
+  - Window geometry: `config.json` stores last window width/height/origin and
+    maximized flag; launch opens with that frame (centered if no origin yet).
+    Saved on close and debounced while resizing.
   - Multi-root tree: each root is a top-level item; a root missing on disk is
     shown disabled as `<name> (missing)` with a folder icon.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`):

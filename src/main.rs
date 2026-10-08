@@ -18,7 +18,7 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 use crate::app::IsengardApp;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH};
 
 // Default `Assets` is only ~101 component icons; extras live in the full
 // Lucide catalog and must be opted in (not `AllAssets` — ~1 MiB).
@@ -76,13 +76,23 @@ fn main() {
             app::init(cx);
             let app_menu_bar = menus::init(cx);
 
+            let (w, h) = config.window_size();
+            let window_size = size(px(w), px(h));
+            let restore_bounds = match (config.window_x, config.window_y) {
+                (Some(x), Some(y)) => Bounds {
+                    origin: point(px(x), px(y)),
+                    size: window_size,
+                },
+                _ => Bounds::centered(None, window_size, cx),
+            };
+            let window_bounds = if config.window_maximized {
+                WindowBounds::Maximized(restore_bounds)
+            } else {
+                WindowBounds::Windowed(restore_bounds)
+            };
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    size(px(1280.), px(800.)),
-                    cx,
-                ))),
-                window_min_size: Some(size(px(640.), px(400.))),
+                window_bounds: Some(window_bounds),
+                window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
                 // app_id: Wayland `.desktop` match. icon: X11 `_NET_WM_ICON`
                 // (ignored elsewhere; Windows uses .exe embed, macOS Dock API).
                 app_id: Some(branding::APP_ID.into()),

@@ -100,7 +100,7 @@ src/
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
-├── config.rs            AppConfig (serde JSON) + recents + workspace sessions
+├── config.rs            AppConfig (serde JSON) + recents + sessions + window geometry
 ├── workspace.rs         Workspace (root folders + optional file): naming,
 │                        root_for/relative_label, load/save .isengard-workspace
 ├── editor/
