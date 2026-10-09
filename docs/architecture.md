@@ -118,10 +118,11 @@ src/
 │   │                    size/ext/dir skips; open-buffer override; replace
 │   └── panel.rs         SearchPanel UI (inputs, toggles, capped results)
 ├── git/                 minimal Source Control (sidebar Git view)
-│   ├── engine.rs        CLI `git`: discover, porcelain, `commit_paths`,
-│   │                    pull/push, discard, `file_sides`, suggest msg
+│   ├── engine.rs        CLI `git`: discover, porcelain, `RepoOp`,
+│   │                    commit/pull/push/discard, accept ours/theirs,
+│   │                    marker guard, `file_sides` / conflict stages
 │   ├── diff_highlight.rs line ranges via `similar` for pane fills
-│   └── panel.rs         GitPanel: stacked repos, commit box, change list
+│   └── panel.rs         GitPanel: stacked repos, conflict banner, list
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
 │   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
 │   ├── pty.rs           portable-pty session + default shell / cwd

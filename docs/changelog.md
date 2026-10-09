@@ -3,6 +3,21 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-09** — Diff/conflict side-by-side panes lock scroll together.
+- **2026-10-09** — Diff/conflict overview ticks fill the full scrollbar
+  track width (no inset).
+- **2026-10-09** — Diff/conflict overview marks pin top+bottom (no
+  full-height stretch); track width = Kit scrollbar; merge banner turns
+  warning yellow when conflicts are cleared.
+- **2026-10-09** — Conflict Accept only in editor toolbar; Edit/Preview
+  `ButtonGroup` uses `.small()` to match; demo uses a long conflict file.
+- **2026-10-09** — Conflict open: Current | Incoming side-by-side tab
+  (diff highlights + Accept toolbar).
+- **2026-10-09** — Conflict rows: Accept Current / Incoming (whole
+  file); Commit refuses paths that still contain conflict markers.
+- **2026-10-09** — Source Control surfaces merge/rebase/cherry-pick
+  conflicts (banner + `U` rows first; open file not diff; lock
+  Pull/Push/Discard; seed `MERGE_MSG`) — no line/block resolver.
 - **2026-10-08** — Panel header rows share `PANEL_HEADER_ROW_H` (36px):
   sidebar chrome, explorer/git toolbars, editor tabs (`Tab::large`), Edit/
   Preview bar — bands align across the split.

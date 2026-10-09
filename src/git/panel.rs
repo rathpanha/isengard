@@ -18,8 +18,9 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 use crate::file_tree::tree_icon;
 
 use super::engine::{
-    GitChange, RepoStatus, commit_paths, discard_all, discard_file, load_workspace_status,
-    pull_ff_only, push, suggest_commit_message,
+    ConflictSide, GitChange, RepoOp, RepoStatus, accept_conflict_side, commit_paths,
+    conflict_banner, discard_all, discard_file, load_workspace_status, pull_ff_only, push,
+    read_merge_msg, suggest_commit_message,
 };
 
 const MAX_RENDERED_CHANGES: usize = 500;
@@ -34,8 +35,18 @@ pub enum GitPanelEvent {
         status: char,
         old_rel_path: Option<String>,
     },
+    /// Open Current | Incoming conflict compare for an unmerged path.
+    OpenConflict {
+        repo: PathBuf,
+        path: PathBuf,
+        rel_path: String,
+    },
     /// Open the worktree file in the editor (same as the file tree).
     OpenFile { path: PathBuf },
+    /// Disk changed under an open tab (e.g. Accept Current/Incoming) — reload text.
+    ReloadFile { path: PathBuf },
+    /// Close the conflict compare tab for this worktree path (after Accept).
+    CloseConflictPreview { path: PathBuf },
     /// Ask the app to confirm discarding one file, then call [`GitPanel::discard_change`].
     ConfirmDiscardFile {
         repo: PathBuf,
@@ -144,6 +155,7 @@ impl GitPanel {
             old_selection.insert(section.status.root.clone(), section.selected.clone());
         }
 
+        let first_paint = self.sections.is_empty();
         self._message_subs.clear();
         let mut sections = Vec::with_capacity(statuses.len());
         for status in statuses {
@@ -154,7 +166,14 @@ impl GitPanel {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| status.root.display().to_string())
             });
-            let draft = old_messages.remove(&status.root).unwrap_or_default();
+            let mut draft = old_messages.remove(&status.root).unwrap_or_default();
+            if draft.trim().is_empty()
+                && matches!(status.op, Some(RepoOp::Merge) | Some(RepoOp::CherryPick))
+            {
+                if let Some(msg) = read_merge_msg(&status.root) {
+                    draft = msg;
+                }
+            }
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
             let selected =
                 merge_selection(old_selection.remove(&status.root), &status.changes);
@@ -182,6 +201,24 @@ impl GitPanel {
         }
         self.sections = sections;
         self.loading = false;
+        // ponytail: QA/demo — open first conflict compare (`ISENGARD_OPEN_CONFLICT=1`).
+        if first_paint && std::env::var_os("ISENGARD_OPEN_CONFLICT").is_some() {
+            if let Some((repo, path, rel_path)) = self.sections.iter().find_map(|section| {
+                section.status.changes.iter().find(|c| c.status == 'U').map(|c| {
+                    (
+                        section.status.root.clone(),
+                        c.path.clone(),
+                        c.rel_path.clone(),
+                    )
+                })
+            }) {
+                cx.emit(GitPanelEvent::OpenConflict {
+                    repo,
+                    path,
+                    rel_path,
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -294,6 +331,23 @@ impl GitPanel {
         self.run_mutation(root, Mutation::DiscardAll, window, cx);
     }
 
+    /// Whole-file Accept Current / Incoming for a conflicted path.
+    pub fn accept_conflict(
+        &mut self,
+        root: PathBuf,
+        rel_path: String,
+        side: ConflictSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_mutation(
+            root,
+            Mutation::AcceptConflict { rel_path, side },
+            window,
+            cx,
+        );
+    }
+
     fn run_mutation(
         &mut self,
         root: PathBuf,
@@ -339,6 +393,10 @@ impl GitPanel {
             .collect();
         let root_bg = root.clone();
         let clear_message = matches!(kind, Mutation::Commit);
+        let reload_path = match &kind {
+            Mutation::AcceptConflict { rel_path, .. } => Some(root.join(rel_path)),
+            _ => None,
+        };
 
         cx.spawn_in(window, async move |this, window| {
             let result = window
@@ -378,6 +436,11 @@ impl GitPanel {
                         Mutation::DiscardAll => {
                             discard_all(&root_bg).map(|_| "Discarded all changes".to_owned())
                         }
+                        Mutation::AcceptConflict { rel_path, side } => {
+                            accept_conflict_side(&root_bg, &rel_path, side).map(|_| {
+                                format!("Accepted {} for {rel_path}", side.label())
+                            })
+                        }
                     }
                 })
                 .await;
@@ -392,6 +455,12 @@ impl GitPanel {
                             section.message.update(cx, |state, cx| {
                                 state.set_value("", window, cx);
                             });
+                        }
+                        if let Some(path) = reload_path {
+                            cx.emit(GitPanelEvent::CloseConflictPreview {
+                                path: path.clone(),
+                            });
+                            cx.emit(GitPanelEvent::ReloadFile { path });
                         }
                         cx.emit(GitPanelEvent::ToastSuccess(short_toast(&msg)));
                         this.set_folders(folders, labels, window, cx);
@@ -418,6 +487,10 @@ enum Mutation {
         old_rel_path: Option<String>,
     },
     DiscardAll,
+    AcceptConflict {
+        rel_path: String,
+        side: ConflictSide,
+    },
 }
 
 /// Which control is spinning while the repo is locked.
@@ -428,6 +501,7 @@ enum BusyOp {
     Push,
     DiscardAll,
     DiscardFile(String),
+    AcceptConflict(String),
 }
 
 impl BusyOp {
@@ -438,6 +512,7 @@ impl BusyOp {
             Mutation::Push => Self::Push,
             Mutation::DiscardAll => Self::DiscardAll,
             Mutation::DiscardFile { rel_path, .. } => Self::DiscardFile(rel_path.clone()),
+            Mutation::AcceptConflict { rel_path, .. } => Self::AcceptConflict(rel_path.clone()),
         }
     }
 }
@@ -501,6 +576,11 @@ impl Render for GitPanel {
                 let label = section.label.clone();
                 let expanded = section.changes_expanded;
                 let change_count = section.status.changes.len();
+                let conflict_count = section.status.conflict_count();
+                let lock_sync = section.status.blocks_sync_and_discard();
+                let lock_suggest = section.status.blocks_suggest();
+                let lock_commit = section.status.blocks_commit();
+                let op_banner = conflict_banner(section.status.op, conflict_count);
                 let chevron = if expanded { "▾" } else { "▸" };
                 // Separator only between repos — never under a lone / last section.
                 let show_sep = si + 1 < section_count;
@@ -559,7 +639,7 @@ impl Render for GitPanel {
                                     ),
                                     busy_op == Some(BusyOp::Pull),
                                 )
-                                .disabled(busy)
+                                .disabled(busy || lock_sync)
                                 .on_click({
                                     let root = root.clone();
                                     cx.listener(move |this, _, window, cx| {
@@ -583,7 +663,7 @@ impl Render for GitPanel {
                                     ),
                                     busy_op == Some(BusyOp::Push),
                                 )
-                                .disabled(busy)
+                                .disabled(busy || lock_sync)
                                 .on_click({
                                     let root = root.clone();
                                     cx.listener(move |this, _, window, cx| {
@@ -597,6 +677,22 @@ impl Render for GitPanel {
                                 }),
                             ),
                     )
+                    .when_some(op_banner, |el, text| {
+                        // Red while conflicts remain; yellow when the op is
+                        // still open but every `U` is cleared.
+                        let color = if conflict_count == 0 {
+                            theme.warning
+                        } else {
+                            theme.danger
+                        };
+                        el.child(
+                            div()
+                                .px_2()
+                                .text_xs()
+                                .text_color(color)
+                                .child(text),
+                        )
+                    })
                     .child(
                         v_flex()
                             .w_full()
@@ -620,7 +716,7 @@ impl Render for GitPanel {
                                     .child(
                                         outline_btn(format!("git-suggest-{si}").into())
                                             .label("Suggest")
-                                            .disabled(busy || nothing_selected)
+                                            .disabled(busy || nothing_selected || lock_suggest)
                                             .on_click({
                                                 let root = root.clone();
                                                 cx.listener(move |this, _, window, cx| {
@@ -634,7 +730,12 @@ impl Render for GitPanel {
                                                 .label("Commit"),
                                             busy_op == Some(BusyOp::Commit),
                                         )
-                                        .disabled(busy || message_empty || nothing_selected)
+                                        .disabled(
+                                            busy
+                                                || message_empty
+                                                || nothing_selected
+                                                || lock_commit,
+                                        )
                                         .on_click({
                                             let root = root.clone();
                                             cx.listener(move |this, _, window, cx| {
@@ -732,7 +833,7 @@ impl Render for GitPanel {
                                         .icon(LucideIcon::Undo2)
                                         .tooltip("Discard All Changes")
                                         .loading(busy_op == Some(BusyOp::DiscardAll))
-                                        .disabled(busy)
+                                        .disabled(busy || lock_sync)
                                         .on_click({
                                             let root = root.clone();
                                             cx.listener(move |this, _, _, cx| {
@@ -792,6 +893,7 @@ impl Render for GitPanel {
                             muted,
                             dark,
                             busy,
+                            lock_sync,
                             busy_op.as_ref(),
                             cx,
                         ));
@@ -875,6 +977,7 @@ fn render_change_row(
     muted: Hsla,
     dark: bool,
     busy: bool,
+    lock_discard: bool,
     busy_op: Option<&BusyOp>,
     cx: &mut Context<GitPanel>,
 ) -> AnyElement {
@@ -883,6 +986,7 @@ fn render_change_row(
     let rel = change.rel_path.clone();
     let old_rel = change.old_rel_path.clone();
     let status = change.status;
+    let is_conflict = status == 'U';
     let discard_loading = matches!(busy_op, Some(BusyOp::DiscardFile(p)) if p == &rel);
     let icon = tree_icon(&change.path, false, false, false, dark);
 
@@ -942,13 +1046,21 @@ fn render_change_row(
                 let rel = rel.clone();
                 let old_rel = old_rel.clone();
                 cx.listener(move |_, _, _, cx| {
-                    cx.emit(GitPanelEvent::OpenDiff {
-                        repo: repo.clone(),
-                        path: path.clone(),
-                        rel_path: rel.clone(),
-                        status,
-                        old_rel_path: old_rel.clone(),
-                    });
+                    if is_conflict {
+                        cx.emit(GitPanelEvent::OpenConflict {
+                            repo: repo.clone(),
+                            path: path.clone(),
+                            rel_path: rel.clone(),
+                        });
+                    } else {
+                        cx.emit(GitPanelEvent::OpenDiff {
+                            repo: repo.clone(),
+                            path: path.clone(),
+                            rel_path: rel.clone(),
+                            status,
+                            old_rel_path: old_rel.clone(),
+                        });
+                    }
                 })
             }),
         )
@@ -967,40 +1079,56 @@ fn render_change_row(
                 .cursor_pointer()
                 .small()
                 .icon(LucideIcon::ExternalLink)
-                .tooltip("Open File")
+                .tooltip(if is_conflict {
+                    "Compare Current / Incoming"
+                } else {
+                    "Open File"
+                })
                 .disabled(status == 'D')
                 .on_click({
-                    let path = path.clone();
-                    cx.listener(move |_, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.emit(GitPanelEvent::OpenFile {
-                            path: path.clone(),
-                        });
-                    })
-                }),
-        )
-        .child(
-            Button::new(format!("git-discard-{si}-{ci}"))
-                .ghost()
-                .cursor_pointer()
-                .small()
-                .icon(LucideIcon::Undo2)
-                .tooltip("Discard Changes")
-                .loading(discard_loading)
-                .disabled(busy)
-                .on_click({
                     let repo = repo.clone();
+                    let path = path.clone();
                     let rel = rel.clone();
                     cx.listener(move |_, _, _, cx| {
                         cx.stop_propagation();
-                        cx.emit(GitPanelEvent::ConfirmDiscardFile {
-                            repo: repo.clone(),
-                            rel_path: rel.clone(),
-                            status,
-                            old_rel_path: old_rel.clone(),
-                        });
+                        if is_conflict {
+                            cx.emit(GitPanelEvent::OpenConflict {
+                                repo: repo.clone(),
+                                path: path.clone(),
+                                rel_path: rel.clone(),
+                            });
+                        } else {
+                            cx.emit(GitPanelEvent::OpenFile {
+                                path: path.clone(),
+                            });
+                        }
                     })
                 }),
         )
+        .when(!is_conflict, |row| {
+            row.child(
+                Button::new(format!("git-discard-{si}-{ci}"))
+                    .ghost()
+                    .cursor_pointer()
+                    .small()
+                    .icon(LucideIcon::Undo2)
+                    .tooltip("Discard Changes")
+                    .loading(discard_loading)
+                    .disabled(busy || lock_discard)
+                    .on_click({
+                        let repo = repo.clone();
+                        let rel = rel.clone();
+                        cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(GitPanelEvent::ConfirmDiscardFile {
+                                repo: repo.clone(),
+                                rel_path: rel.clone(),
+                                status,
+                                old_rel_path: old_rel.clone(),
+                            });
+                        })
+                    }),
+            )
+        })
         .into_any_element()
 }

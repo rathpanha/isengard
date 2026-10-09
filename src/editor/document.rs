@@ -12,6 +12,8 @@ const IMAGE_EXTENSIONS: &[&str] = &[
 const UNTITLED_PREFIX: &str = "untitled:";
 /// Read-only git diff preview tab (`isengard-diff:</abs/path>`).
 const DIFF_PREFIX: &str = "isengard-diff:";
+/// Read-only conflict compare tab (`isengard-conflict:</abs/path>`).
+const CONFLICT_PREFIX: &str = "isengard-conflict:";
 
 /// True when `path` should open as an image preview instead of a text editor.
 pub fn is_image(path: &Path) -> bool {
@@ -51,9 +53,24 @@ pub fn is_diff_preview(path: &Path) -> bool {
     path.to_string_lossy().starts_with(DIFF_PREFIX)
 }
 
+/// True for conflict Current|Incoming preview tabs (not a real file).
+pub fn is_conflict_preview(path: &Path) -> bool {
+    path.to_string_lossy().starts_with(CONFLICT_PREFIX)
+}
+
+/// Diff or conflict virtual tabs (skip session restore / dirty save paths).
+pub fn is_git_preview(path: &Path) -> bool {
+    is_diff_preview(path) || is_conflict_preview(path)
+}
+
 /// Virtual path for a read-only git diff of `file` (absolute working-tree path).
 pub fn diff_preview_path(file: &Path) -> PathBuf {
     PathBuf::from(format!("{DIFF_PREFIX}{}", file.display()))
+}
+
+/// Virtual path for a read-only conflict compare of `file`.
+pub fn conflict_preview_path(file: &Path) -> PathBuf {
+    PathBuf::from(format!("{CONFLICT_PREFIX}{}", file.display()))
 }
 
 /// Virtual path for an unsaved buffer (`untitled:1`).
@@ -66,11 +83,12 @@ pub fn tab_label(path: &Path) -> String {
     if let Some(id) = untitled_id(path) {
         return format!("Untitled-{id}");
     }
-    if let Some(file) = path
-        .to_string_lossy()
-        .strip_prefix(DIFF_PREFIX)
-    {
+    let s = path.to_string_lossy();
+    if let Some(file) = s.strip_prefix(DIFF_PREFIX) {
         return format!("{} (Diff)", file_name(Path::new(file)));
+    }
+    if let Some(file) = s.strip_prefix(CONFLICT_PREFIX) {
+        return format!("{} (Conflict)", file_name(Path::new(file)));
     }
     file_name(path)
 }

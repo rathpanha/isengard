@@ -17,6 +17,24 @@ pub struct GitChange {
     pub status: char,
 }
 
+/// In-progress Git operation that needs the user (or the terminal) to finish.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepoOp {
+    Merge,
+    Rebase,
+    CherryPick,
+}
+
+impl RepoOp {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Merge => "Merge",
+            Self::Rebase => "Rebase",
+            Self::CherryPick => "Cherry-pick",
+        }
+    }
+}
+
 /// Snapshot of one Git worktree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepoStatus {
@@ -27,8 +45,70 @@ pub struct RepoStatus {
     pub ahead: u32,
     /// Commits on `@{upstream}` not in HEAD (`0` if no upstream).
     pub behind: u32,
+    /// Merge / rebase / cherry-pick in progress (if any).
+    pub op: Option<RepoOp>,
     /// Set when `git` itself failed for this repo.
     pub error: Option<String>,
+}
+
+impl RepoStatus {
+    pub fn conflict_count(&self) -> usize {
+        self.changes.iter().filter(|c| c.status == 'U').count()
+    }
+
+    pub fn has_conflicts(&self) -> bool {
+        self.conflict_count() > 0
+    }
+
+    /// Pull / Push / Discard must not run over an unfinished op or conflicts.
+    pub fn blocks_sync_and_discard(&self) -> bool {
+        self.op.is_some() || self.has_conflicts()
+    }
+
+    /// Rebase / cherry-pick finish with `--continue`, not our Commit button.
+    pub fn blocks_commit(&self) -> bool {
+        matches!(self.op, Some(RepoOp::Rebase) | Some(RepoOp::CherryPick))
+    }
+
+    pub fn blocks_suggest(&self) -> bool {
+        self.op.is_some() || self.has_conflicts()
+    }
+}
+
+/// Sidebar danger line for an in-progress op / unmerged paths.
+pub fn conflict_banner(op: Option<RepoOp>, conflict_count: usize) -> Option<String> {
+    let Some(op) = op else {
+        if conflict_count == 0 {
+            return None;
+        }
+        // Unmerged paths without MERGE_HEAD (unusual) — still warn.
+        return Some(format!(
+            "{conflict_count} conflict{} — open files to edit markers",
+            if conflict_count == 1 { "" } else { "s" }
+        ));
+    };
+    let noun = if conflict_count == 1 {
+        "conflict"
+    } else {
+        "conflicts"
+    };
+    let tail = match op {
+        RepoOp::Merge => {
+            if conflict_count == 0 {
+                "ready to commit".into()
+            } else {
+                format!("{conflict_count} {noun}")
+            }
+        }
+        RepoOp::Rebase | RepoOp::CherryPick => {
+            if conflict_count == 0 {
+                "continue from the terminal".into()
+            } else {
+                format!("{conflict_count} {noun}")
+            }
+        }
+    };
+    Some(format!("{} in progress — {tail}", op.label()))
 }
 
 /// Run `git -C <cwd> <args…>`; stdout on success, combined stderr/stdout on failure.
@@ -99,9 +179,25 @@ pub fn file_sides(
     Ok((old, new))
 }
 
+/// Current (stage 2 / ours) and Incoming (stage 3 / theirs) for a conflict.
+///
+/// Missing stage → empty string (deleted on that side).
+pub fn conflict_file_sides(repo: &Path, rel_path: &str) -> Result<(String, String), String> {
+    let ours = git_show_stage(repo, 2, rel_path).unwrap_or_default();
+    let theirs = git_show_stage(repo, 3, rel_path).unwrap_or_default();
+    if ours.is_empty() && theirs.is_empty() {
+        return Err(format!("No conflict stages for {rel_path}"));
+    }
+    Ok((ours, theirs))
+}
+
 fn git_show_head(repo: &Path, rel_path: &str) -> Result<String, String> {
     // `git show HEAD:path` fails when the path was never committed.
     git_blob(repo, &["show", &format!("HEAD:{rel_path}")])
+}
+
+fn git_show_stage(repo: &Path, stage: u8, rel_path: &str) -> Result<String, String> {
+    git_blob(repo, &["show", &format!(":{stage}:{rel_path}")])
 }
 
 fn read_worktree(repo: &Path, rel_path: &str) -> String {
@@ -133,6 +229,7 @@ pub fn load_repo_status(root: &Path) -> RepoStatus {
     let branch = git(root, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_else(|_| "HEAD".into());
     let (ahead, behind) = ahead_behind_upstream(root);
+    let op = detect_repo_op(root);
     match git(root, &["status", "--porcelain=v1", "-uall"]) {
         Ok(out) => RepoStatus {
             root: root.to_path_buf(),
@@ -140,6 +237,7 @@ pub fn load_repo_status(root: &Path) -> RepoStatus {
             changes: parse_porcelain(&out, root),
             ahead,
             behind,
+            op,
             error: None,
         },
         Err(error) => RepoStatus {
@@ -148,8 +246,66 @@ pub fn load_repo_status(root: &Path) -> RepoStatus {
             changes: Vec::new(),
             ahead,
             behind,
+            op,
             error: Some(error),
         },
+    }
+}
+
+/// `MERGE_HEAD` / rebase state / `CHERRY_PICK_HEAD` via `git rev-parse --git-path`.
+pub fn detect_repo_op(root: &Path) -> Option<RepoOp> {
+    if git_path_exists(root, "MERGE_HEAD") {
+        return Some(RepoOp::Merge);
+    }
+    if git_path_exists(root, "CHERRY_PICK_HEAD") {
+        return Some(RepoOp::CherryPick);
+    }
+    if git_path_exists(root, "REBASE_HEAD")
+        || git_path_exists(root, "rebase-merge")
+        || git_path_exists(root, "rebase-apply")
+    {
+        return Some(RepoOp::Rebase);
+    }
+    None
+}
+
+fn git_path_exists(root: &Path, name: &str) -> bool {
+    let Ok(raw) = git(root, &["rev-parse", "--git-path", name]) else {
+        return false;
+    };
+    let path = PathBuf::from(raw.trim());
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    path.exists()
+}
+
+/// Default merge commit subject from `.git/MERGE_MSG` (comments stripped).
+pub fn read_merge_msg(root: &Path) -> Option<String> {
+    let Ok(raw) = git(root, &["rev-parse", "--git-path", "MERGE_MSG"]) else {
+        return None;
+    };
+    let path = PathBuf::from(raw.trim());
+    let path = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    let body: String = text
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = body.trim();
+    if body.is_empty() {
+        None
+    } else {
+        Some(body.to_owned())
     }
 }
 
@@ -176,6 +332,8 @@ pub fn load_workspace_status(folders: &[PathBuf]) -> Vec<RepoStatus> {
 }
 
 /// Stage `rel_paths` then `git commit -m` (empty selection / message rejected).
+///
+/// Refuses if any selected worktree file still contains conflict markers.
 pub fn commit_paths(root: &Path, message: &str, rel_paths: &[String]) -> Result<(), String> {
     let message = message.trim();
     if message.is_empty() {
@@ -183,6 +341,13 @@ pub fn commit_paths(root: &Path, message: &str, rel_paths: &[String]) -> Result<
     }
     if rel_paths.is_empty() {
         return Err("No files selected".into());
+    }
+    for rel in rel_paths {
+        if path_has_conflict_markers(root, rel) {
+            return Err(format!(
+                "Unresolved conflict markers in {rel} — Accept Current/Incoming or edit the file"
+            ));
+        }
     }
     let mut args: Vec<&str> = Vec::with_capacity(2 + rel_paths.len());
     args.push("add");
@@ -195,11 +360,86 @@ pub fn commit_paths(root: &Path, message: &str, rel_paths: &[String]) -> Result<
     Ok(())
 }
 
+/// Which side to keep for a whole-file conflict resolve (`git checkout --ours|--theirs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictSide {
+    /// Current branch / HEAD (`--ours` during merge).
+    Current,
+    /// Incoming branch (`--theirs` during merge).
+    Incoming,
+}
+
+impl ConflictSide {
+    fn checkout_arg(self) -> &'static str {
+        match self {
+            Self::Current => "--ours",
+            Self::Incoming => "--theirs",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Current => "Current",
+            Self::Incoming => "Incoming",
+        }
+    }
+}
+
+/// Whole-file resolve: `git checkout --ours|--theirs -- path` then `git add -- path`.
+pub fn accept_conflict_side(
+    root: &Path,
+    rel_path: &str,
+    side: ConflictSide,
+) -> Result<(), String> {
+    if detect_repo_op(root).is_none() {
+        return Err("No merge/rebase/cherry-pick in progress".into());
+    }
+    git(
+        root,
+        &["checkout", side.checkout_arg(), "--", rel_path],
+    )?;
+    git(root, &["add", "--", rel_path])?;
+    Ok(())
+}
+
+/// True if `text` looks like it still has unresolved Git conflict markers.
+pub fn has_conflict_markers(text: &str) -> bool {
+    let mut saw_start = false;
+    let mut saw_mid = false;
+    for line in text.lines() {
+        // Markers are typically at column 0; allow optional leading whitespace.
+        let t = line.trim_start();
+        if t.starts_with("<<<<<<<") {
+            saw_start = true;
+        } else if saw_start && t.starts_with("=======") {
+            saw_mid = true;
+        } else if saw_start && saw_mid && t.starts_with(">>>>>>>") {
+            return true;
+        }
+    }
+    false
+}
+
+fn path_has_conflict_markers(root: &Path, rel_path: &str) -> bool {
+    let abs = root.join(rel_path);
+    match std::fs::read_to_string(&abs) {
+        Ok(text) => has_conflict_markers(&text),
+        // Missing / binary — don't block commit on unreadable; git add will decide.
+        Err(_) => false,
+    }
+}
+
 pub fn pull_ff_only(root: &Path) -> Result<String, String> {
+    if detect_repo_op(root).is_some() {
+        return Err("Cannot pull while a merge/rebase/cherry-pick is in progress".into());
+    }
     git(root, &["pull", "--ff-only"])
 }
 
 pub fn push(root: &Path) -> Result<String, String> {
+    if detect_repo_op(root).is_some() {
+        return Err("Cannot push while a merge/rebase/cherry-pick is in progress".into());
+    }
     git(root, &["push"])
 }
 
@@ -211,6 +451,12 @@ pub fn discard_file(
     status: char,
     old_rel_path: Option<&str>,
 ) -> Result<(), String> {
+    if status == 'U' {
+        return Err("Cannot discard a conflicted file — open it and edit markers".into());
+    }
+    if detect_repo_op(root).is_some() {
+        return Err("Cannot discard while a merge/rebase/cherry-pick is in progress".into());
+    }
     if status == '?' {
         return git(root, &["clean", "-fd", "--", rel_path]).map(|_| ());
     }
@@ -230,6 +476,9 @@ pub fn discard_file(
 
 /// Discard every change in the worktree: hard reset tracked + clean untracked.
 pub fn discard_all(root: &Path) -> Result<(), String> {
+    if detect_repo_op(root).is_some() {
+        return Err("Cannot discard all while a merge/rebase/cherry-pick is in progress".into());
+    }
     git(root, &["reset", "--hard", "HEAD"])?;
     git(root, &["clean", "-fd"])?;
     Ok(())
@@ -313,6 +562,8 @@ fn file_stem_name(rel: &str) -> &str {
 }
 
 /// Parse `git status --porcelain=v1` lines into changes.
+///
+/// Unmerged paths (`U`, both-added `AA`, both-deleted `DD`) sort first.
 pub fn parse_porcelain(output: &str, root: &Path) -> Vec<GitChange> {
     let mut changes = Vec::new();
     for line in output.lines() {
@@ -328,7 +579,9 @@ pub fn parse_porcelain(output: &str, root: &Path) -> Vec<GitChange> {
                 .rsplit_once(" -> ")
                 .map(|(o, n)| (o, n))
                 .unwrap_or(("", rest));
-            let st = if x == 'R' || y == 'R' {
+            let st = if is_unmerged(x, y) {
+                'U'
+            } else if x == 'R' || y == 'R' {
                 'R'
             } else if x == 'C' || y == 'C' {
                 'C'
@@ -349,14 +602,20 @@ pub fn parse_porcelain(output: &str, root: &Path) -> Vec<GitChange> {
             status,
         });
     }
+    changes.sort_by_key(|c| if c.status == 'U' { 0u8 } else { 1 });
     changes
+}
+
+fn is_unmerged(x: char, y: char) -> bool {
+    // Porcelain unmerged: UU/AU/UA/DU/UD plus both-added AA / both-deleted DD.
+    x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D')
 }
 
 fn status_letter(x: char, y: char) -> char {
     if x == '?' || y == '?' {
         return '?';
     }
-    if x == 'U' || y == 'U' {
+    if is_unmerged(x, y) {
         return 'U';
     }
     // Prefer worktree (y), then index (x).
@@ -411,6 +670,270 @@ R  old.rs -> renamed.rs\n\
         assert_eq!(changes[3].old_rel_path.as_deref(), Some("old.rs"));
         assert_eq!(changes[3].path, root.join("renamed.rs"));
         assert_eq!(changes[4].status, 'D');
+    }
+
+    #[test]
+    fn has_conflict_markers_detects_standard_block() {
+        assert!(!has_conflict_markers("plain\n"));
+        assert!(!has_conflict_markers("<<<<<<< only start\n"));
+        assert!(has_conflict_markers(
+            "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\n"
+        ));
+        assert!(has_conflict_markers(
+            "  <<<<<<< HEAD\nours\n  =======\ntheirs\n  >>>>>>> feature\n"
+        ));
+    }
+
+    #[test]
+    fn accept_current_clears_conflict_and_commit_rejects_markers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.email", "test@example.com"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.name", "Test"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("note.txt"), "base\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "note.txt"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "base"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-b", "other"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("note.txt"), "other\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["commit", "-am", "other"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("note.txt"), "main\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["commit", "-am", "main"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            !Command::new("git")
+                .args(["merge", "other"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(path_has_conflict_markers(&root, "note.txt"));
+        let (ours, theirs) = conflict_file_sides(&root, "note.txt").unwrap();
+        assert_eq!(ours, "main\n");
+        assert_eq!(theirs, "other\n");
+        assert!(
+            commit_paths(&root, "merge", &["note.txt".into()])
+                .unwrap_err()
+                .contains("Unresolved conflict markers")
+        );
+        accept_conflict_side(&root, "note.txt", ConflictSide::Current).unwrap();
+        assert!(!path_has_conflict_markers(&root, "note.txt"));
+        assert_eq!(fs::read_to_string(root.join("note.txt")).unwrap(), "main\n");
+        let status = load_repo_status(&root);
+        assert!(!status.has_conflicts());
+        assert_eq!(status.op, Some(RepoOp::Merge));
+    }
+
+    #[test]
+    fn conflict_banner_copy() {
+        assert_eq!(
+            conflict_banner(Some(RepoOp::Merge), 2).as_deref(),
+            Some("Merge in progress — 2 conflicts")
+        );
+        assert_eq!(
+            conflict_banner(Some(RepoOp::Merge), 1).as_deref(),
+            Some("Merge in progress — 1 conflict")
+        );
+        assert_eq!(
+            conflict_banner(Some(RepoOp::Merge), 0).as_deref(),
+            Some("Merge in progress — ready to commit")
+        );
+        assert_eq!(
+            conflict_banner(Some(RepoOp::Rebase), 0).as_deref(),
+            Some("Rebase in progress — continue from the terminal")
+        );
+        assert_eq!(
+            conflict_banner(None, 1).as_deref(),
+            Some("1 conflict — open files to edit markers")
+        );
+        assert_eq!(conflict_banner(None, 0), None);
+    }
+
+    #[test]
+    fn parse_porcelain_unmerged_sorts_first() {
+        let root = Path::new("/repo");
+        let out = "\
+M  ok.rs\n\
+UU conflict.rs\n\
+AA both_added.rs\n\
+?? scratch.txt\n\
+DD both_deleted.rs\n";
+        let changes = parse_porcelain(out, root);
+        assert_eq!(changes.len(), 5);
+        assert!(changes[..3].iter().all(|c| c.status == 'U'));
+        let u_paths: Vec<&str> = changes[..3].iter().map(|c| c.rel_path.as_str()).collect();
+        assert!(u_paths.contains(&"conflict.rs"));
+        assert!(u_paths.contains(&"both_added.rs"));
+        assert!(u_paths.contains(&"both_deleted.rs"));
+        assert_eq!(changes[3].status, 'M');
+        assert_eq!(changes[4].status, '?');
+    }
+
+    #[test]
+    fn detect_merge_op_and_merge_msg() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        // Avoid depending on the machine's git identity.
+        assert!(
+            Command::new("git")
+                .args(["config", "user.email", "test@example.com"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.name", "Test"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("note.txt"), "base\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "note.txt"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "base"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-b", "other"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("note.txt"), "other\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["commit", "-am", "other"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(root.join("note.txt"), "main\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["commit", "-am", "main"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let merge = Command::new("git")
+            .args(["merge", "other"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(!merge.status.success(), "expected conflict");
+        assert_eq!(detect_repo_op(&root), Some(RepoOp::Merge));
+        let status = load_repo_status(&root);
+        assert_eq!(status.op, Some(RepoOp::Merge));
+        assert!(status.has_conflicts());
+        assert!(status.blocks_sync_and_discard());
+        assert!(!status.blocks_commit());
+        let msg = read_merge_msg(&root).expect("MERGE_MSG");
+        assert!(msg.to_ascii_lowercase().contains("merge"));
+        assert!(
+            discard_file(&root, "note.txt", 'U', None).is_err(),
+            "discard conflict must fail"
+        );
+        assert!(discard_all(&root).is_err(), "discard-all mid-merge must fail");
     }
 
     #[test]

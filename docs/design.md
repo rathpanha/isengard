@@ -101,7 +101,8 @@ Add a row here whenever a new shared component is created.
   horizontal bands line up across the sidebar | editor split when a
   preview-capable tab is open.
 - **Markdown / SVG preview:** `.md` and `.svg` tabs show an Edit / Preview
-  `ButtonGroup` under the tab bar. Markdown preview uses
+  `ButtonGroup` under the tab bar (`.outline().small()` — same size as
+  conflict Accept Current / Incoming). Markdown preview uses
   `TextView::markdown`; SVG preview renders the buffer via
   `Image::from_bytes(Svg)` (live, including unsaved edits). Toggle also via
   View > Toggle Preview or `⌘⇧V` / `Ctrl+Shift+V` (disabled while the
@@ -203,11 +204,32 @@ Add a row here whenever a new shared component is created.
   header (confirms; `reset --hard` + `clean -fd`). Header Refresh is
   ghost icon-only. Pull is `--ff-only`. Click a change opens a
   **read-only** side-by-side preview tab (equal HEAD | Working Tree
-  panes; deleted lines danger-fill / inserted success-fill; overview
-  ruler ticks; not editable). System `git` on PATH; errors toast.
+  panes; locked scroll; deleted lines danger-fill / inserted
+  success-fill; overview ruler ticks; not editable). System `git` on
+  PATH; errors toast.
   Refresh on view open / workspace change / after actions / Refresh.
-  Not: persistent index staging UI, branch switch, stash, merge UI,
-  amend.
+  **Conflicts (whole-file only):** detect in-progress merge / rebase /
+  cherry-pick (`MERGE_HEAD` / rebase dirs / `CHERRY_PICK_HEAD`).
+  Persistent status line under Pull·Push, e.g.
+  `Merge in progress — 2 conflicts` (`theme.danger` while any `U`;
+  `theme.warning` + `ready to commit` when the op remains but conflicts
+  are cleared). Conflict rows sort first. Row click / Open open a
+  read-only **Current | Incoming** side-by-side tab (index stages `:2:` /
+  `:3:`; locked scroll; same deleted/inserted line fills + overview ticks
+  as the change diff — only differing lines; overview track width matches
+  Kit scrollbar). Conflict tab toolbar: outlined **Accept Current** /
+  **Accept Incoming** (`.small()`; `checkout --ours|--theirs` + `add`).
+  Accept lives in the editor only — not on panel change rows. After
+  Accept, conflict tab closes; open worktree buffers reload. While an op
+  is in progress or any `U` remains: disable Pull, Push, Discard,
+  Discard all; Suggest disabled.
+  Commit stays available for merges (selection → `git add` then commit)
+  but **refuses** if any selected path still contains conflict markers
+  (`<<<<<<<` / `=======` / `>>>>>>>`); Commit disabled during rebase /
+  cherry-pick (continue from the terminal). Empty commit box seeds from
+  `MERGE_MSG` when a merge starts. Not: line/block picker, conflict
+  codelens, abort buttons, persistent index staging, branch switch,
+  stash, amend.
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`), with `margins.bottom` clearing the status
   bar (`STATUS_BAR_HEIGHT` + 16px edge). Don't set placement/margins per toast.
