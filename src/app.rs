@@ -14,6 +14,7 @@ type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Context<Isenga
 use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
+    badge::Badge,
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
@@ -23,7 +24,9 @@ use gpui_kit::component::{
     },
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
+    popover::Popover,
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
+    scroll::ScrollableElement as _,
     status_bar::StatusBar,
     tab::Tab,
     text::TextView,
@@ -41,6 +44,10 @@ use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
+use crate::lsp::{
+    AttachOutcome, CatalogServer, LspClient, LspEvent, LspHost, MissingServerOffer,
+    ServerDisplayStatus, recipe_for_command, run_install, run_uninstall,
+};
 use crate::git::{
     ConflictHunk, ConflictSide, GitPanel, GitPanelEvent, HunkSide, OverviewMark, RepoStatus,
     apply_hunk_choices, change_at_path, conflict_file_sides, conflict_hunks, file_sides,
@@ -65,6 +72,35 @@ struct WindowGeometrySnapshot {
     y: f32,
     maximized: bool,
     fullscreen: bool,
+}
+
+/// Worst-first color for the status-bar LSP badge (error > starting > running > idle).
+fn lsp_aggregate_color(servers: &[CatalogServer], cx: &App) -> Hsla {
+    let mut rank = 0u8;
+    for s in servers {
+        if !s.installed
+            && !matches!(
+                s.status,
+                ServerDisplayStatus::Running
+                    | ServerDisplayStatus::Starting
+                    | ServerDisplayStatus::Error(_)
+            )
+        {
+            continue;
+        }
+        rank = rank.max(match &s.status {
+            ServerDisplayStatus::Error(_) => 4,
+            ServerDisplayStatus::Starting => 3,
+            ServerDisplayStatus::Running => 2,
+            ServerDisplayStatus::Idle => 1,
+        });
+    }
+    match rank {
+        4 => cx.theme().danger,
+        3 => cx.theme().warning,
+        2 => cx.theme().success,
+        _ => cx.theme().muted_foreground,
+    }
 }
 
 fn window_geometry_snapshot(window: &Window) -> WindowGeometrySnapshot {
@@ -117,6 +153,8 @@ actions!(
         /// Move the tree selection to Trash (Delete/Backspace while Tree focused).
         DeleteSelectedTreeItem,
         About,
+        /// Open `config.json` in a tab (create defaults if missing).
+        OpenConfigFile,
         Quit,
     ]
 );
@@ -450,6 +488,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &About, cx| {
         with_active_app(cx, |app, window, cx| app.on_about(&About, window, cx));
     });
+    cx.on_action(|_: &OpenConfigFile, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_open_config_file(&OpenConfigFile, window, cx);
+        });
+    });
 }
 
 struct EditorTab {
@@ -597,6 +640,8 @@ pub struct IsengardApp {
     window_geometry_generation: u64,
     /// Inline rename / new-file / new-folder field over a tree row (not a modal).
     tree_edit: Option<TreeInlineEdit>,
+    /// Language servers for the current workspace (rust-analyzer MVP).
+    lsp: LspHost,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -752,6 +797,7 @@ impl IsengardApp {
             restoring_session: false,
             window_geometry_generation: 0,
             tree_edit: None,
+            lsp: LspHost::default(),
             _subscriptions: vec![
                 tree_subscription,
                 search_subscription,
@@ -759,6 +805,9 @@ impl IsengardApp {
                 bounds_sub,
             ],
         };
+
+        app.lsp.set_settings(app.config.lsp.clone());
+        app.start_lsp_event_pump(cx);
 
         // Otherwise start on the welcome screen.
         match initial_path {
@@ -964,11 +1013,494 @@ impl IsengardApp {
             }
             Switch::Close => Workspace::default(),
         };
+        self.lsp
+            .reset_workspace(self.workspace.folders().to_vec());
         self.config.save();
         self.focus_handle.focus(window, cx);
         self.workspace_changed(window, cx);
         self.restart_terminal_for_workspace(window, cx);
         self.restore_session(window, cx);
+    }
+
+    fn start_lsp_event_pump(&self, cx: &mut Context<Self>) {
+        let rx = self.lsp.events();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let rx = rx.clone();
+                let event = cx.background_spawn(async move { rx.recv() }).await;
+                let Ok(event) = event else {
+                    break;
+                };
+                let _ = this.update(cx, |this, cx| this.handle_lsp_event(event, cx));
+            }
+        })
+        .detach();
+    }
+
+    fn handle_lsp_event(&mut self, event: LspEvent, cx: &mut Context<Self>) {
+        match event {
+            LspEvent::Diagnostics(params) => {
+                let Some(path) = crate::lsp::path_for_diagnostics(&params) else {
+                    return;
+                };
+                let Some(state) = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.path == path)
+                    .and_then(|t| t.editor_state())
+                    .cloned()
+                else {
+                    return;
+                };
+                crate::lsp::apply_diagnostics(&state, params, cx);
+            }
+        }
+    }
+
+    /// Go-to-definition / showDocument: open another file and place the cursor.
+    fn lsp_open_location(
+        &mut self,
+        path: &Path,
+        selection: lsp_types::Range,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_file(path, true, window, cx);
+        let Some(state) = self
+            .tabs
+            .iter()
+            .find(|t| t.path == path)
+            .and_then(|t| t.editor_state())
+            .cloned()
+        else {
+            return;
+        };
+        state.update(cx, |state, cx| {
+            state.set_cursor_position(
+                gpui_kit::component::input::Position {
+                    line: selection.start.line,
+                    character: selection.start.character,
+                },
+                window,
+                cx,
+            );
+        });
+    }
+
+    fn lsp_attach_tab(
+        &mut self,
+        path: &Path,
+        language: Language,
+        state: &Entity<EditorState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.lsp.set_settings(self.config.lsp.clone());
+        self.lsp.set_folders(self.workspace.folders().to_vec());
+        let text = state.read(cx).value().to_string();
+        let app = cx.entity().downgrade();
+        match self.lsp.attach_editor(
+            path,
+            language,
+            &text,
+            state,
+            app,
+            |this, path, range, window, cx| {
+                this.lsp_open_location(path, range, window, cx);
+            },
+            window,
+            cx,
+        ) {
+            AttachOutcome::Done => {}
+            AttachOutcome::NeedsStart {
+                spec,
+                init,
+                path,
+                language,
+            } => {
+                cx.notify(); // yellow "starting" chip
+                let process_key = spec.process_key().to_string();
+                cx.spawn_in(window, async move |this, window| {
+                    let start = window
+                        .background_spawn({
+                            let spec = spec.clone();
+                            async move { LspClient::start(&spec, init) }
+                        })
+                        .await;
+                    this.update_in(window, |this, window, cx| {
+                        match start {
+                            Ok((client, incoming)) => {
+                                if let Err(err) =
+                                    this.lsp.finish_start(&spec, client, incoming)
+                                {
+                                    this.lsp.mark_start_failed(&process_key, &err);
+                                    notify_error(
+                                        format!("Language server failed: {err:#}"),
+                                        window,
+                                        cx,
+                                    );
+                                    cx.notify();
+                                    return;
+                                }
+                                this.config.lsp = this.lsp.settings().clone();
+                                this.config.save();
+                                // Wire every open tab that shares this server
+                                // (others may have attached while we were Starting).
+                                let _ = language;
+                                let _ = path;
+                                let pending: Vec<_> = this
+                                    .tabs
+                                    .iter()
+                                    .filter_map(|t| {
+                                        let lang = t.language()?;
+                                        let state = t.editor_state()?.clone();
+                                        Some((t.path.clone(), lang, state))
+                                    })
+                                    .collect();
+                                for (tab_path, lang, state) in pending {
+                                    let text = state.read(cx).value().to_string();
+                                    let app = cx.entity().downgrade();
+                                    this.lsp.attach_open_document(
+                                        &tab_path,
+                                        lang,
+                                        &text,
+                                        &state,
+                                        app,
+                                        |this, path, range, window, cx| {
+                                            this.lsp_open_location(path, range, window, cx);
+                                        },
+                                        cx,
+                                    );
+                                }
+                                cx.notify();
+                            }
+                            Err(err) => {
+                                this.lsp.mark_start_failed(&process_key, &err);
+                                cx.notify();
+                                if LspHost::looks_like_missing(&err) {
+                                    if this.lsp.missing_prompt_once(&process_key) {
+                                        this.offer_lsp_install(
+                                            MissingServerOffer {
+                                                recipe: recipe_for_command(&spec.command),
+                                                spec,
+                                                path,
+                                                language,
+                                            },
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                } else {
+                                    notify_error(
+                                        format!("Language server failed: {err:#}"),
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+                    })
+                    .ok()
+                })
+                .detach();
+            }
+        }
+    }
+
+    /// Missing language server: offer one-click install when we know a recipe.
+    fn offer_lsp_install(
+        &mut self,
+        offer: MissingServerOffer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(recipe) = offer.recipe else {
+            notify_error(
+                format!(
+                    "`{}` not found — install it yourself or set lsp.languages in config.json",
+                    offer.spec.command
+                ),
+                window,
+                cx,
+            );
+            return;
+        };
+
+        let app = cx.entity().downgrade();
+        let offer_install = offer.clone();
+        let recipe_name = recipe.name;
+        let recipe_summary = recipe.summary;
+        let recipe_shell = recipe.shell;
+        window.open_dialog(cx, move |dialog, window, _| {
+            let app_install = app.clone();
+            let app_dismiss = app.clone();
+            let offer_install = offer_install.clone();
+            center_dialog(
+                dialog
+                    .title(format!("Install {recipe_name}?"))
+                    .child(recipe_summary.to_string())
+                    .child(format!("Isengard will run: {recipe_shell}"))
+                    .footer(
+                        DialogFooter::new()
+                            .gap_2()
+                            .child(
+                                Button::new("lsp-install-not-now")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .label("Not now")
+                                    .on_click(move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let _ = app_dismiss.update(cx, |this, _| {
+                                            // Keep missing_toasted set so we don't spam.
+                                            let _ = this;
+                                        });
+                                    }),
+                            )
+                            .child(
+                                Button::new("lsp-install-run")
+                                    .cursor_pointer()
+                                    .primary()
+                                    .label("Install")
+                                    .on_click(move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let _ = app_install.update(cx, |this, cx| {
+                                            this.run_lsp_install(
+                                                offer_install.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }),
+                            ),
+                    ),
+                window,
+            )
+        });
+    }
+
+    fn clear_lsp_providers_for_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        for path in paths {
+            let Some(state) = self
+                .tabs
+                .iter()
+                .find(|t| t.path == *path)
+                .and_then(|t| t.editor_state())
+                .cloned()
+            else {
+                continue;
+            };
+            state.update(cx, |state, cx| {
+                let lsp = state.lsp_mut();
+                lsp.completion_provider = None;
+                lsp.hover_provider = None;
+                lsp.definition_provider = None;
+                lsp.show_document = None;
+                if let Some(diags) = state.diagnostics_mut() {
+                    diags.clear();
+                }
+                cx.notify();
+            });
+        }
+    }
+
+    /// Confirm + uninstall (or forget) a language server from the status bar.
+    fn offer_lsp_remove(
+        &mut self,
+        process_key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = std::path::Path::new(process_key)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(process_key)
+            .to_string();
+        let recipe = recipe_for_command(process_key);
+        let remove_shell = recipe.and_then(|r| r.remove_shell);
+        let app = cx.entity().downgrade();
+        let key = process_key.to_string();
+
+        window.open_dialog(cx, move |dialog, window, _| {
+            let app_ok = app.clone();
+            let key_ok = key.clone();
+            let dialog = dialog.title(format!("Remove {label}?"));
+            let dialog = if let Some(shell) = remove_shell {
+                dialog
+                    .child("Isengard will stop it and run:")
+                    .child(shell.to_string())
+            } else {
+                dialog.child(
+                    "Isengard will stop it and forget it from the status bar. \
+                     The binary stays on your system (no uninstall recipe).",
+                )
+            };
+            center_dialog(
+                dialog.footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("lsp-remove-cancel")
+                                .cursor_pointer()
+                                .outline()
+                                .label("Cancel")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("lsp-remove-confirm")
+                                .cursor_pointer()
+                                .danger()
+                                .label("Remove")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = app_ok.update(cx, |this, cx| {
+                                        this.run_lsp_remove(&key_ok, window, cx);
+                                    });
+                                }),
+                        ),
+                ),
+                window,
+            )
+        });
+    }
+
+    fn run_lsp_remove(
+        &mut self,
+        process_key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = std::path::Path::new(process_key)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(process_key)
+            .to_string();
+        let (paths, recipe) = self.lsp.remove_server(process_key);
+        self.clear_lsp_providers_for_paths(&paths, cx);
+        self.config.lsp = self.lsp.settings().clone();
+        self.config.save();
+        cx.notify();
+
+        let Some(recipe) = recipe else {
+            notify_success(format!("Removed {label}"), window, cx);
+            return;
+        };
+
+        let name = recipe.name.to_string();
+        notify_success(format!("Uninstalling {name}…"), window, cx);
+        cx.spawn_in(window, async move |this, window| {
+            let result = window
+                .background_spawn(async move { run_uninstall(&recipe) })
+                .await;
+            this.update_in(window, |_, window, cx| match result {
+                Ok(()) => notify_success(format!("Removed {name}"), window, cx),
+                Err(err) => notify_error(
+                    format!("Forgot {name} in Isengard, but uninstall failed: {err}"),
+                    window,
+                    cx,
+                ),
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    /// Catalog Install: run recipe for a command key (no open-file context required).
+    fn run_lsp_install_command(
+        &mut self,
+        process_key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(recipe) = recipe_for_command(process_key) else {
+            notify_error(
+                format!("No install recipe for `{process_key}`"),
+                window,
+                cx,
+            );
+            return;
+        };
+        let path = self.tabs.active().map(|t| t.path.clone());
+        let language = self.tabs.active().and_then(|t| t.language());
+        self.run_lsp_install_recipe(
+            recipe,
+            process_key.to_string(),
+            path,
+            language,
+            window,
+            cx,
+        );
+    }
+
+    fn run_lsp_install(
+        &mut self,
+        offer: MissingServerOffer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(recipe) = offer.recipe else {
+            return;
+        };
+        let process_key = offer.spec.process_key().to_string();
+        self.run_lsp_install_recipe(
+            recipe,
+            process_key,
+            Some(offer.path),
+            Some(offer.language),
+            window,
+            cx,
+        );
+    }
+
+    fn run_lsp_install_recipe(
+        &mut self,
+        recipe: crate::lsp::InstallRecipe,
+        process_key: String,
+        path: Option<PathBuf>,
+        language: Option<Language>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = recipe.name.to_string();
+        notify_success(format!("Installing {name}…"), window, cx);
+
+        cx.spawn_in(window, async move |this, window| {
+            let result = window
+                .background_spawn(async move { run_install(&recipe) })
+                .await;
+            this.update_in(window, |this, window, cx| match result {
+                Ok(()) => {
+                    this.lsp.clear_missing_prompt(&process_key);
+                    this.lsp.remember_known(&process_key);
+                    this.config.lsp = this.lsp.settings().clone();
+                    this.config.save();
+                    notify_success(
+                        format!("{name} installed — enabling IntelliSense"),
+                        window,
+                        cx,
+                    );
+                    if let (Some(path), Some(language)) = (path, language) {
+                        let state = this
+                            .tabs
+                            .iter()
+                            .find(|t| t.path == path)
+                            .and_then(|t| t.editor_state())
+                            .cloned();
+                        if let Some(state) = state {
+                            this.lsp_attach_tab(&path, language, &state, window, cx);
+                        }
+                    }
+                    cx.notify();
+                }
+                Err(err) => {
+                    this.lsp.clear_missing_prompt(&process_key);
+                    notify_error(format!("Could not install {name}: {err}"), window, cx);
+                }
+            })
+            .ok()
+        })
+        .detach();
     }
 
     fn restart_terminal_for_workspace(
@@ -1424,6 +1956,11 @@ impl IsengardApp {
             cx.subscribe(&state, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let id = state.entity_id();
+                    let path = this
+                        .tabs
+                        .iter()
+                        .find(|t| t.editor_state().is_some_and(|s| s.entity_id() == id))
+                        .map(|t| t.path.clone());
                     if let Some(tab) = this.tabs.find_mut(|t| {
                         t.editor_state()
                             .is_some_and(|s| s.entity_id() == id)
@@ -1431,6 +1968,10 @@ impl IsengardApp {
                         tab.is_modified = true;
                         // Editing pins a preview tab (VS Code behaviour).
                         tab.preview = false;
+                    }
+                    if let Some(path) = path {
+                        let text = state.read(cx).value().to_string();
+                        this.lsp.did_change(&path, &text);
                     }
                     cx.notify();
                 }
@@ -1443,7 +1984,7 @@ impl IsengardApp {
             path: path.to_path_buf(),
             body: TabBody::Text {
                 language,
-                state,
+                state: state.clone(),
                 rendered_preview: false,
                 _subscriptions: subscriptions,
             },
@@ -1451,6 +1992,7 @@ impl IsengardApp {
             preview: !permanent,
             untitled_save_dir: None,
         });
+        self.lsp_attach_tab(path, language, &state, window, cx);
         self.file_tree.select_path(path, cx);
         self.focus_after_tree_open(permanent, window, cx);
         self.persist_session(cx);
@@ -1562,15 +2104,20 @@ impl IsengardApp {
         if document::is_untitled(path) {
             anyhow::bail!("untitled buffer needs a path");
         }
-        let Some(tab) = self.tabs.find_mut(|t| t.path == path) else {
-            return Ok(());
+        let saved_path = {
+            let Some(tab) = self.tabs.find_mut(|t| t.path == path) else {
+                return Ok(());
+            };
+            let Some(state) = tab.editor_state() else {
+                return Ok(());
+            };
+            let text = state.read(cx).value();
+            let saved_path = tab.path.clone();
+            document::write_text(&saved_path, &text)?;
+            tab.is_modified = false;
+            saved_path
         };
-        let Some(state) = tab.editor_state() else {
-            return Ok(());
-        };
-        let text = state.read(cx).value();
-        document::write_text(&tab.path, &text)?;
-        tab.is_modified = false;
+        self.reload_lsp_settings_if_config(&saved_path);
         cx.notify();
         Ok(())
     }
@@ -1686,20 +2233,31 @@ impl IsengardApp {
                 .position(|t| t.path == new_path)
                 .unwrap_or(existing);
             self.activate_tab(ix, window, cx);
-        } else if let Some(tab) = self.tabs.find_mut(|t| t.path == *old_path) {
-            tab.path = new_path.clone();
-            tab.is_modified = false;
-            tab.untitled_save_dir = None;
-            if let TabBody::Text {
-                language, state, ..
-            } = &mut tab.body
-            {
-                let lang = Language::from_path(&new_path);
-                *language = lang;
-                let name = lang.highlighter_name();
-                state.update(cx, |state, cx| {
-                    state.set_highlighter(name, cx);
-                });
+        } else {
+            let attach = if let Some(tab) = self.tabs.find_mut(|t| t.path == *old_path) {
+                tab.path = new_path.clone();
+                tab.is_modified = false;
+                tab.untitled_save_dir = None;
+                if let TabBody::Text {
+                    language, state, ..
+                } = &mut tab.body
+                {
+                    let lang = Language::from_path(&new_path);
+                    *language = lang;
+                    let name = lang.highlighter_name();
+                    state.update(cx, |state, cx| {
+                        state.set_highlighter(name, cx);
+                    });
+                    Some((lang, state.clone()))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            self.lsp.did_close(old_path);
+            if let Some((language, state)) = attach {
+                self.lsp_attach_tab(&new_path, language, &state, window, cx);
             }
         }
 
@@ -1848,6 +2406,9 @@ impl IsengardApp {
         indexes.sort_unstable();
         indexes.dedup();
         for ix in indexes.into_iter().rev() {
+            if let Some(tab) = self.tabs.get(ix) {
+                self.lsp.did_close(&tab.path);
+            }
             self.tabs.remove(ix);
         }
         self.sync_git_active_from_tab(cx);
@@ -2202,7 +2763,7 @@ impl IsengardApp {
             return Err(format!("\"{name}\" already exists."));
         }
         std::fs::rename(path, &new_path).map_err(|err| format!("Rename failed: {err}"))?;
-        self.remap_open_paths(path, &new_path, cx);
+        self.remap_open_paths(path, &new_path, window, cx);
         if self.workspace.replace_folder(path, &new_path) {
             self.persist_workspace(window, cx);
             self.workspace_changed(window, cx);
@@ -2244,7 +2805,13 @@ impl IsengardApp {
     }
 
     /// Retargets open tabs whose path equals `from` or lives under it.
-    fn remap_open_paths(&mut self, from: &Path, to: &Path, cx: &mut Context<Self>) {
+    fn remap_open_paths(
+        &mut self,
+        from: &Path,
+        to: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let indexes: Vec<usize> = self
             .tabs
             .iter()
@@ -2253,27 +2820,38 @@ impl IsengardApp {
             .map(|(ix, _)| ix)
             .collect();
         for ix in indexes {
-            let Some(tab) = self.tabs.get_mut(ix) else {
-                continue;
+            let (old_path, new_path, attach) = {
+                let Some(tab) = self.tabs.get_mut(ix) else {
+                    continue;
+                };
+                let new_path = if tab.path == from {
+                    to.to_path_buf()
+                } else if let Ok(rest) = tab.path.strip_prefix(from) {
+                    to.join(rest)
+                } else {
+                    continue;
+                };
+                let old_path = tab.path.clone();
+                tab.path = new_path.clone();
+                let attach = if let TabBody::Text {
+                    language, state, ..
+                } = &mut tab.body
+                {
+                    let lang = Language::from_path(&new_path);
+                    *language = lang;
+                    let name = lang.highlighter_name();
+                    state.update(cx, |state, cx| {
+                        state.set_highlighter(name, cx);
+                    });
+                    Some((lang, state.clone()))
+                } else {
+                    None
+                };
+                (old_path, new_path, attach)
             };
-            let new_path = if tab.path == from {
-                to.to_path_buf()
-            } else if let Ok(rest) = tab.path.strip_prefix(from) {
-                to.join(rest)
-            } else {
-                continue;
-            };
-            tab.path = new_path.clone();
-            if let TabBody::Text {
-                language, state, ..
-            } = &mut tab.body
-            {
-                let lang = Language::from_path(&new_path);
-                *language = lang;
-                let name = lang.highlighter_name();
-                state.update(cx, |state, cx| {
-                    state.set_highlighter(name, cx);
-                });
+            self.lsp.did_close(&old_path);
+            if let Some((language, state)) = attach {
+                self.lsp_attach_tab(&new_path, language, &state, window, cx);
             }
         }
     }
@@ -4031,6 +4609,44 @@ impl IsengardApp {
         });
     }
 
+    fn on_open_config_file(
+        &mut self,
+        _: &OpenConfigFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = AppConfig::default_path() else {
+            return notify_error("Could not resolve config directory", window, cx);
+        };
+        if !path.exists() {
+            self.config.save();
+        }
+        // Ensure parent exists even if save was a no-op somehow.
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if !path.exists() {
+            if let Err(err) = self.config.save_to(&path) {
+                return notify_error(format!("Could not create config: {err:#}"), window, cx);
+            }
+        }
+        self.open_file(&path, true, window, cx);
+    }
+
+    /// If the user saved `config.json`, pick up LSP settings without restart.
+    fn reload_lsp_settings_if_config(&mut self, path: &Path) {
+        let Some(config_path) = AppConfig::default_path() else {
+            return;
+        };
+        if path != config_path {
+            return;
+        }
+        self.config = AppConfig::load_from(&config_path);
+        self.lsp.set_settings(self.config.lsp.clone());
+        // Already-running servers keep old settings until workspace switch /
+        // reopen; new attaches use the updated map.
+    }
+
     fn on_quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
         if self.confirm_quit(window, cx) {
             self.quit(cx);
@@ -4645,6 +5261,11 @@ impl IsengardApp {
                 })
             });
 
+        let focus_lang = self.tabs.active().and_then(|t| t.language());
+        let lsp_catalog = self.lsp.catalog_servers(focus_lang);
+        // Always offer the icon while a folder is open (empty → short hint).
+        let show_lsp = has_folders;
+
         let right = h_flex()
             .gap_4()
             .items_center()
@@ -4660,6 +5281,143 @@ impl IsengardApp {
                 } else {
                     this.child("Image")
                 }
+            })
+            .when(show_lsp, |this| {
+                let agg = lsp_aggregate_color(&lsp_catalog, cx);
+                let app = cx.entity().downgrade();
+                let servers = lsp_catalog;
+                this.child(
+                    Badge::new()
+                        .dot()
+                        .xsmall()
+                        .color(agg)
+                        .child(
+                            Popover::new("lsp-catalog")
+                                .anchor(Anchor::BottomRight)
+                                .trigger(
+                                    Button::new("status-lsp")
+                                        .ghost()
+                                        .cursor_pointer()
+                                        .small()
+                                        .icon(LucideIcon::BrainCircuit)
+                                        .tooltip("Language Servers"),
+                                )
+                                .content(move |_, _, cx| {
+                                    let empty = servers.is_empty();
+                                    v_flex()
+                                        .w(px(280.))
+                                        .max_h(px(280.))
+                                        .gap_1()
+                                        .overflow_y_scrollbar()
+                                        .when(empty, |col| {
+                                            col.child(
+                                                div()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .text_sm()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        "Open a supported file to install its \
+                                                         language server.",
+                                                    ),
+                                            )
+                                        })
+                                        .children(servers.iter().map(|server| {
+                                            let app_install = app.clone();
+                                            let app_remove = app.clone();
+                                            let key = server.process_key.clone();
+                                            let key_remove = key.clone();
+                                            let label = server.label.clone();
+                                            let status_color = match &server.status {
+                                                ServerDisplayStatus::Running => {
+                                                    cx.theme().success
+                                                }
+                                                ServerDisplayStatus::Starting => {
+                                                    cx.theme().warning
+                                                }
+                                                ServerDisplayStatus::Error(_) => {
+                                                    cx.theme().danger
+                                                }
+                                                ServerDisplayStatus::Idle => {
+                                                    cx.theme().muted_foreground
+                                                }
+                                            };
+                                            // Status is the coloured dot only. Empty flex
+                                            // kids collapse `size_*` into a hairline bar —
+                                            // pin both axes with min_w/min_h.
+                                            let can_install =
+                                                !server.installed && server.recipe.is_some();
+                                            let can_remove = server.installed;
+                                            h_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .gap_2()
+                                                .px_1()
+                                                .py_1()
+                                                .child(
+                                                    div()
+                                                        .w(px(7.))
+                                                        .h(px(7.))
+                                                        .min_w(px(7.))
+                                                        .min_h(px(7.))
+                                                        .rounded_full()
+                                                        .flex_shrink_0()
+                                                        .bg(status_color),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .flex_1()
+                                                        .text_sm()
+                                                        .truncate()
+                                                        .child(label),
+                                                )
+                                                .when(can_install, |row| {
+                                                    row.child(
+                                                        Button::new(SharedString::from(
+                                                            format!("lsp-install-{key}"),
+                                                        ))
+                                                        .ghost()
+                                                        .cursor_pointer()
+                                                        .xsmall()
+                                                        .icon(LucideIcon::Download)
+                                                        .tooltip("Install")
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ =
+                                                                app_install.update(cx, |this, cx| {
+                                                                    this.run_lsp_install_command(
+                                                                        &key, window, cx,
+                                                                    );
+                                                                });
+                                                        }),
+                                                    )
+                                                })
+                                                .when(can_remove, |row| {
+                                                    row.child(
+                                                        Button::new(SharedString::from(
+                                                            format!("lsp-remove-{key_remove}"),
+                                                        ))
+                                                        .ghost()
+                                                        .cursor_pointer()
+                                                        .xsmall()
+                                                        .icon(LucideIcon::Trash)
+                                                        .tooltip("Remove")
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ =
+                                                                app_remove.update(cx, |this, cx| {
+                                                                    this.offer_lsp_remove(
+                                                                        &key_remove,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                        }),
+                                                    )
+                                                })
+                                        }))
+                                }),
+                        ),
+                )
             })
             .when(has_folders, |this| {
                 this.child(
@@ -4817,6 +5575,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_new_terminal))
             .on_action(cx.listener(Self::on_terminal_tabs_changed))
             .on_action(cx.listener(Self::on_about))
+            .on_action(cx.listener(Self::on_open_config_file))
             .on_action(cx.listener(Self::on_quit))
             .child(self.render_title_bar(cx))
             .child(div().flex_1().min_h_0().child(main))

@@ -108,6 +108,14 @@ src/
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
 │   ├── highlights.rs    patches empty GPUI Kit highlight queries (GraphQL)
 │   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
+├── lsp/                 Language Server Protocol (IntelliSense)
+│   ├── host.rs          workspace servers, didOpen/Change/Close, diagnostics pump
+│   ├── client.rs        stdio JSON-RPC client (flume + background thread)
+│   ├── bridge.rs        Kit Completion/Hover/DefinitionProvider + showDocument
+│   ├── registry.rs      Language → default ServerSpec + config overrides
+│   ├── install.rs       one-click install recipes (rustup/npm/pip/…)
+│   ├── protocol.rs      Content-Length framing
+│   └── uri.rs           file:// path ↔ Uri
 ├── file_tree/
 │   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
 │   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)
@@ -153,8 +161,23 @@ src/
   A global `Quit` fallback in `app::init` quits without checking (used when a
   dialog holds focus).
 - **Tabs**: `TabList<EditorTab>`; each `EditorTab` owns an `Entity<EditorState>`
-  plus two subscriptions: `InputEvent::Change` → mark modified, and `observe` →
-  re-render (keeps Ln/Col current).
+  plus two subscriptions: `InputEvent::Change` → mark modified (+ LSP
+  `didChange`), and `observe` → re-render (keeps Ln/Col current).
+- **LSP**: `IsengardApp::lsp` (`LspHost`) resolves `Language` +
+  `AppConfig.lsp` via `lsp::registry::resolve` (built-in PATH defaults +
+  per-language enable/command/args). Lazy-start on first matching file open;
+  full-document `didChange`; `publishDiagnostics` → Kit `diagnostics_mut`.
+  Providers hang on `EditorState::lsp_mut()`. Cross-file go-to-def uses Kit
+  `show_document` → `open_file` + cursor. Workspace switch shuts servers down.
+  No Tokio — stdio + flume like the terminal. Start is async so the status bar
+  can show yellow while spawning. Missing server → Install dialog
+  (`lsp::install` recipes) or toast. Status bar: one icon → short Popover
+  (`catalog_servers(focus)` = known/live + active-tab language only — not the
+  full registry). Download runs a **shell recipe** (`npm`/`rustup`/… into the
+  OS/user toolchain — not app-bundled; Zed-style per-app download is future).
+  Trash → `remove_server` / `run_uninstall`. Server map is hand-maintained in
+  `lsp/registry.rs` + `lsp/install.rs` (no official global LSP catalog). Edit
+  config via Isengard → Open Config File… (no settings panel).
 - **Workspace**: `IsengardApp::workspace` is the source of truth for open
   folders; after changing it call `workspace_changed` (re-syncs the tree via
   `FileTreePanel::set_folders` and the titles) and `persist_workspace` (writes
@@ -266,5 +289,8 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 `flume`, `ropey` for the adapted view). Project search: `regex = "1"`,
 `aho-corasick = "1"`, existing `ignore = "0.4"` (parallel `WalkBuilder`,
 `require_git(false)`, `max_filesize`). Source Control shells out to system
-`git` on PATH (no `git2`/`gix`). Do not depend on crates.io
-`gpui-terminal` — it targets a different GPUI; our panel is a local adaptation.
+`git` on PATH (no `git2`/`gix`). LSP: `lsp-types = "0.97"` (same as Kit) +
+`url = "2"` for `file://` URIs; servers are external binaries on PATH (not
+bundled). `AppConfig.lsp` holds the master switch and `languages` map. Do not
+depend on crates.io `gpui-terminal` — it targets a different GPUI; our panel
+is a local adaptation.

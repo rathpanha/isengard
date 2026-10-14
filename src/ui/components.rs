@@ -22,16 +22,17 @@ pub fn center_dialog(dialog: Dialog, window: &Window) -> Dialog {
     dialog.margin_top(((h - px(DIALOG_CENTER_HEIGHT)) / 2.).max(px(24.)))
 }
 
-/// One-line success toast with icon + text vertically centred.
+/// Success toast with icon + wrapping message.
 ///
 /// Kit's typed `Notification::success` absolutely places the icon at
 /// `top: 18px` (title-row layout), which misaligns short message-only toasts.
-/// We skip `with_type` and lay out the row ourselves.
+/// We skip `with_type` and lay out the row ourselves. Text must
+/// `min_w_0` + `whitespace_normal` or Kit's toast `overflow_hidden` clips it.
 pub fn notify_success(message: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
     notify_with_icon(message, IconName::CircleCheck, |cx| cx.theme().success, window, cx);
 }
 
-/// One-line error toast with icon + text vertically centred. See [`notify_success`].
+/// Error toast with icon + wrapping message. See [`notify_success`].
 pub fn notify_error(message: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
     notify_with_icon(message, IconName::CircleX, |cx| cx.theme().danger, window, cx);
 }
@@ -47,10 +48,23 @@ fn notify_with_icon(
     window.push_notification(
         Notification::new().content(move |_, _, cx| {
             h_flex()
-                .items_center()
+                .w_full()
+                .items_start()
                 .gap_2()
-                .child(Icon::new(icon.clone()).text_color(color(cx)).small())
-                .child(div().text_sm().child(message.clone()))
+                .child(
+                    // Optical align with the first text line (~14px sm + icon).
+                    div()
+                        .pt_0p5()
+                        .child(Icon::new(icon.clone()).text_color(color(cx)).small()),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .text_sm()
+                        .whitespace_normal()
+                        .child(message.clone()),
+                )
                 .into_any_element()
         }),
         cx,

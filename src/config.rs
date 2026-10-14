@@ -113,6 +113,54 @@ impl Default for WorkspaceSession {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
+/// Per-language LSP overrides under `lsp.languages.<id>` (ids from
+/// [`crate::lsp::registry::config_key`], e.g. `rust`, `python`, `typescript`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LspLanguageSettings {
+    /// `false` disables this language. Omitted → on when a default server exists
+    /// (or when `command` is set for a language without a built-in default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Replace the built-in executable (still resolved via `PATH` unless absolute).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Replace the built-in argv (use `[]` for no args).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+}
+
+/// Language servers are not bundled — install binaries yourself, then point
+/// Isengard at them (defaults assume common names on `PATH`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LspSettings {
+    /// Master switch for all language servers.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Per-language enable / command / args overrides.
+    #[serde(default)]
+    pub languages: BTreeMap<String, LspLanguageSettings>,
+    /// Process keys (usually binary names) the user has installed / used —
+    /// shown in the status bar even when idle.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known: Vec<String>,
+}
+
+impl Default for LspSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            languages: BTreeMap::new(),
+            known: Vec::new(),
+        }
+    }
+}
+
 /// User-facing settings, persisted as JSON in the platform config directory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -121,6 +169,9 @@ pub struct AppConfig {
     pub font_size: f32,
     /// Claude model used by the (upcoming) AI panel.
     pub model: String,
+    /// Language Server Protocol (IntelliSense) — see [`LspSettings`].
+    #[serde(default)]
+    pub lsp: LspSettings,
     /// Last windowed (or restore-from-maximized) width in pixels.
     pub window_width: f32,
     /// Last windowed (or restore-from-maximized) height in pixels.
@@ -147,6 +198,7 @@ impl Default for AppConfig {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
             model: "claude-sonnet-4-5".to_owned(),
+            lsp: LspSettings::default(),
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,
             window_x: None,
@@ -398,6 +450,27 @@ mod tests {
         assert_eq!(entry.path(), Path::new("/code/app/main.rs"));
         assert_eq!(entry.view().cursor_line, 3);
         assert_eq!(entry.view().scroll_y, -40.0);
+    }
+
+    #[test]
+    fn lsp_settings_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.lsp.languages.insert(
+            "python".into(),
+            LspLanguageSettings {
+                enabled: Some(true),
+                command: Some("pyright-langserver".into()),
+                args: Some(vec!["--stdio".into()]),
+            },
+        );
+        config.save_to(&path).unwrap();
+        let loaded = AppConfig::load_from(&path);
+        assert!(loaded.lsp.enabled);
+        let py = loaded.lsp.languages.get("python").unwrap();
+        assert_eq!(py.command.as_deref(), Some("pyright-langserver"));
+        assert_eq!(py.args.as_ref().unwrap(), &["--stdio".to_string()]);
     }
 
     #[test]

@@ -3634,6 +3634,7 @@ dependencies = [
  "ignore",
  "image",
  "log",
+ "lsp-types",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -3648,6 +3649,7 @@ dependencies = [
  "similar",
  "tempfile",
  "trash",
+ "url",
 ]
 
 [[package]]

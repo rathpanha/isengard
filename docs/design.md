@@ -146,8 +146,12 @@ Add a row here whenever a new shared component is created.
   only while a folder is open and the sidebar is not minimized; the welcome
   screen replaces the workspace when nothing is open; the terminal panel is
   omitted entirely when minimized (no empty strip). Status bar only while a
-  folder/workspace is open (panel toggles; path / Ln·Col when a file tab is
-  active) — not on welcome.
+  folder/workspace is open (panel toggles; path / Ln·Col / language when a
+  file tab is active) — not on welcome. Language servers: one status-bar
+  `BrainCircuit` icon (badge from live servers). Popover lists only installed /
+  remembered servers plus the active tab’s default (not every language). Row:
+  status **dot** (fixed 7×7 circle — not a collapsed bar) + name; Download /
+  Trash icons. Install is still a shell recipe into the user toolchain.
 - **Bottom terminal panel:** Kit `v_resizable("editor-term-split")` under the
   **editor column only** (file tree stays full height in `main-split`); when
   the sidebar is hidden, under the full editor body. Requires an open
@@ -322,3 +326,6 @@ Add a row here whenever a new shared component is created.
 - **Slogan:** welcome subtitle and About / bundle blurb —
   "The already configured editor" (no settings-panel cosplay). About may add
   one short supporting line; don't invent a second tagline.
+- **Config, not Preferences UI:** durable knobs (e.g. LSP enable/command)
+  live in `config.json`. Expose **Open Config File…** in the Isengard menu;
+  do not add a settings / preferences panel.

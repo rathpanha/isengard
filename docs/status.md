@@ -37,6 +37,15 @@ tabs, highlighted editor, status bar):
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
   `tree-sitter-languages`; line numbers, indent guides, search; unknown
   extensions stay Plain Text. Syntax: Ayu Darker; editor/gutter bg = sidebar.
+  **IntelliSense (LSP):** not bundled — registry maps many languages to
+  common PATH binaries (`rust-analyzer`, `gopls`, `typescript-language-server`,
+  `pylsp`, `clangd`, …). Missing binary: dialog with **Install** when we know
+  a recipe (runs `rustup` / `npm` / `pip` / … for you); otherwise a toast.
+  Status bar: one LSP icon → short list (active language + installed) with
+  Install / Remove icons. List source: our `lsp/registry` map (not an official
+  LSP index). Install today = OS/user package commands; app-local downloads
+  (Zed-style) not built yet. `config.json` → `lsp`; Open Config File….
+  Untitled buffers skip LSP until saved.
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
@@ -85,6 +94,9 @@ shortcuts. Check these first if something is off.
 
 ## Known issues / TODO
 
+- LSP: no code actions, rename, format-on-save, or bundled servers. Changing
+  `lsp` in config applies to newly attached buffers; already-running servers
+  need a workspace switch / reopen to pick up a different command.
 - Terminal scrollback UI still minimal (selection/copy/paste/URL-click work).
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).

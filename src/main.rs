@@ -4,6 +4,7 @@ mod config;
 mod editor;
 mod file_tree;
 mod git;
+mod lsp;
 mod menus;
 mod search;
 #[allow(dead_code, clippy::type_complexity, clippy::manual_range_contains)]
@@ -36,6 +37,11 @@ gpui_kit::assets::icon_assets!(
         Regex,
         Replace,
         ReplaceAll,
+        // Status bar LSP catalog (not in default ~101 set).
+        BrainCircuit,
+        Circle,
+        Download,
+        Trash,
     ]
 );
 

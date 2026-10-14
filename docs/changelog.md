@@ -3,6 +3,23 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-14** — LSP row status is a fixed circular dot (not a collapsed bar).
+- **2026-10-14** — LSP popover lists only active-language + installed servers
+  (not the full registry dump).
+- **2026-10-14** — LSP status icon opens a catalog with Install / Remove icon
+  actions (registry recipes; not bundled servers).
+- **2026-10-14** — Opt in `BrainCircuit` / `Circle` Lucide assets so the LSP
+  status-bar icon actually paints.
+- **2026-10-14** — Status bar LSP is one icon; click opens server list to
+  Remove (uninstall), with a status badge on the icon.
+- **2026-10-14** — Toast messages wrap instead of clipping (long LSP install
+  errors).
+- **2026-10-14** — Missing language server offers an Install dialog (known
+  recipes run rustup/npm/pip/…); otherwise a toast.
+- **2026-10-14** — LSP registry covers common PATH servers; `config.json`
+  `lsp` overrides + Isengard → Open Config File… (no bundled servers).
+- **2026-10-14** — LSP IntelliSense MVP: stdio client + Kit providers
+  (completion, hover, go-to-definition, diagnostics).
 - **2026-10-14** — Diff/conflict preview tabs restore across sessions
   (while the path is still dirty).
 - **2026-10-14** — Active diff/conflict tab highlights its Source Control
