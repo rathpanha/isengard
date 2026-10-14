@@ -42,8 +42,9 @@ use crate::editor::language::Language;
 use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
 use crate::git::{
-    ConflictSide, GitPanel, GitPanelEvent, OverviewMark, conflict_file_sides, file_sides,
-    line_highlight_ranges, overview_marks,
+    ConflictHunk, ConflictSide, GitPanel, GitPanelEvent, HunkSide, OverviewMark, RepoStatus,
+    apply_hunk_choices, change_at_path, conflict_file_sides, conflict_hunks, file_sides,
+    line_highlight_ranges, load_workspace_status, overview_marks,
 };
 use crate::search::{
     SearchMatch, SearchPanel, SearchPanelEvent, SearchQuery, apply_replace, run_search,
@@ -491,7 +492,16 @@ enum DiffKind {
     Conflict {
         repo: PathBuf,
         rel_path: String,
+        /// Per-hunk choice (`None` = still open). Length matches `conflict_hunks`.
+        hunk_choices: Vec<Option<ConflictSide>>,
     },
+}
+
+fn conflict_side_to_hunk(side: ConflictSide) -> HunkSide {
+    match side {
+        ConflictSide::Current => HunkSide::Old,
+        ConflictSide::Incoming => HunkSide::New,
+    }
 }
 
 impl DiffKind {
@@ -641,6 +651,7 @@ impl IsengardApp {
                             rel_path.clone(),
                             *status,
                             old_rel_path.clone(),
+                            true,
                             window,
                             cx,
                         );
@@ -654,6 +665,7 @@ impl IsengardApp {
                             repo.clone(),
                             path.clone(),
                             rel_path.clone(),
+                            true,
                             window,
                             cx,
                         );
@@ -1026,9 +1038,7 @@ impl IsengardApp {
         let open_files = self
             .tabs
             .iter()
-            .filter(|tab| {
-                !document::is_untitled(&tab.path) && !document::is_git_preview(&tab.path)
-            })
+            .filter(|tab| !document::is_untitled(&tab.path))
             .map(|tab| {
                 let view = tab
                     .editor_state()
@@ -1051,9 +1061,7 @@ impl IsengardApp {
         let active = self
             .tabs
             .active()
-            .filter(|t| {
-                !document::is_untitled(&t.path) && !document::is_git_preview(&t.path)
-            })
+            .filter(|t| !document::is_untitled(&t.path))
             .map(|t| t.path.clone());
         let session = WorkspaceSession {
             open_files,
@@ -1100,8 +1108,19 @@ impl IsengardApp {
             DEFAULT_TERMINAL_HEIGHT
         };
         self.file_tree.expand_paths(&session.expanded, cx);
+        let git_statuses = session
+            .open_files
+            .iter()
+            .any(|e| document::is_git_preview(e.path()))
+            .then(|| load_workspace_status(self.workspace.folders()));
         for entry in &session.open_files {
             let path = entry.path();
+            if document::is_git_preview(path) {
+                if self.restore_git_preview_tab(path, git_statuses.as_deref(), window, cx) {
+                    self.apply_diff_view(path, &entry.view(), window, cx);
+                }
+                continue;
+            }
             if !path.is_file() {
                 continue;
             }
@@ -1115,7 +1134,11 @@ impl IsengardApp {
             if let Some(entry) = session.open_files.iter().find(|e| e.path() == active.as_path())
             {
                 // Re-apply scroll after activate; cursor move-to can shift the viewport.
-                self.apply_file_view(active, &entry.view(), window, cx);
+                if document::is_git_preview(active) {
+                    self.apply_diff_view(active, &entry.view(), window, cx);
+                } else {
+                    self.apply_file_view(active, &entry.view(), window, cx);
+                }
             }
         }
         self.terminal.update(cx, |term, cx| {
@@ -1147,6 +1170,35 @@ impl IsengardApp {
         else {
             return;
         };
+        Self::apply_editor_view(&state, view, window, cx);
+    }
+
+    /// Restore cursor/scroll on both Diff panes (scroll is locked).
+    fn apply_diff_view(
+        &self,
+        path: &Path,
+        view: &FileViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((old, new)) = self.tabs.iter().find(|t| t.path == path).and_then(|t| {
+            match &t.body {
+                TabBody::Diff { old, new, .. } => Some((old.clone(), new.clone())),
+                _ => None,
+            }
+        }) else {
+            return;
+        };
+        Self::apply_editor_view(&old, view, window, cx);
+        Self::apply_editor_view(&new, view, window, cx);
+    }
+
+    fn apply_editor_view(
+        state: &Entity<EditorState>,
+        view: &FileViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         state.update(cx, |state, cx| {
             // gpui prelude's `Position` is CSS; the editor uses LSP Position from Kit.
             state.set_cursor_position(
@@ -1159,6 +1211,43 @@ impl IsengardApp {
             );
             state.set_scroll_offset(point(px(view.scroll_x), px(view.scroll_y)), cx);
         });
+    }
+
+    /// Reopen a saved `isengard-diff:` / `isengard-conflict:` tab if still dirty.
+    ///
+    /// Returns false when the path is no longer a change (resolved / gone).
+    fn restore_git_preview_tab(
+        &mut self,
+        virtual_path: &Path,
+        statuses: Option<&[RepoStatus]>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(file) = document::git_preview_worktree_path(virtual_path) else {
+            return false;
+        };
+        let Some(statuses) = statuses else {
+            return false;
+        };
+        let Some((repo, change)) = change_at_path(statuses, &file) else {
+            return false;
+        };
+        if change.status == 'U' {
+            self.open_git_conflict(repo, file, change.rel_path, false, window, cx);
+            return true;
+        }
+        // Conflict cleared but still dirty → change diff; otherwise reopen change.
+        self.open_git_diff(
+            repo,
+            file,
+            change.rel_path,
+            change.status,
+            change.old_rel_path,
+            false,
+            window,
+            cx,
+        );
+        true
     }
 
     /// Asks where to save the workspace file, saves it, then continues with `next`.
@@ -1443,10 +1532,22 @@ impl IsengardApp {
             if let Some(path) = self.tabs.active().map(|t| t.path.clone()) {
                 self.file_tree.select_path(&path, cx);
             }
+            self.sync_git_active_from_tab(cx);
             self.focus_active_editor(window, cx);
             self.persist_session(cx);
             cx.notify();
         }
+    }
+
+    /// Highlight the Source Control row for the active diff/conflict tab.
+    fn sync_git_active_from_tab(&mut self, cx: &mut Context<Self>) {
+        let path = self
+            .tabs
+            .active()
+            .and_then(|t| document::git_preview_worktree_path(&t.path));
+        self.git.update(cx, |panel, cx| {
+            panel.set_active_path(path, cx);
+        });
     }
 
     fn focus_active_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1749,6 +1850,7 @@ impl IsengardApp {
         for ix in indexes.into_iter().rev() {
             self.tabs.remove(ix);
         }
+        self.sync_git_active_from_tab(cx);
         self.focus_active_editor(window, cx);
         self.persist_session(cx);
         self.refresh_menus(cx);
@@ -3057,6 +3159,7 @@ impl IsengardApp {
         rel_path: String,
         status: char,
         old_rel_path: Option<String>,
+        preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3073,6 +3176,7 @@ impl IsengardApp {
             DiffKind::Change,
             old_text,
             new_text,
+            preview,
             window,
             cx,
         );
@@ -3084,6 +3188,7 @@ impl IsengardApp {
         repo: PathBuf,
         file: PathBuf,
         rel_path: String,
+        preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3093,12 +3198,18 @@ impl IsengardApp {
                 return notify_error(format!("Conflict compare failed: {err}"), window, cx);
             }
         };
+        let hunk_choices = vec![None; conflict_hunks(&ours, &theirs).len()];
         self.open_side_by_side_diff(
             document::conflict_preview_path(&file),
             Language::from_path(&file),
-            DiffKind::Conflict { repo, rel_path },
+            DiffKind::Conflict {
+                repo,
+                rel_path,
+                hunk_choices,
+            },
             ours,
             theirs,
+            preview,
             window,
             cx,
         );
@@ -3111,6 +3222,7 @@ impl IsengardApp {
         kind: DiffKind,
         old_text: String,
         new_text: String,
+        preview: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3128,8 +3240,14 @@ impl IsengardApp {
                     state.set_value(new_text.clone(), window, cx);
                     state.set_readonly(true, cx);
                 });
-                let highlights =
-                    Self::apply_diff_highlights(&old, &new, &old_text, &new_text, cx);
+                let highlights = Self::apply_diff_pane_highlights(
+                    &old,
+                    &new,
+                    &old_text,
+                    &new_text,
+                    &kind,
+                    cx,
+                );
                 if let Some(tab) = self.tabs.get_mut(ix)
                     && let TabBody::Diff {
                         kind: tab_kind,
@@ -3142,26 +3260,43 @@ impl IsengardApp {
                     _highlights.1.dispose(cx);
                     *_highlights = highlights;
                 }
+                Self::scroll_diff_to_first_change(&old, &new, &old_text, &new_text, window, cx);
             }
             self.tabs.activate(ix);
+            self.sync_git_active_from_tab(cx);
             self.focus_active_editor(window, cx);
             cx.notify();
             return;
         }
 
         // Replace active preview tab when present (VS Code–style).
-        let preview_ix = self
-            .tabs
-            .active_index()
-            .filter(|&ix| self.tabs.get(ix).is_some_and(|t| t.preview));
-        if let Some(ix) = preview_ix {
-            self.tabs.remove(ix);
+        if preview {
+            let preview_ix = self
+                .tabs
+                .active_index()
+                .filter(|&ix| self.tabs.get(ix).is_some_and(|t| t.preview));
+            if let Some(ix) = preview_ix {
+                self.tabs.remove(ix);
+            }
         }
 
-        let old = Self::new_diff_editor(language, old_text.clone(), window, cx);
-        let new = Self::new_diff_editor(language, new_text.clone(), window, cx);
-        let highlights = Self::apply_diff_highlights(&old, &new, &old_text, &new_text, cx);
+        // Conflict: no line numbers / folding — less gutter so Accept can sit
+        // on the text column (Kit does not expose `line_number_width`).
+        let is_conflict = matches!(kind, DiffKind::Conflict { .. });
+        let old =
+            Self::new_diff_editor(language, old_text.clone(), is_conflict, window, cx);
+        let new =
+            Self::new_diff_editor(language, new_text.clone(), is_conflict, window, cx);
+        let highlights = Self::apply_diff_pane_highlights(
+            &old,
+            &new,
+            &old_text,
+            &new_text,
+            &kind,
+            cx,
+        );
         let subscriptions = Self::diff_scroll_subscriptions(&old, &new, window, cx);
+        Self::scroll_diff_to_first_change(&old, &new, &old_text, &new_text, window, cx);
         self.tabs.push(EditorTab {
             path: virtual_path,
             body: TabBody::Diff {
@@ -3173,11 +3308,46 @@ impl IsengardApp {
                 _subscriptions: subscriptions,
             },
             is_modified: false,
-            preview: true,
+            preview,
             untitled_save_dir: None,
         });
+        self.sync_git_active_from_tab(cx);
         self.focus_active_editor(window, cx);
         cx.notify();
+    }
+
+    /// Jump both panes to the first change hunk (long files open mid-diff).
+    fn scroll_diff_to_first_change(
+        old: &Entity<EditorState>,
+        new: &Entity<EditorState>,
+        old_text: &str,
+        new_text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hunk) = conflict_hunks(old_text, new_text).into_iter().next() else {
+            return;
+        };
+        old.update(cx, |state, cx| {
+            state.set_cursor_position(
+                Position {
+                    line: hunk.old_lines.start as u32,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
+        new.update(cx, |state, cx| {
+            state.set_cursor_position(
+                Position {
+                    line: hunk.new_lines.start as u32,
+                    character: 0,
+                },
+                window,
+                cx,
+            );
+        });
     }
 
     /// Keep Diff/Conflict panes locked to the same scroll offset.
@@ -3231,6 +3401,7 @@ impl IsengardApp {
         let virtual_path = document::conflict_preview_path(worktree_path);
         if let Some(ix) = self.tabs.position(|t| t.path == virtual_path) {
             self.tabs.remove(ix);
+            self.sync_git_active_from_tab(cx);
             cx.notify();
         }
     }
@@ -3258,16 +3429,112 @@ impl IsengardApp {
         });
     }
 
+    /// Accept one conflict hunk by index (inline Accept on that pane).
+    fn accept_conflict_hunk(
+        &mut self,
+        hunk_i: usize,
+        side: ConflictSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.tabs.active_index() else {
+            return;
+        };
+        let Some((old, new, repo, rel_path, mut choices)) =
+            self.tabs.get(ix).and_then(|t| match &t.body {
+                TabBody::Diff {
+                    kind:
+                        DiffKind::Conflict {
+                            repo,
+                            rel_path,
+                            hunk_choices,
+                        },
+                    old,
+                    new,
+                    ..
+                } => {
+                    let old_text = old.read(cx).value();
+                    let new_text = new.read(cx).value();
+                    let hunks = conflict_hunks(old_text.as_ref(), new_text.as_ref());
+                    if hunk_i >= hunks.len() {
+                        return None;
+                    }
+                    let mut choices = hunk_choices.clone();
+                    if choices.len() != hunks.len() {
+                        choices.resize(hunks.len(), None);
+                    }
+                    Some((
+                        old.clone(),
+                        new.clone(),
+                        repo.clone(),
+                        rel_path.clone(),
+                        choices,
+                    ))
+                }
+                _ => None,
+            })
+        else {
+            return;
+        };
+
+        choices[hunk_i] = Some(side);
+
+        let old_text = old.read(cx).value().to_string();
+        let new_text = new.read(cx).value().to_string();
+        let all_done = choices.iter().all(|c| c.is_some());
+
+        if all_done {
+            let sides: Vec<HunkSide> = choices
+                .iter()
+                .map(|c| conflict_side_to_hunk(c.expect("all_done")))
+                .collect();
+            match apply_hunk_choices(&old_text, &new_text, &sides) {
+                Ok(content) => {
+                    self.git.update(cx, |panel, cx| {
+                        panel.resolve_conflict_content(repo, rel_path, content, window, cx);
+                    });
+                }
+                Err(err) => notify_error(format!("Resolve failed: {err}"), window, cx),
+            }
+            return;
+        }
+
+        let kind = DiffKind::Conflict {
+            repo,
+            rel_path,
+            hunk_choices: choices,
+        };
+        let highlights =
+            Self::apply_diff_pane_highlights(&old, &new, &old_text, &new_text, &kind, cx);
+        if let Some(tab) = self.tabs.get_mut(ix)
+            && let TabBody::Diff {
+                kind: tab_kind,
+                _highlights,
+                ..
+            } = &mut tab.body
+        {
+            *tab_kind = kind;
+            _highlights.0.dispose(cx);
+            _highlights.1.dispose(cx);
+            *_highlights = highlights;
+        }
+        cx.notify();
+    }
+
     fn new_diff_editor(
         language: Language,
         text: String,
+        conflict: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<EditorState> {
         cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language(language.highlighter_name())
-                .line_number(true)
+                // Change diffs keep line numbers + folding. Conflict panes drop
+                // both so the Accept overlay can share the text column origin.
+                .line_number(!conflict)
+                .folding(!conflict)
                 .indent_guides(true)
                 .soft_wrap(false)
                 .tab_size(TabSize {
@@ -3280,18 +3547,70 @@ impl IsengardApp {
         })
     }
 
-    fn apply_diff_highlights(
+    fn apply_diff_pane_highlights(
         old: &Entity<EditorState>,
         new: &Entity<EditorState>,
         old_text: &str,
         new_text: &str,
+        kind: &DiffKind,
         cx: &mut Context<Self>,
     ) -> (RangeDecorationCollection, RangeDecorationCollection) {
-        let (old_ranges, new_ranges) = line_highlight_ranges(old_text, new_text);
+        match kind {
+            DiffKind::Conflict { hunk_choices, .. } => {
+                Self::apply_conflict_highlights(old, new, old_text, new_text, hunk_choices, cx)
+            }
+            DiffKind::Change => {
+                let (old_ranges, new_ranges) = line_highlight_ranges(old_text, new_text);
+                let del = cx.theme().danger.opacity(0.28);
+                let add = cx.theme().success.opacity(0.28);
+                (
+                    Self::diff_range_collection(old, &old_ranges, del, cx),
+                    Self::diff_range_collection(new, &new_ranges, add, cx),
+                )
+            }
+        }
+    }
+
+    /// Unresolved hunks: danger/success fills. Resolved: muted (still visible).
+    fn apply_conflict_highlights(
+        old: &Entity<EditorState>,
+        new: &Entity<EditorState>,
+        old_text: &str,
+        new_text: &str,
+        choices: &[Option<ConflictSide>],
+        cx: &mut Context<Self>,
+    ) -> (RangeDecorationCollection, RangeDecorationCollection) {
+        let hunks = conflict_hunks(old_text, new_text);
         let del = cx.theme().danger.opacity(0.28);
         let add = cx.theme().success.opacity(0.28);
-        let old_col = Self::diff_range_collection(old, &old_ranges, del, cx);
-        let new_col = Self::diff_range_collection(new, &new_ranges, add, cx);
+        let muted = cx.theme().muted_foreground.opacity(0.18);
+        let mut old_decs = Vec::new();
+        let mut new_decs = Vec::new();
+        for (i, hunk) in hunks.iter().enumerate() {
+            let resolved = choices.get(i).and_then(|c| *c).is_some();
+            let old_color = if resolved { muted } else { del };
+            let new_color = if resolved { muted } else { add };
+            if !hunk.old_bytes.is_empty() {
+                old_decs.push(
+                    RangeDecoration::new(hunk.old_bytes.clone())
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(old_color),
+                );
+            }
+            if !hunk.new_bytes.is_empty() {
+                new_decs.push(
+                    RangeDecoration::new(hunk.new_bytes.clone())
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(new_color),
+                );
+            }
+        }
+        let old_col = old.update(cx, |state, cx| {
+            state.create_range_decorations_collection(old_decs, cx)
+        });
+        let new_col = new.update(cx, |state, cx| {
+            state.create_range_decorations_collection(new_decs, cx)
+        });
         (old_col, new_col)
     }
 
@@ -3869,60 +4188,74 @@ impl IsengardApp {
 
         let show_preview_toolbar = active.supports_rendered_preview();
         let rendered_preview = active.rendered_preview();
-        let conflict_toolbar = matches!(
-            &active.body,
+        let conflict_toolbar = match &active.body {
             TabBody::Diff {
-                kind: DiffKind::Conflict { .. },
+                kind: DiffKind::Conflict { hunk_choices, .. },
+                old,
+                new,
                 ..
+            } => {
+                let old_text = old.read(cx).value();
+                let new_text = new.read(cx).value();
+                let total = conflict_hunks(old_text.as_ref(), new_text.as_ref()).len();
+                let done = hunk_choices.iter().filter(|c| c.is_some()).count();
+                let status = if total == 0 {
+                    "No line changes — use whole file".to_owned()
+                } else {
+                    format!("{done}/{total} changes · Accept on each highlight")
+                };
+                Some(
+                    h_flex()
+                        .w_full()
+                        .h(px(theme::PANEL_HEADER_ROW_H))
+                        .items_center()
+                        .justify_end()
+                        .gap_2()
+                        .px_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(status),
+                        )
+                        .child(
+                            Button::new("conflict-accept-current")
+                                .outline()
+                                .small()
+                                .cursor_pointer()
+                                .label("Accept Current")
+                                .tooltip("Accept whole file (Current)")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.accept_conflict_from_active_tab(
+                                        ConflictSide::Current,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            Button::new("conflict-accept-incoming")
+                                .outline()
+                                .small()
+                                .cursor_pointer()
+                                .label("Accept Incoming")
+                                .tooltip("Accept whole file (Incoming)")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.accept_conflict_from_active_tab(
+                                        ConflictSide::Incoming,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                )
             }
-        )
-        .then(|| {
-            h_flex()
-                .w_full()
-                .h(px(theme::PANEL_HEADER_ROW_H))
-                .items_center()
-                .justify_end()
-                .gap_2()
-                .px_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Accept whole file"),
-                )
-                .child(
-                    Button::new("conflict-accept-current")
-                        .outline()
-                        .small()
-                        .cursor_pointer()
-                        .label("Accept Current")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.accept_conflict_from_active_tab(
-                                ConflictSide::Current,
-                                window,
-                                cx,
-                            );
-                        })),
-                )
-                .child(
-                    Button::new("conflict-accept-incoming")
-                        .outline()
-                        .small()
-                        .cursor_pointer()
-                        .label("Accept Incoming")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.accept_conflict_from_active_tab(
-                                ConflictSide::Incoming,
-                                window,
-                                cx,
-                            );
-                        })),
-                )
-        });
+            _ => None,
+        };
         let preview_toolbar = show_preview_toolbar.then(|| {
             let preview = rendered_preview;
             h_flex()
@@ -3993,6 +4326,28 @@ impl IsengardApp {
             let add = cx.theme().success;
             let mono = cx.theme().mono_font_family.clone();
             let mono_size = cx.theme().mono_font_size;
+            let (old_accepts, new_accepts) = match &kind {
+                DiffKind::Conflict { hunk_choices, .. } => {
+                    let hunks = conflict_hunks(old_text.as_ref(), new_text.as_ref());
+                    (
+                        Self::conflict_hunk_accept_overlays(
+                            &old,
+                            &hunks,
+                            hunk_choices,
+                            ConflictSide::Current,
+                            cx,
+                        ),
+                        Self::conflict_hunk_accept_overlays(
+                            &new,
+                            &hunks,
+                            hunk_choices,
+                            ConflictSide::Incoming,
+                            cx,
+                        ),
+                    )
+                }
+                DiffKind::Change => (Vec::new(), Vec::new()),
+            };
             h_flex()
                 .size_full()
                 .min_w_0()
@@ -4006,6 +4361,7 @@ impl IsengardApp {
                     mono.clone(),
                     mono_size,
                     true,
+                    old_accepts,
                 ))
                 .child(Self::render_diff_pane(
                     kind.right_title(),
@@ -4017,6 +4373,7 @@ impl IsengardApp {
                     mono,
                     mono_size,
                     false,
+                    new_accepts,
                 ))
                 .into_any_element()
         } else if rendered_preview {
@@ -4095,6 +4452,7 @@ impl IsengardApp {
         mono: SharedString,
         mono_size: Pixels,
         with_right_border: bool,
+        hunk_accepts: Vec<AnyElement>,
     ) -> AnyElement {
         v_flex()
             .flex_1()
@@ -4115,13 +4473,14 @@ impl IsengardApp {
                     .child(title),
             )
             .child(
-                // Overview is an absolute overlay — a flex sibling with
-                // `relative()` mark heights blew out pane layout (empty void).
+                // Overview + hunk Accept chips are absolute overlays — a flex
+                // sibling with `relative()` mark heights blew out pane layout.
                 div()
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
                     .relative()
+                    .overflow_hidden()
                     .child(
                         Editor::new(state)
                             .readonly(true)
@@ -4131,9 +4490,82 @@ impl IsengardApp {
                             .font_family(mono)
                             .text_size(mono_size),
                     )
-                    .child(Self::render_diff_overview(marks, mark_color, border)),
+                    .child(Self::render_diff_overview(marks, mark_color, border))
+                    .children(hunk_accepts),
             )
             .into_any_element()
+    }
+
+    /// Accept chips at the text column of each unresolved hunk (viewport + scroll).
+    ///
+    /// Conflict editors use `line_number(false)` + `folding(false)`. Kit still
+    /// reserves `LINE_NUMBER_RIGHT_MARGIN` (6px) for code editors, and the
+    /// Editor paints a Medium code-editor left pad of `min(input_px, 6)` = 6px.
+    /// Overlay is a sibling of the whole Editor, so text column 0 is at 12px.
+    /// `ponytail:` hardcoded Kit constants — upgrade if gutter width goes public.
+    fn conflict_hunk_accept_overlays(
+        state: &Entity<EditorState>,
+        hunks: &[ConflictHunk],
+        choices: &[Option<ConflictSide>],
+        side: ConflictSide,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        // Must match gpui-base `LINE_NUMBER_RIGHT_MARGIN` + Kit code-editor pad.
+        const TEXT_LEFT: f32 = 6. + 6.;
+        let state_read = state.read(cx);
+        let line_h = state_read
+            .line_height()
+            .unwrap_or_else(|| cx.theme().mono_font_size * 1.4);
+        let scroll_y = state_read.scroll_offset().y;
+        let visible = state_read.visible_row_range();
+        let side_label = side.label();
+        let id_prefix = match side {
+            ConflictSide::Current => "hunk-accept-current",
+            ConflictSide::Incoming => "hunk-accept-incoming",
+        };
+
+        hunks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| choices.get(*i).copied().flatten().is_none())
+            .filter_map(|(i, hunk)| {
+                let line = match side {
+                    ConflictSide::Current => hunk.old_lines.start,
+                    ConflictSide::Incoming => hunk.new_lines.start,
+                };
+                if let Some(vis) = &visible
+                    && (line + 1 < vis.start || line > vis.end)
+                {
+                    return None;
+                }
+                let top = line_h * line as f32 + scroll_y;
+                if top + line_h < px(0.) {
+                    return None;
+                }
+                let tooltip = format!("Accept {side_label} for this change");
+                Some(
+                    div()
+                        .id(ElementId::Name(SharedString::from(format!(
+                            "{id_prefix}-{i}"
+                        ))))
+                        .absolute()
+                        .top(top)
+                        .left(px(TEXT_LEFT))
+                        .child(
+                            Button::new(SharedString::from(format!("{id_prefix}-btn-{i}")))
+                                .outline()
+                                .xsmall()
+                                .cursor_pointer()
+                                .label("Accept")
+                                .tooltip(tooltip)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.accept_conflict_hunk(i, side, window, cx);
+                                })),
+                        )
+                        .into_any_element(),
+                )
+            })
+            .collect()
     }
 
     /// Overview ticks overlaid on the Kit scrollbar track (no marker API).

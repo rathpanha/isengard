@@ -19,6 +19,7 @@ use crate::file_tree::tree_icon;
 
 use super::engine::{
     ConflictSide, GitChange, RepoOp, RepoStatus, accept_conflict_side, commit_paths,
+    write_resolved_conflict,
     conflict_banner, discard_all, discard_file, load_workspace_status, pull_ff_only, push,
     read_merge_msg, suggest_commit_message,
 };
@@ -81,6 +82,8 @@ pub struct GitPanel {
     refresh_generation: u64,
     /// Remember expand toggles across refresh (`true` = expanded).
     expanded: HashMap<PathBuf, bool>,
+    /// Absolute worktree path of the open diff/conflict tab (row highlight).
+    active_path: Option<PathBuf>,
     _message_subs: Vec<Subscription>,
 }
 
@@ -92,8 +95,18 @@ impl GitPanel {
             loading: false,
             refresh_generation: 0,
             expanded: HashMap::new(),
+            active_path: None,
             _message_subs: Vec::new(),
         }
+    }
+
+    /// Highlight the change row for the active diff/conflict tab (or clear).
+    pub fn set_active_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        if self.active_path == path {
+            return;
+        }
+        self.active_path = path;
+        cx.notify();
     }
 
     /// Replace workspace roots and reload status on a background thread.
@@ -348,6 +361,23 @@ impl GitPanel {
         );
     }
 
+    /// Write merged conflict content (hunk resolve) and stage it.
+    pub fn resolve_conflict_content(
+        &mut self,
+        root: PathBuf,
+        rel_path: String,
+        content: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_mutation(
+            root,
+            Mutation::ResolveConflictContent { rel_path, content },
+            window,
+            cx,
+        );
+    }
+
     fn run_mutation(
         &mut self,
         root: PathBuf,
@@ -394,7 +424,8 @@ impl GitPanel {
         let root_bg = root.clone();
         let clear_message = matches!(kind, Mutation::Commit);
         let reload_path = match &kind {
-            Mutation::AcceptConflict { rel_path, .. } => Some(root.join(rel_path)),
+            Mutation::AcceptConflict { rel_path, .. }
+            | Mutation::ResolveConflictContent { rel_path, .. } => Some(root.join(rel_path)),
             _ => None,
         };
 
@@ -439,6 +470,11 @@ impl GitPanel {
                         Mutation::AcceptConflict { rel_path, side } => {
                             accept_conflict_side(&root_bg, &rel_path, side).map(|_| {
                                 format!("Accepted {} for {rel_path}", side.label())
+                            })
+                        }
+                        Mutation::ResolveConflictContent { rel_path, content } => {
+                            write_resolved_conflict(&root_bg, &rel_path, &content).map(|_| {
+                                format!("Resolved {rel_path}")
                             })
                         }
                     }
@@ -491,6 +527,10 @@ enum Mutation {
         rel_path: String,
         side: ConflictSide,
     },
+    ResolveConflictContent {
+        rel_path: String,
+        content: String,
+    },
 }
 
 /// Which control is spinning while the repo is locked.
@@ -512,7 +552,10 @@ impl BusyOp {
             Mutation::Push => Self::Push,
             Mutation::DiscardAll => Self::DiscardAll,
             Mutation::DiscardFile { rel_path, .. } => Self::DiscardFile(rel_path.clone()),
-            Mutation::AcceptConflict { rel_path, .. } => Self::AcceptConflict(rel_path.clone()),
+            Mutation::AcceptConflict { rel_path, .. }
+            | Mutation::ResolveConflictContent { rel_path, .. } => {
+                Self::AcceptConflict(rel_path.clone())
+            }
         }
     }
 }
@@ -883,12 +926,14 @@ impl Render for GitPanel {
                             _ => theme.warning,
                         };
                         let is_selected = section.selected.contains(&change.rel_path);
+                        let is_active = self.active_path.as_ref() == Some(&change.path);
                         rows.push(render_change_row(
                             si,
                             ci,
                             &root,
                             change,
                             is_selected,
+                            is_active,
                             badge,
                             muted,
                             dark,
@@ -973,6 +1018,7 @@ fn render_change_row(
     repo: &Path,
     change: &GitChange,
     is_selected: bool,
+    is_active: bool,
     badge: Hsla,
     muted: Hsla,
     dark: bool,
@@ -1000,6 +1046,7 @@ fn render_change_row(
         .px_2()
         .py_0p5()
         .items_center()
+        .when(is_active, |el| el.bg(cx.theme().accent.opacity(0.35)))
         .child(
             Checkbox::new(format!("git-sel-{si}-{ci}"))
                 .small()
@@ -1020,6 +1067,7 @@ fn render_change_row(
             ))))
             .min_w_0()
             .flex_1()
+            .selected(is_active)
             .cursor_pointer()
             .py_0()
             .px_0()

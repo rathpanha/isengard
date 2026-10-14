@@ -120,8 +120,9 @@ src/
 ├── git/                 minimal Source Control (sidebar Git view)
 │   ├── engine.rs        CLI `git`: discover, porcelain, `RepoOp`,
 │   │                    commit/pull/push/discard, accept ours/theirs,
-│   │                    marker guard, `file_sides` / conflict stages
-│   ├── diff_highlight.rs line ranges via `similar` for pane fills
+│   │                    write resolved conflict, marker guard,
+│   │                    `file_sides` / conflict stages
+│   ├── diff_highlight.rs line ranges + conflict hunks via `similar`
 │   └── panel.rs         GitPanel: stacked repos, conflict banner, list
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
 │   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch

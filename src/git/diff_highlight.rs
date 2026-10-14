@@ -1,5 +1,7 @@
 //! Line-level ranges for side-by-side diff fills + overview ruler.
 
+use std::ops::Range;
+
 use similar::{ChangeTag, TextDiff};
 
 /// One overview-ruler tick as fractions of the document height (`0..=1`).
@@ -7,6 +9,191 @@ use similar::{ChangeTag, TextDiff};
 pub struct OverviewMark {
     pub top: f32,
     pub height: f32,
+}
+
+/// Which side of a [`ConflictHunk`] to keep when resolving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HunkSide {
+    /// Current / ours (old pane).
+    Old,
+    /// Incoming / theirs (new pane).
+    New,
+}
+
+/// One contiguous Current↔Incoming change (delete/insert run between equals).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConflictHunk {
+    pub old_bytes: Range<usize>,
+    pub new_bytes: Range<usize>,
+    pub old_lines: Range<usize>,
+    pub new_lines: Range<usize>,
+}
+
+/// Group line-diff changes into hunks (equal runs are boundaries).
+pub fn conflict_hunks(old: &str, new: &str) -> Vec<ConflictHunk> {
+    let diff = TextDiff::from_lines(old, new);
+    let mut hunks = Vec::new();
+    let mut old_off = 0usize;
+    let mut new_off = 0usize;
+    let mut old_line = 0usize;
+    let mut new_line = 0usize;
+    let mut open: Option<HunkBuilder> = None;
+
+    for change in diff.iter_all_changes() {
+        let value = change.value();
+        let len = value.len();
+        let lines = count_lines_in_change(value);
+        match change.tag() {
+            ChangeTag::Equal => {
+                if let Some(b) = open.take() {
+                    hunks.push(b.finish(old_off, new_off, old_line, new_line));
+                }
+                old_off += len;
+                new_off += len;
+                old_line += lines;
+                new_line += lines;
+            }
+            ChangeTag::Delete => {
+                let b = open.get_or_insert_with(|| HunkBuilder::start(old_off, new_off, old_line, new_line));
+                b.saw_change = true;
+                old_off += len;
+                old_line += lines;
+            }
+            ChangeTag::Insert => {
+                let b = open.get_or_insert_with(|| HunkBuilder::start(old_off, new_off, old_line, new_line));
+                b.saw_change = true;
+                new_off += len;
+                new_line += lines;
+            }
+        }
+    }
+    if let Some(b) = open.take() {
+        hunks.push(b.finish(old_off, new_off, old_line, new_line));
+    }
+    debug_assert_eq!(old_off, old.len());
+    debug_assert_eq!(new_off, new.len());
+    hunks
+}
+
+/// Index of the hunk containing either pane's cursor line (`None` if on equal text).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn hunk_index_at_line(hunks: &[ConflictHunk], old_line: usize, new_line: usize) -> Option<usize> {
+    hunks.iter().position(|h| {
+        (!h.old_lines.is_empty() && h.old_lines.contains(&old_line))
+            || (!h.new_lines.is_empty() && h.new_lines.contains(&new_line))
+    })
+}
+
+/// Build the resolved file from per-hunk Old/New choices (one per hunk).
+pub fn apply_hunk_choices(
+    old: &str,
+    new: &str,
+    choices: &[HunkSide],
+) -> Result<String, String> {
+    let hunks = conflict_hunks(old, new);
+    if choices.len() != hunks.len() {
+        return Err(format!(
+            "Hunk choice count {} != hunk count {}",
+            choices.len(),
+            hunks.len()
+        ));
+    }
+    let diff = TextDiff::from_lines(old, new);
+    let mut out = String::with_capacity(old.len().max(new.len()));
+    let mut hunk_i = 0usize;
+    let mut old_buf = String::new();
+    let mut new_buf = String::new();
+    let mut in_hunk = false;
+
+    let flush = |out: &mut String,
+                 old_buf: &mut String,
+                 new_buf: &mut String,
+                 hunk_i: &mut usize,
+                 choices: &[HunkSide]| {
+        let side = choices.get(*hunk_i).copied().unwrap_or(HunkSide::Old);
+        match side {
+            HunkSide::Old => out.push_str(old_buf),
+            HunkSide::New => out.push_str(new_buf),
+        }
+        old_buf.clear();
+        new_buf.clear();
+        *hunk_i += 1;
+    };
+
+    for change in diff.iter_all_changes() {
+        let value = change.value();
+        match change.tag() {
+            ChangeTag::Equal => {
+                if in_hunk {
+                    flush(&mut out, &mut old_buf, &mut new_buf, &mut hunk_i, choices);
+                    in_hunk = false;
+                }
+                out.push_str(value);
+            }
+            ChangeTag::Delete => {
+                in_hunk = true;
+                old_buf.push_str(value);
+            }
+            ChangeTag::Insert => {
+                in_hunk = true;
+                new_buf.push_str(value);
+            }
+        }
+    }
+    if in_hunk {
+        flush(&mut out, &mut old_buf, &mut new_buf, &mut hunk_i, choices);
+    }
+    if hunk_i != hunks.len() {
+        return Err(format!(
+            "Applied {hunk_i} hunks, expected {}",
+            hunks.len()
+        ));
+    }
+    Ok(out)
+}
+
+struct HunkBuilder {
+    old_bytes_start: usize,
+    new_bytes_start: usize,
+    old_lines_start: usize,
+    new_lines_start: usize,
+    saw_change: bool,
+}
+
+impl HunkBuilder {
+    fn start(old_off: usize, new_off: usize, old_line: usize, new_line: usize) -> Self {
+        Self {
+            old_bytes_start: old_off,
+            new_bytes_start: new_off,
+            old_lines_start: old_line,
+            new_lines_start: new_line,
+            saw_change: false,
+        }
+    }
+
+    fn finish(
+        self,
+        old_off: usize,
+        new_off: usize,
+        old_line: usize,
+        new_line: usize,
+    ) -> ConflictHunk {
+        debug_assert!(self.saw_change);
+        ConflictHunk {
+            old_bytes: self.old_bytes_start..old_off,
+            new_bytes: self.new_bytes_start..new_off,
+            old_lines: self.old_lines_start..old_line,
+            new_lines: self.new_lines_start..new_line,
+        }
+    }
+}
+
+fn count_lines_in_change(s: &str) -> usize {
+    if s.is_empty() {
+        return 0;
+    }
+    let n = s.bytes().filter(|&b| b == b'\n').count();
+    if s.ends_with('\n') { n } else { n + 1 }
 }
 
 /// UTF-8 byte ranges to fill on the old / new sides (deleted / inserted lines).
@@ -174,5 +361,44 @@ mod tests {
         assert_eq!(marks.len(), 1);
         assert!(marks[0].height < 0.1, "expected a short tick, got {}", marks[0].height);
         assert!(o.len() == 1 && n.len() == 1);
+    }
+
+    #[test]
+    fn conflict_hunks_groups_adjacent_changes() {
+        let old = "a\nb\nc\nd\n";
+        let new = "a\nB\nC\nd\n";
+        let hunks = conflict_hunks(old, new);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].old_lines, 1..3);
+        assert_eq!(hunks[0].new_lines, 1..3);
+        assert_eq!(hunk_index_at_line(&hunks, 1, 0), Some(0));
+        assert_eq!(hunk_index_at_line(&hunks, 0, 0), None);
+    }
+
+    #[test]
+    fn apply_hunk_choices_picks_per_hunk() {
+        let old = "keep\nold1\nmid\nold2\nend\n";
+        let new = "keep\nnew1\nmid\nnew2\nend\n";
+        let hunks = conflict_hunks(old, new);
+        assert_eq!(hunks.len(), 2);
+        let merged = apply_hunk_choices(old, new, &[HunkSide::Old, HunkSide::New]).unwrap();
+        assert_eq!(merged, "keep\nold1\nmid\nnew2\nend\n");
+    }
+
+    #[test]
+    fn apply_insert_only_hunk() {
+        let old = "a\nc\n";
+        let new = "a\nb\nc\n";
+        let hunks = conflict_hunks(old, new);
+        assert_eq!(hunks.len(), 1);
+        assert!(hunks[0].old_lines.is_empty());
+        assert_eq!(
+            apply_hunk_choices(old, new, &[HunkSide::New]).unwrap(),
+            "a\nb\nc\n"
+        );
+        assert_eq!(
+            apply_hunk_choices(old, new, &[HunkSide::Old]).unwrap(),
+            "a\nc\n"
+        );
     }
 }

@@ -63,6 +63,14 @@ pub fn is_git_preview(path: &Path) -> bool {
     is_diff_preview(path) || is_conflict_preview(path)
 }
 
+/// Worktree file behind a diff/conflict virtual tab, if any.
+pub fn git_preview_worktree_path(path: &Path) -> Option<PathBuf> {
+    let s = path.to_string_lossy();
+    s.strip_prefix(DIFF_PREFIX)
+        .or_else(|| s.strip_prefix(CONFLICT_PREFIX))
+        .map(PathBuf::from)
+}
+
 /// Virtual path for a read-only git diff of `file` (absolute working-tree path).
 pub fn diff_preview_path(file: &Path) -> PathBuf {
     PathBuf::from(format!("{DIFF_PREFIX}{}", file.display()))

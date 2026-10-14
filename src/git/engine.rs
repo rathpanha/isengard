@@ -331,6 +331,19 @@ pub fn load_workspace_status(folders: &[PathBuf]) -> Vec<RepoStatus> {
         .collect()
 }
 
+/// Find the dirty/conflict entry for an absolute worktree path, if any.
+pub fn change_at_path(
+    statuses: &[RepoStatus],
+    file: &Path,
+) -> Option<(PathBuf, GitChange)> {
+    for status in statuses {
+        if let Some(change) = status.changes.iter().find(|c| c.path == file) {
+            return Some((status.root.clone(), change.clone()));
+        }
+    }
+    None
+}
+
 /// Stage `rel_paths` then `git commit -m` (empty selection / message rejected).
 ///
 /// Refuses if any selected worktree file still contains conflict markers.
@@ -398,6 +411,27 @@ pub fn accept_conflict_side(
         root,
         &["checkout", side.checkout_arg(), "--", rel_path],
     )?;
+    git(root, &["add", "--", rel_path])?;
+    Ok(())
+}
+
+/// Write a fully merged conflict file and `git add` it (hunk / manual resolve).
+pub fn write_resolved_conflict(
+    root: &Path,
+    rel_path: &str,
+    content: &str,
+) -> Result<(), String> {
+    if detect_repo_op(root).is_none() {
+        return Err("No merge/rebase/cherry-pick in progress".into());
+    }
+    if has_conflict_markers(content) {
+        return Err("Resolved content still contains conflict markers".into());
+    }
+    let abs = root.join(rel_path);
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&abs, content).map_err(|e| format!("Write {rel_path}: {e}"))?;
     git(root, &["add", "--", rel_path])?;
     Ok(())
 }

@@ -198,38 +198,41 @@ Add a row here whenever a new shared component is created.
   (disabled while message empty or nothing selected), collapsible
   changes list with select-all + per-file checkboxes (default none
   selected; Commit/`Suggest` use selection only; `git add -- <paths>`
-  then commit). Change rows:
+  then commit).   Change rows:
   checkbox + Material `tree_icon` + path, status letter on the right,
-  ghost Open File + Undo discard (confirms). Discard-all on the changes
-  header (confirms; `reset --hard` + `clean -fd`). Header Refresh is
-  ghost icon-only. Pull is `--ff-only`. Click a change opens a
+  ghost Open File + Undo discard (confirms). The change whose
+  diff/conflict tab is active is highlighted (`ListItem::selected` +
+  accent row fill) — separate from commit checkboxes. Discard-all on the
+  changes header (confirms; `reset --hard` + `clean -fd`). Header Refresh
+  is ghost icon-only. Pull is `--ff-only`. Click a change opens a
   **read-only** side-by-side preview tab (equal HEAD | Working Tree
-  panes; locked scroll; deleted lines danger-fill / inserted
-  success-fill; overview ruler ticks; not editable). System `git` on
-  PATH; errors toast.
+  panes; locked scroll; opens scrolled to the first change; deleted
+  lines danger-fill / inserted success-fill; overview ruler ticks; not
+  editable). System `git` on PATH; errors toast.
   Refresh on view open / workspace change / after actions / Refresh.
-  **Conflicts (whole-file only):** detect in-progress merge / rebase /
-  cherry-pick (`MERGE_HEAD` / rebase dirs / `CHERRY_PICK_HEAD`).
-  Persistent status line under Pull·Push, e.g.
-  `Merge in progress — 2 conflicts` (`theme.danger` while any `U`;
-  `theme.warning` + `ready to commit` when the op remains but conflicts
-  are cleared). Conflict rows sort first. Row click / Open open a
-  read-only **Current | Incoming** side-by-side tab (index stages `:2:` /
-  `:3:`; locked scroll; same deleted/inserted line fills + overview ticks
-  as the change diff — only differing lines; overview track width matches
-  Kit scrollbar). Conflict tab toolbar: outlined **Accept Current** /
-  **Accept Incoming** (`.small()`; `checkout --ours|--theirs` + `add`).
-  Accept lives in the editor only — not on panel change rows. After
-  Accept, conflict tab closes; open worktree buffers reload. While an op
-  is in progress or any `U` remains: disable Pull, Push, Discard,
-  Discard all; Suggest disabled.
-  Commit stays available for merges (selection → `git add` then commit)
-  but **refuses** if any selected path still contains conflict markers
+  **Conflicts:** detect in-progress merge / rebase / cherry-pick
+  (`MERGE_HEAD` / rebase dirs / `CHERRY_PICK_HEAD`). Persistent status
+  line under Pull·Push, e.g. `Merge in progress — 2 conflicts`
+  (`theme.danger` while any `U`; `theme.warning` + `ready to commit`
+  when the op remains but conflicts are cleared). Conflict rows sort
+  first. Row click / Open open a read-only **Current | Incoming**
+  side-by-side tab (index stages `:2:` / `:3:`; locked scroll; opens at
+  the first change; deleted/inserted fills + overview ticks; resolved
+  hunks mute). Each unresolved hunk shows an outlined **Accept** chip
+  aligned with the text column of that hunk’s first line (conflict panes
+  hide line numbers + folding; scroll-tracked overlay). Last hunk writes
+  the merge + `git add`. Toolbar (`.small()`): status `N/M changes` +
+  whole-file **Accept Current** / **Accept Incoming** (`checkout
+  --ours|--theirs` + `add`). Accept lives in the editor only — not on
+  panel change rows. After resolve, conflict tab closes; open worktree
+  buffers reload. While an op is in progress or any `U` remains: disable
+  Pull, Push, Discard, Discard all; Suggest disabled. Commit stays
+  available for merges (selection → `git add` then commit) but
+  **refuses** if any selected path still contains conflict markers
   (`<<<<<<<` / `=======` / `>>>>>>>`); Commit disabled during rebase /
   cherry-pick (continue from the terminal). Empty commit box seeds from
-  `MERGE_MSG` when a merge starts. Not: line/block picker, conflict
-  codelens, abort buttons, persistent index staging, branch switch,
-  stash, amend.
+  `MERGE_MSG` when a merge starts. Not: Accept Both, abort buttons,
+  persistent index staging, branch switch, stash, amend.
 - **Notifications:** bottom-right (`theme.notification.placement =
   BottomRight` in `theme::apply`), with `margins.bottom` clearing the status
   bar (`STATUS_BAR_HEIGHT` + 16px edge). Don't set placement/margins per toast.
@@ -250,10 +253,11 @@ Add a row here whenever a new shared component is created.
     show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). Used
     for the window / title-bar title only (no duplicate label above the tree).
   - Session restore: reopening a folder or workspace (welcome recent, Open, or
-    CLI) restores its last open tabs (cursor + scroll), and expanded tree
-    directories from `config.json` `sessions`. Multi-root roots stay collapsed
-    unless they were expanded when saved. Unsaved edits are not restored;
-    cold start still shows the welcome screen.
+    CLI) restores its last open tabs (cursor + scroll) — including Source
+    Control diff/conflict preview tabs when those paths are still dirty —
+    and expanded tree directories from `config.json` `sessions`. Multi-root
+    roots stay collapsed unless they were expanded when saved. Unsaved
+    edits are not restored; cold start still shows the welcome screen.
   - Window geometry: `config.json` stores last window width/height/origin and
     maximized flag; launch opens with that frame (centered if no origin yet).
     Saved on close and debounced while resizing.

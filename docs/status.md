@@ -58,12 +58,14 @@ tabs, highlighted editor, status bar):
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
   + per-file); Suggest/Commit from selection; Open File + discard;
-  Pull(N)/Push(N); side-by-side diff preview (scroll locked).
-  Merge/rebase/cherry-pick surfaced as a status line + `U` rows first
-  (red while conflicts remain, yellow when cleared); conflict opens
-  Current | Incoming tab (locked scroll, highlights + Accept toolbar
-  only); Commit refuses leftover markers (rebase/cherry-pick →
-  terminal). No persistent staging, branch UI, or line/block conflict UI.
+  Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
+  highlighted in the change list; restored across sessions while still
+  dirty). Merge/rebase/cherry-pick surfaced as a status line + `U` rows
+  first (red while conflicts remain, yellow when cleared); conflict opens
+  Current | Incoming tab (locked scroll; Accept chip on each hunk +
+  whole-file Accept); Commit refuses leftover markers
+  (rebase/cherry-pick → terminal). No persistent staging, branch UI, or
+  Accept Both.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root). Linux in-window close × confirms unsaved changes.

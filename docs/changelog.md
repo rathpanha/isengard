@@ -3,6 +3,17 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-14** — Diff/conflict preview tabs restore across sessions
+  (while the path is still dirty).
+- **2026-10-14** — Active diff/conflict tab highlights its Source Control
+  change row.
+- **2026-10-14** — Diff/conflict tabs open scrolled to the first change.
+- **2026-10-14** — Conflict Accept chips align with the text column
+  (folding off; Kit gutter + pad inset).
+- **2026-10-12** — Conflict Accept chips sit at column 0 of each hunk
+  (line numbers off on conflict panes).
+- **2026-10-10** — Conflict Accept chips sit on each hunk line (not the
+  toolbar); whole-file Accept unchanged.
 - **2026-10-09** — Diff/conflict side-by-side panes lock scroll together.
 - **2026-10-09** — Diff/conflict overview ticks fill the full scrollbar
   track width (no inset).
