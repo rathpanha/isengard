@@ -1,7 +1,8 @@
 //! Language → default language-server command mapping.
 //!
-//! Servers are **not** bundled. Defaults assume a binary on `PATH`; users can
-//! override or disable per language in `config.json` → `lsp.languages`.
+//! Servers are **not** inside the app binary. Defaults are command names
+//! resolved app-local (`…/isengard/lsp/bin`) then `PATH`; users can override
+//! or disable per language in `config.json` → `lsp.languages`.
 
 use crate::config::LspSettings;
 use crate::editor::language::Language;

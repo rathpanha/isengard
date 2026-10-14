@@ -37,15 +37,16 @@ tabs, highlighted editor, status bar):
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
   `tree-sitter-languages`; line numbers, indent guides, search; unknown
   extensions stay Plain Text. Syntax: Ayu Darker; editor/gutter bg = sidebar.
-  **IntelliSense (LSP):** not bundled — registry maps many languages to
-  common PATH binaries (`rust-analyzer`, `gopls`, `typescript-language-server`,
-  `pylsp`, `clangd`, …). Missing binary: dialog with **Install** when we know
-  a recipe (runs `rustup` / `npm` / `pip` / … for you); otherwise a toast.
-  Status bar: one LSP icon → short list (active language + installed) with
-  Install / Remove icons. List source: our `lsp/registry` map (not an official
-  LSP index). Install today = OS/user package commands; app-local downloads
-  (Zed-style) not built yet. `config.json` → `lsp`; Open Config File….
-  Untitled buffers skip LSP until saved.
+  **IntelliSense (LSP):** not bundled into the app binary. **Install** downloads
+  into `dirs::data_dir()/isengard/lsp/` (bin + pkg) — never `npm -g` / brew /
+  pip / rustup into the user toolchain. Resolve: app-local first, then system
+  `PATH`. Recipes: native release assets (rust-analyzer, taplo, marksman, zls,
+  lua-language-server), `GOBIN=…/lsp/bin go install` (gopls), and
+  `npm install --prefix …/lsp/pkg/…` for Node servers (needs system `node`/`npm`
+  as runtime only). `pylsp` / `clangd` / etc. stay PATH-only (no Install).
+  Status bar: one LSP icon → short list with Install / Remove (Remove deletes
+  app-local files only). `config.json` → `lsp`; Open Config File…. Untitled
+  buffers skip LSP until saved.
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
@@ -94,9 +95,10 @@ shortcuts. Check these first if something is off.
 
 ## Known issues / TODO
 
-- LSP: no code actions, rename, format-on-save, or bundled servers. Changing
-  `lsp` in config applies to newly attached buffers; already-running servers
-  need a workspace switch / reopen to pick up a different command.
+- LSP: no code actions, rename, format-on-save, or servers inside the app
+  binary (app-local download dir is separate). Changing `lsp` in config
+  applies to newly attached buffers; already-running servers need a workspace
+  switch / reopen to pick up a different command.
 - Terminal scrollback UI still minimal (selection/copy/paste/URL-click work).
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).

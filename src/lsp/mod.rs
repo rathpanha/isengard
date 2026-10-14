@@ -1,7 +1,9 @@
 //! Language Server Protocol client (IntelliSense).
 //!
 //! Kit owns completion / hover / definition UI; this module speaks JSON-RPC to
-//! servers on PATH. MVP: rust-analyzer for [`Language::Rust`](crate::editor::language::Language::Rust).
+//! servers. Binaries resolve **app-local first** (`…/isengard/lsp/bin`), then
+//! system `PATH`. Install downloads into the app data dir (no global `-g` /
+//! brew / pip into the user toolchain).
 
 mod bridge;
 mod client;
@@ -16,4 +18,6 @@ pub use host::{
     AttachOutcome, CatalogServer, LspEvent, LspHost, MissingServerOffer, ServerDisplayStatus,
     apply_diagnostics, path_for_diagnostics,
 };
-pub use install::{InstallRecipe, recipe_for_command, run_install, run_uninstall};
+pub use install::{
+    InstallRecipe, is_app_local, recipe_for_command, run_install, run_uninstall,
+};

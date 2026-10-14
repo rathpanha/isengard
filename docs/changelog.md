@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-14** — LSP Install downloads into `…/isengard/lsp/` (app-local
+  first, PATH fallback); Remove deletes that tree only (no OS package cmds).
 - **2026-10-14** — LSP row status is a fixed circular dot (not a collapsed bar).
 - **2026-10-14** — LSP popover lists only active-language + installed servers
   (not the full registry dump).

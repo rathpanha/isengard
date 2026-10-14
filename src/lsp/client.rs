@@ -46,16 +46,21 @@ impl LspClient {
         spec: &ResolvedServerSpec,
         init: InitializeParams,
     ) -> anyhow::Result<(Self, flume::Receiver<Incoming>)> {
-        // Catch rustup shims / missing components before we block on initialize.
-        preflight(spec)?;
+        // Prefer app-local install, then PATH (see `install::resolve_command`).
+        let command = super::install::resolve_command(&spec.command)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| spec.command.clone());
 
-        let mut child = Command::new(&spec.command)
+        // Catch rustup shims / missing components before we block on initialize.
+        preflight(&command)?;
+
+        let mut child = Command::new(&command)
             .args(&spec.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .with_context(|| format!("spawn `{}` (is it on PATH?)", spec.command))?;
+            .with_context(|| format!("spawn `{command}` (app-local or PATH)"))?;
 
         let stdin = child.stdin.take().context("LSP stdin")?;
         let stdout = child.stdout.take().context("LSP stdout")?;
@@ -211,12 +216,26 @@ impl Drop for LspClient {
     }
 }
 
-fn preflight(spec: &ResolvedServerSpec) -> anyhow::Result<()> {
-    ensure_command_exists(&spec.command)?;
-    // rustup installs a shim that exists on PATH but is not a real server until
-    // `rustup component add rust-analyzer`.
-    if command_basename(&spec.command) == "rust-analyzer" {
-        let status = Command::new(&spec.command)
+fn preflight(command: &str) -> anyhow::Result<()> {
+    let path = std::path::Path::new(command);
+    if !path.is_file() {
+        // Basename only — try resolve (app-local then PATH).
+        let resolved = super::install::resolve_command(command)
+            .ok_or_else(|| {
+                anyhow!(
+                    "`{command}` not found (app-local or PATH) — use Install or install it yourself"
+                )
+            })?;
+        return preflight(&resolved.to_string_lossy());
+    }
+    // rustup installs a PATH shim that exists before the real component.
+    // App-local downloads are real binaries — skip the shim check for those.
+    let basename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(command);
+    if basename == "rust-analyzer" && !super::install::is_app_local("rust-analyzer") {
+        let status = Command::new(command)
             .arg("--version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -224,45 +243,11 @@ fn preflight(spec: &ResolvedServerSpec) -> anyhow::Result<()> {
             .context("`rust-analyzer --version`")?;
         if !status.success() {
             bail!(
-                "`rust-analyzer` is not installed (try `rustup component add rust-analyzer`)"
+                "`rust-analyzer` is not installed — use Install in Isengard or `rustup component add rust-analyzer`"
             );
         }
     }
     Ok(())
-}
-
-fn command_basename(command: &str) -> &str {
-    std::path::Path::new(command)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(command)
-}
-
-fn ensure_command_exists(command: &str) -> anyhow::Result<()> {
-    let path = std::path::Path::new(command);
-    if path.is_absolute() || command.contains('/') || command.contains('\\') {
-        if path.is_file() {
-            return Ok(());
-        }
-        bail!("`{command}` is not an executable file");
-    }
-    let Some(path_os) = std::env::var_os("PATH") else {
-        bail!("`{command}` not found (PATH is empty)");
-    };
-    for dir in std::env::split_paths(&path_os) {
-        let candidate = dir.join(command);
-        if candidate.is_file() {
-            return Ok(());
-        }
-        #[cfg(windows)]
-        {
-            let exe = dir.join(format!("{command}.exe"));
-            if exe.is_file() {
-                return Ok(());
-            }
-        }
-    }
-    bail!("`{command}` not found on PATH — install the language server yourself");
 }
 
 fn dispatch_message(

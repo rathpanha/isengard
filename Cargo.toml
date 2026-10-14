@@ -34,6 +34,12 @@ similar = "2"
 # Match GPUI Kit / gpui-base (CompletionProvider + diagnostics use the same types).
 lsp-types = { version = "0.97", features = ["proposed"] }
 url = "2"
+# App-local LSP downloads (blocking HTTP; no Tokio).
+ureq = "3"
+flate2 = "1"
+tar = "0.4"
+zip = "2"
+xz2 = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Sets the Dock icon at runtime so unbundled builds (`cargo run`) show the logo.

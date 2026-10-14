@@ -126,7 +126,8 @@ pub struct LspLanguageSettings {
     /// (or when `command` is set for a language without a built-in default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Replace the built-in executable (still resolved via `PATH` unless absolute).
+    /// Replace the built-in executable (app-local `lsp/bin` then `PATH`,
+    /// unless absolute).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     /// Replace the built-in argv (use `[]` for no args).
@@ -134,8 +135,9 @@ pub struct LspLanguageSettings {
     pub args: Option<Vec<String>>,
 }
 
-/// Language servers are not bundled — install binaries yourself, then point
-/// Isengard at them (defaults assume common names on `PATH`).
+/// Language servers are not inside the app binary — Install downloads into
+/// `data_dir/isengard/lsp/`, or point at PATH binaries (defaults are common
+/// command names).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LspSettings {

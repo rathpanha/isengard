@@ -46,7 +46,7 @@ use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
 use crate::lsp::{
     AttachOutcome, CatalogServer, LspClient, LspEvent, LspHost, MissingServerOffer,
-    ServerDisplayStatus, recipe_for_command, run_install, run_uninstall,
+    ServerDisplayStatus, is_app_local, recipe_for_command, run_install, run_uninstall,
 };
 use crate::git::{
     ConflictHunk, ConflictSide, GitPanel, GitPanelEvent, HunkSide, OverviewMark, RepoStatus,
@@ -1230,7 +1230,7 @@ impl IsengardApp {
         let offer_install = offer.clone();
         let recipe_name = recipe.name;
         let recipe_summary = recipe.summary;
-        let recipe_shell = recipe.shell;
+        let recipe_hint = recipe.install_hint();
         window.open_dialog(cx, move |dialog, window, _| {
             let app_install = app.clone();
             let app_dismiss = app.clone();
@@ -1239,7 +1239,7 @@ impl IsengardApp {
                 dialog
                     .title(format!("Install {recipe_name}?"))
                     .child(recipe_summary.to_string())
-                    .child(format!("Isengard will run: {recipe_shell}"))
+                    .child(recipe_hint.clone())
                     .footer(
                         DialogFooter::new()
                             .gap_2()
@@ -1315,8 +1315,7 @@ impl IsengardApp {
             .and_then(|n| n.to_str())
             .unwrap_or(process_key)
             .to_string();
-        let recipe = recipe_for_command(process_key);
-        let remove_shell = recipe.and_then(|r| r.remove_shell);
+        let app_local = is_app_local(process_key);
         let app = cx.entity().downgrade();
         let key = process_key.to_string();
 
@@ -1324,14 +1323,15 @@ impl IsengardApp {
             let app_ok = app.clone();
             let key_ok = key.clone();
             let dialog = dialog.title(format!("Remove {label}?"));
-            let dialog = if let Some(shell) = remove_shell {
-                dialog
-                    .child("Isengard will stop it and run:")
-                    .child(shell.to_string())
+            let dialog = if app_local {
+                dialog.child(
+                    "Isengard will stop it and delete the app-local install \
+                     (your system PATH binaries are left alone).",
+                )
             } else {
                 dialog.child(
                     "Isengard will stop it and forget it from the status bar. \
-                     The binary stays on your system (no uninstall recipe).",
+                     System PATH binaries are not removed.",
                 )
             };
             center_dialog(
@@ -5347,7 +5347,8 @@ impl IsengardApp {
                                             // pin both axes with min_w/min_h.
                                             let can_install =
                                                 !server.installed && server.recipe.is_some();
-                                            let can_remove = server.installed;
+                                            // Remove only deletes app-local installs (not OS PATH).
+                                            let can_remove = is_app_local(&server.process_key);
                                             h_flex()
                                                 .w_full()
                                                 .items_center()

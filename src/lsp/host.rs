@@ -62,7 +62,7 @@ pub struct CatalogServer {
     pub process_key: String,
     pub label: String,
     pub status: ServerDisplayStatus,
-    /// Binary ready on PATH (or remembered / running).
+    /// Binary ready app-local or on PATH (or remembered / running).
     pub installed: bool,
     pub recipe: Option<InstallRecipe>,
 }
@@ -232,12 +232,14 @@ impl LspHost {
     }
 
     /// Stop process (if any), forget from known, return open paths + uninstall recipe.
+    ///
+    /// Uninstall deletes app-local files only (never system packages).
     pub fn remove_server(&mut self, process_key: &str) -> (Vec<PathBuf>, Option<InstallRecipe>) {
         let paths = self.stop_server(process_key);
         self.forget_known(process_key);
         self.lifecycle.remove(process_key);
         let recipe = recipe_for_command(process_key)
-            .filter(|r| r.remove_shell.is_some());
+            .filter(|_| super::install::is_app_local(process_key));
         (paths, recipe)
     }
 
