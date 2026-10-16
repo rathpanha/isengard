@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-16** — Drag to reorder editor tabs and terminal tabs within each
+  strip (left `drag_border` insert; trailing drop zone; session order persists).
+  Editor drag binds on `Tab` (not a parent wrapper) + unique `element_id`
+  (Kit defaulted every standalone tab to id 0).
 - **2026-10-16** — Stuck managed tooltips: Kit hide + deferred re-hide on
   click; also `dismiss_tooltip` on workspace switch, tab/terminal close,
   welcome recent open/remove, and conflict Accept (trigger unmount paths).

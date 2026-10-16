@@ -565,6 +565,15 @@ impl Tab {
         self
     }
 
+    /// Stable element id for tabs used outside [`super::TabBar`] (e.g. drag reorder).
+    ///
+    /// Kit's default `Tab::new()` shares id `0`; without a unique id, per-tab
+    /// drag state collapses across the strip.
+    pub fn element_id(mut self, id: impl Into<ElementId>) -> Self {
+        self.base = self.base.id(id);
+        self
+    }
+
     /// Set if the tab bar has a prefix.
     pub(crate) fn tab_bar_prefix(mut self, tab_bar_prefix: bool) -> Self {
         self.tab_bar_prefix = Some(tab_bar_prefix);
@@ -759,8 +768,10 @@ impl RenderOnce for Tab {
             inner_content.into_any_element()
         };
 
+        // Id comes from `Tab::ix` (TabBar) or `Tab::element_id` / Default (0).
+        // Do not force `.id(self.ix)` here — that reset every standalone tab to 0
+        // and broke per-tab drag.
         self.base
-            .id(self.ix)
             .selected(self.selected)
             .disabled(self.disabled)
             .when_some(aria_label, |this, label| this.accessibility_label(label))

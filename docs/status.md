@@ -33,7 +33,8 @@ tabs, highlighted editor, status bar):
 - **Tabs:** Kit `Tab`s in `h_flex` (not `TabBar` — needed for per-tab
   `ContextMenu`); Material file icon + name as tab children; Close / Close
   Others / Close All; preview tabs; dirty mark; Markdown/SVG Edit–Preview;
-  raster image preview tabs. Details in design.
+  raster image preview tabs; drag within the strip to reorder (persists in
+  session). Details in design.
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
   `tree-sitter-languages`; line numbers, indent guides, search; unknown
   extensions stay Plain Text. Syntax: Ayu Darker; editor/gutter bg = sidebar.
@@ -52,11 +53,11 @@ tabs, highlighted editor, status bar):
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
   a session, not when restoring a minimized panel. Tab cwds, visibility,
-  and height persist per workspace session. Mouse drag selects (double =
-  word, triple = line); copy/paste via OS terminal chords (`⌘C`/`⌘V` or
-  `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when focused); URL hover
-  continuous underline + pointer; Ctrl/Cmd+click opens.
-  Scrollback UI still minimal.
+  and height persist per workspace session; drag tabs within the strip to
+  reorder. Mouse drag selects (double = word, triple = line); copy/paste via
+  OS terminal chords (`⌘C`/`⌘V` or `Ctrl+Shift+C`/`V`, chord wins over Toggle
+  Preview when focused); URL hover continuous underline + pointer;
+  Ctrl/Cmd+click opens. Scrollback UI still minimal.
 - **Sidebar:** hide/show without closing the workspace (View > Toggle
   Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist
   per workspace session. Explorer ↔ Search ↔ Source Control via top strip

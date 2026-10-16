@@ -107,7 +107,7 @@ src/
 │   ├── document.rs      read_text / write_text / file_name / is_image
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
 │   ├── highlights.rs    patches empty GPUI Kit highlight queries (GraphQL)
-│   └── tabs.rs          TabList<T>: pure tab ordering/activation logic (unit-tested)
+│   └── tabs.rs          TabList<T>: order/activate/reorder (unit-tested)
 ├── lsp/                 Language Server Protocol (IntelliSense)
 │   ├── host.rs          workspace servers, didOpen/Change/Close, diagnostics pump
 │   ├── client.rs        stdio JSON-RPC client (flume + background thread)
@@ -146,6 +146,7 @@ src/
     ├── components.rs    shared compositions encoding docs/design.md rules
     │                    (center_dialog)
     ├── file_tree.rs     FileTreePanel: FsNode -> TreeItem sync, TreeEvent handling, render
+    ├── tab_drag.rs      editor/terminal tab drag payloads + preview
     └── welcome.rs       welcome screen (start actions + recent folders)
 ```
 

@@ -126,6 +126,11 @@ Add a row here whenever a new shared component is created.
   for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not
   `TabBar`) because `TabBar::children` requires bare `Tab` and cannot host
   `ContextMenu`.
+- **Tab reorder:** drag a tab within its own strip (editor among editor;
+  terminal among terminal). Drop target shows a left `drag_border`; trailing
+  empty zone accepts a drop at the end. No cross-strip drag, no
+  detach-to-window, no editor splits. Order persists via existing session
+  save (`open_files` / terminal cwds).
 - **File icons (tree + editor tabs):** full Material Icon Theme under
   `assets/icons/material/` (MIT; see its `LICENSE`) with associations from
   `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Same helper
@@ -170,7 +175,8 @@ Add a row here whenever a new shared component is created.
   underline clear of the glyphs (`font_size` + 5px) + pointer cursor;
   Ctrl/Cmd+click opens `http(s)://` / `www.` / OSC-8 links in the system
   browser.
-  Header: tab strip (title = folder name) + `Plus` (new) + `Minus` (minimize).
+  Header: tab strip (title = folder name; drag to reorder within the strip) +
+  `Plus` (new) + `Minus` (minimize).
   Toggle (`Ctrl+\`` / status-bar) shows/hides without spawning; if no sessions
   yet, creates the first. **New Terminal** (`Ctrl+Shift+\`` / `Plus` / View menu)
   always spawns a tab. Multi-root: root picker only when creating a session

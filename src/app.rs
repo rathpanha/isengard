@@ -43,7 +43,7 @@ use crate::config::{
 use crate::editor::document;
 use crate::editor::language::Language;
 use crate::editor::selection_matches;
-use crate::editor::tabs::TabList;
+use crate::editor::tabs::{self as tab_order, TabList};
 use crate::file_tree::tree_icon;
 use crate::lsp::{
     AttachOutcome, CatalogServer, LspClient, LspEvent, LspHost, MissingServerOffer,
@@ -63,6 +63,7 @@ use crate::terminal::TerminalPanel;
 use crate::theme;
 use crate::ui::components::{center_dialog, notify_error, notify_success};
 use crate::ui::file_tree::{FileTreePanel, TreeEditTarget};
+use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
 use crate::ui::welcome;
 use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 
@@ -2098,6 +2099,45 @@ impl IsengardApp {
             self.persist_session(cx);
             cx.notify();
         }
+    }
+
+    /// Drop `dragged` before the tab at `before` (left-border target).
+    fn drop_editor_tab_before(
+        &mut self,
+        dragged: &Path,
+        before: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(from) = self.tabs.position(|t| t.path == *dragged) else {
+            return;
+        };
+        let Some(before_ix) = self.tabs.position(|t| t.path == *before) else {
+            return;
+        };
+        let Some((from, to)) = tab_order::reorder_for_drop_before(from, before_ix) else {
+            return;
+        };
+        self.tabs.reorder(from, to);
+        self.activate_tab(to, window, cx);
+    }
+
+    /// Drop `dragged` at the end of the strip.
+    fn drop_editor_tab_at_end(
+        &mut self,
+        dragged: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(from) = self.tabs.position(|t| t.path == *dragged) else {
+            return;
+        };
+        let to = self.tabs.len().saturating_sub(1);
+        if from == to {
+            return;
+        }
+        self.tabs.reorder(from, to);
+        self.activate_tab(to, window, cx);
     }
 
     /// Highlight the Source Control row for the active diff/conflict tab.
@@ -4847,28 +4887,31 @@ impl IsengardApp {
         // TabBar::children requires bare `Tab` (Into<Tab>), so ContextMenu cannot
         // wrap a tab there — compose Kit `Tab`s in divs for the right-click menu.
         // (Tab itself is not an Element, so ContextMenu cannot wrap it either.)
-        let tab_bar = h_flex()
-            .id("editor-tabs")
-            .w_full()
-            .h(px(theme::PANEL_HEADER_ROW_H))
-            .flex_shrink_0()
-            .items_center()
-            .overflow_x_scroll()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().tab_bar)
-            .children(self.tabs.iter().enumerate().map(|(ix, tab)| {
+        let mut tab_els: Vec<AnyElement> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(ix, tab)| {
                 let path = tab.path.clone();
                 let path_menu = path.clone();
+                let path_drop = path.clone();
                 let id = SharedString::from(format!("close-tab-{}", tab.path.display()));
-                let tab_id = SharedString::from(format!("tab-{}", tab.path.display()));
+                let menu_id = SharedString::from(format!("tab-{}", tab.path.display()));
+                let label = tab.label();
                 let preview = tab.preview;
                 let modified = tab.is_modified;
                 let dirty_color = cx.theme().blue;
                 let close_others_disabled = tab_count <= 1;
                 let selected = ix == active_ix;
+                let drag = EditorTabDrag {
+                    path: path.clone(),
+                    label: SharedString::from(label.clone()),
+                };
+                // Drag must live on `Tab` (the hit target). An outer wrapper's
+                // on_drag never fires — Tab/ContextMenu children eat the mouse
+                // (terminal tabs work because drag is on the same h_flex).
                 div()
-                    .id(ElementId::Name(tab_id))
+                    .id(ElementId::Name(menu_id))
                     .context_menu(move |menu, _, _| {
                         menu.menu("Close", Box::new(CloseTabAt(path_menu.clone())))
                             .menu_with_disabled(
@@ -4880,12 +4923,17 @@ impl IsengardApp {
                     })
                     .child(
                         Tab::new()
+                            // Unique id — Kit defaults every standalone Tab to 0.
+                            .element_id(ElementId::Name(SharedString::from(format!(
+                                "editor-tab-{}",
+                                path.display()
+                            ))))
                             // Icon+label as children (not Tab::prefix): Kit's
                             // inner left pad insets the icon; prefix would sit
                             // outside that pad and leave a 12px gap before the name.
                             // `.large()` = 36px — matches `theme::PANEL_HEADER_ROW_H`.
                             .large()
-                            .aria_label(tab.label())
+                            .aria_label(label.clone())
                             .child(
                                 // Same icon↔label gap as file-tree rows.
                                 h_flex()
@@ -4898,11 +4946,24 @@ impl IsengardApp {
                                         false,
                                         cx.theme().is_dark(),
                                     ))
-                                    .child(tab.label()),
+                                    .child(label),
                             )
                             .selected(selected)
                             .cursor_pointer()
                             .when(preview, |tab| tab.italic())
+                            .on_drag(drag, |drag, _, _, cx| {
+                                cx.new(|_| TabDragPreview::new(drag.label.clone()))
+                            })
+                            .drag_over::<EditorTabDrag>(|this, _, _, cx| {
+                                // Kit Tab paints L+R borders; color alone would
+                                // highlight both. Zero the right like dock tabs.
+                                this.border_l_2()
+                                    .border_r_0()
+                                    .border_color(cx.theme().drag_border)
+                            })
+                            .on_drop(cx.listener(move |this, drag: &EditorTabDrag, window, cx| {
+                                this.drop_editor_tab_before(&drag.path, &path_drop, window, cx);
+                            }))
                             .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                                 // Double-click the tab pins a preview (VS Code).
                                 if ev.click_count() >= 2 {
@@ -4939,7 +5000,33 @@ impl IsengardApp {
                                     ),
                             ),
                     )
-            }));
+                    .into_any_element()
+            })
+            .collect();
+        // Empty trailing zone so a tab can be dropped past the last one.
+        tab_els.push(
+            div()
+                .id("editor-tabs-end")
+                .h_full()
+                .flex_1()
+                .min_w_16()
+                .drag_over::<EditorTabDrag>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+                .on_drop(cx.listener(|this, drag: &EditorTabDrag, window, cx| {
+                    this.drop_editor_tab_at_end(&drag.path, window, cx);
+                }))
+                .into_any_element(),
+        );
+        let tab_bar = h_flex()
+            .id("editor-tabs")
+            .w_full()
+            .h(px(theme::PANEL_HEADER_ROW_H))
+            .flex_shrink_0()
+            .items_center()
+            .overflow_x_scroll()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().tab_bar)
+            .children(tab_els);
 
         let show_preview_toolbar = active.supports_rendered_preview();
         let rendered_preview = active.rendered_preview();

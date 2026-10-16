@@ -10,10 +10,12 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::editor::document;
+use crate::editor::tabs::reorder_for_drop_before;
 use crate::terminal::colors::ColorPalette;
 use crate::terminal::pty::PtySession;
 use crate::terminal::view::{TerminalConfig, TerminalView};
 use crate::theme;
+use crate::ui::tab_drag::{TabDragPreview, TerminalTabDrag};
 
 struct TerminalTab {
     id: usize,
@@ -134,6 +136,52 @@ impl TerminalPanel {
             self.focus_active(window, cx);
             cx.notify();
         }
+    }
+
+    /// Move tab `dragged_id` before the tab `before_id` (left-border drop).
+    pub fn drop_tab_before(
+        &mut self,
+        dragged_id: usize,
+        before_id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(from) = self.tabs.iter().position(|t| t.id == dragged_id) else {
+            return;
+        };
+        let Some(before_ix) = self.tabs.iter().position(|t| t.id == before_id) else {
+            return;
+        };
+        let Some((from, to)) = reorder_for_drop_before(from, before_ix) else {
+            return;
+        };
+        self.reorder_tab(from, to, window, cx);
+    }
+
+    /// Move tab `dragged_id` to the end of the strip.
+    pub fn drop_tab_at_end(
+        &mut self,
+        dragged_id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(from) = self.tabs.iter().position(|t| t.id == dragged_id) else {
+            return;
+        };
+        let to = self.tabs.len().saturating_sub(1);
+        if from == to {
+            return;
+        }
+        self.reorder_tab(from, to, window, cx);
+    }
+
+    fn reorder_tab(&mut self, from: usize, to: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        // Activate the dragged tab at its new index.
+        self.active = to;
+        self.focus_active(window, cx);
+        cx.notify();
     }
 
     pub fn close_tab(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -265,17 +313,19 @@ impl Render for TerminalPanel {
                     .py_1()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child(
-                        h_flex()
-                            .id("terminal-tabs")
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .gap_1()
-                            .overflow_x_scroll()
-                            .children(self.tabs.iter().map(|tab| {
+                    .child({
+                        let mut tab_els: Vec<AnyElement> = self
+                            .tabs
+                            .iter()
+                            .map(|tab| {
                                 let id = tab.id;
+                                let before_id = id;
                                 let selected = Some(id) == active_id;
+                                let title = tab.title.clone();
+                                let drag = TerminalTabDrag {
+                                    id,
+                                    title: SharedString::from(title.clone()),
+                                };
                                 h_flex()
                                     .id(ElementId::Name(
                                         SharedString::from(format!("term-tab-{id}")),
@@ -286,6 +336,21 @@ impl Render for TerminalPanel {
                                     .cursor_pointer()
                                     .rounded(cx.theme().radius)
                                     .when(selected, |this| this.bg(cx.theme().muted))
+                                    .on_drag(drag, |drag, _, _, cx| {
+                                        cx.new(|_| TabDragPreview::new(drag.title.clone()))
+                                    })
+                                    .drag_over::<TerminalTabDrag>(|this, _, _, cx| {
+                                        this.border_l_2().border_color(cx.theme().drag_border)
+                                    })
+                                    .on_drop(cx.listener(
+                                        move |this, drag: &TerminalTabDrag, window, cx| {
+                                            this.drop_tab_before(drag.id, before_id, window, cx);
+                                            window.dispatch_action(
+                                                Box::new(crate::app::TerminalTabsChanged),
+                                                cx,
+                                            );
+                                        },
+                                    ))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.select_tab(id, window, cx);
                                         window.dispatch_action(
@@ -304,7 +369,7 @@ impl Render for TerminalPanel {
                                                 cx.theme().muted_foreground
                                             })
                                             .child(IconName::SquareTerminal)
-                                            .child(tab.title.clone()),
+                                            .child(title),
                                     )
                                     .child(
                                         Button::new(SharedString::from(format!(
@@ -323,8 +388,38 @@ impl Render for TerminalPanel {
                                             );
                                         })),
                                     )
-                            })),
-                    )
+                                    .into_any_element()
+                            })
+                            .collect();
+                        tab_els.push(
+                            div()
+                                .id("terminal-tabs-end")
+                                .h_full()
+                                .flex_1()
+                                .min_w_16()
+                                .drag_over::<TerminalTabDrag>(|this, _, _, cx| {
+                                    this.bg(cx.theme().drop_target)
+                                })
+                                .on_drop(cx.listener(
+                                    move |this, drag: &TerminalTabDrag, window, cx| {
+                                        this.drop_tab_at_end(drag.id, window, cx);
+                                        window.dispatch_action(
+                                            Box::new(crate::app::TerminalTabsChanged),
+                                            cx,
+                                        );
+                                    },
+                                ))
+                                .into_any_element(),
+                        );
+                        h_flex()
+                            .id("terminal-tabs")
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap_1()
+                            .overflow_x_scroll()
+                            .children(tab_els)
+                    })
                     .child(
                         Button::new("terminal-new")
                             .ghost()
