@@ -64,3 +64,8 @@ short_description = "The already configured editor"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Kit completion docs used a fixed width and measured against relative X (wrong
+# with a sidebar), so the pane walked off-screen. Patch until upstream lands.
+[patch.crates-io]
+gpui-component = { path = "vendor/gpui-component" }

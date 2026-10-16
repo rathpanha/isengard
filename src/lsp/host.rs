@@ -16,6 +16,7 @@ use lsp_types::notification::{
 };
 use lsp_types::{
     ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
+    CompletionItemCapabilityResolveSupport, CompletionItemKindCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     GeneralClientCapabilities, HoverClientCapabilities, InitializeParams, MarkupKind,
     PositionEncodingKind, PublishDiagnosticsParams, TextDocumentClientCapabilities,
@@ -324,7 +325,7 @@ impl LspHost {
             return AttachOutcome::Done;
         }
 
-        let init = match self.build_init() {
+        let init = match self.build_init(&spec.command) {
             Ok(init) => init,
             Err(err) => {
                 log::warn!("LSP: {err:#}");
@@ -484,6 +485,8 @@ impl LspHost {
             lsp.hover_provider = Some(bridge.clone());
             lsp.definition_provider = Some(bridge);
             lsp.show_document = Some(show);
+            // List can grow for "Auto import from '…'" labels; docs capped in Kit.
+            lsp.completion_menu.max_width = gpui_kit::px(400.);
             cx.notify();
         });
     }
@@ -536,7 +539,7 @@ impl LspHost {
         }
     }
 
-    fn build_init(&self) -> anyhow::Result<InitializeParams> {
+    fn build_init(&self, command: &str) -> anyhow::Result<InitializeParams> {
         let folders = self.folders.clone();
         if folders.is_empty() {
             anyhow::bail!("no workspace folder for language server");
@@ -564,7 +567,7 @@ impl LspHost {
             process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(root_uri),
-            initialization_options: None,
+            initialization_options: initialization_options(command),
             capabilities: client_capabilities(),
             trace: None,
             workspace_folders: Some(workspace_folders),
@@ -651,6 +654,21 @@ fn command_label(command: &str) -> String {
         .to_string()
 }
 
+fn initialization_options(command: &str) -> Option<Value> {
+    // typescript-language-server hides module-export / auto-import completions
+    // unless these preferences are on (VS Code sets them by default).
+    if command.contains("typescript-language-server") {
+        return Some(json!({
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithInsertText": true,
+                "includeCompletionsWithSnippetText": true,
+            }
+        }));
+    }
+    None
+}
+
 fn client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         workspace: Some(WorkspaceClientCapabilities {
@@ -670,12 +688,31 @@ fn client_capabilities() -> ClientCapabilities {
                 context_support: Some(true),
                 completion_item: Some(CompletionItemCapability {
                     snippet_support: Some(true),
+                    commit_characters_support: Some(true),
                     documentation_format: Some(vec![
                         MarkupKind::Markdown,
                         MarkupKind::PlainText,
                     ]),
                     deprecated_support: Some(true),
+                    preselect_support: Some(true),
+                    insert_replace_support: Some(true),
+                    // Without this, rust-analyzer / tsserver omit auto-import
+                    // items (additionalTextEdits arrive via completionItem/resolve).
+                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                        properties: vec![
+                            "documentation".into(),
+                            "detail".into(),
+                            "additionalTextEdits".into(),
+                            "insertText".into(),
+                            "textEdit".into(),
+                            "command".into(),
+                        ],
+                    }),
+                    label_details_support: Some(true),
                     ..Default::default()
+                }),
+                completion_item_kind: Some(CompletionItemKindCapability {
+                    value_set: None,
                 }),
                 ..Default::default()
             }),

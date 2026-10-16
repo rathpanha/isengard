@@ -1,17 +1,18 @@
 //! Kit `CompletionProvider` / `HoverProvider` / `DefinitionProvider` over an [`LspClient`].
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
 use gpui_kit::component::input::{
-    CompletionProvider, DefinitionProvider, HoverProvider, Rope, RopeExt as _,
+    CompletionProvider, DefinitionProvider, EditorState, HoverProvider, Rope, RopeExt as _,
     ShowDocumentHandler,
 };
 use gpui_kit::*;
 use lsp_types::notification::{DidChangeTextDocument, Notification as _};
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest};
+use lsp_types::request::{Completion, GotoDefinition, HoverRequest, ResolveCompletionItem};
 use lsp_types::{
     CompletionContext, CompletionItem, CompletionParams, CompletionResponse,
     CompletionTextEdit, CompletionTriggerKind, DidChangeTextDocumentParams,
@@ -99,10 +100,12 @@ impl CompletionProvider for DocBridge {
                         CompletionResponse::List(list) => list.items,
                     };
                     let ranked = rank_completions(items, &filter_prefix);
-                    Ok(CompletionResponse::Array(fix_completion_text_edits(
-                        ranked,
-                        replace_range,
-                    )))
+                    // Auto-import edits / detail often arrive only via resolve.
+                    let resolved = resolve_completion_items(&client, ranked);
+                    let fixed = fix_completion_text_edits(resolved, replace_range);
+                    Ok(CompletionResponse::Array(
+                        fixed.into_iter().map(enrich_completion_detail).collect(),
+                    ))
                 }
                 Err(err) => {
                     if completion_gen.load(Ordering::SeqCst) != req_id {
@@ -342,36 +345,144 @@ fn fix_completion_text_edits(
         .collect()
 }
 
-/// Tab → IndentInline in Kit; when the completion menu is open, accept instead.
+/// Resolve lazy fields (esp. `additionalTextEdits` for auto-import).
+fn resolve_completion_items(
+    client: &LspClient,
+    items: Vec<CompletionItem>,
+) -> Vec<CompletionItem> {
+    const MAX_RESOLVE: usize = 40;
+    let mut resolved = 0usize;
+    items
+        .into_iter()
+        .map(|item| {
+            if item.data.is_none() || item.additional_text_edits.is_some() {
+                return item;
+            }
+            if resolved >= MAX_RESOLVE {
+                return item;
+            }
+            resolved += 1;
+            match client.request::<ResolveCompletionItem>(item.clone()) {
+                Ok(item) => item,
+                Err(err) => {
+                    log::debug!("completionItem/resolve: {err:#}");
+                    item
+                }
+            }
+        })
+        .collect()
+}
+
+/// Kit's menu only renders `detail` — fold `labelDetails` into it so
+/// "Auto import from …" is visible.
+fn enrich_completion_detail(mut item: CompletionItem) -> CompletionItem {
+    let Some(details) = item.label_details.as_ref() else {
+        return item;
+    };
+    let mut parts = Vec::new();
+    if let Some(d) = details.detail.as_ref().filter(|s| !s.is_empty()) {
+        parts.push(d.as_str());
+    }
+    if let Some(d) = details.description.as_ref().filter(|s| !s.is_empty()) {
+        parts.push(d.as_str());
+    }
+    if parts.is_empty() {
+        return item;
+    }
+    let extra = parts.join(" ");
+    item.detail = Some(match item.detail.take() {
+        Some(existing) if existing.contains(&extra) => existing,
+        Some(existing) => format!("{existing}  {extra}"),
+        None => extra,
+    });
+    item
+}
+
+fn accept_completion_with_imports(
+    state: &mut EditorState,
+    item: &CompletionItem,
+    window: &mut Window,
+    cx: &mut Context<EditorState>,
+) {
+    let cursor = state.cursor();
+    let start = state
+        .completion_menu_state()
+        .trigger_start_offset
+        .unwrap_or(cursor);
+    let mut additional = item.additional_text_edits.clone().unwrap_or_default();
+    // Apply bottom-up so earlier ranges stay valid.
+    additional.sort_by(|a, b| b.range.start.cmp(&a.range.start));
+    state.insert_completion(item, start..cursor, window, cx);
+    if !additional.is_empty() {
+        state.apply_lsp_edits(&additional, window, cx);
+    }
+    state.dismiss_completion_overlay(cx);
+}
+
+/// Tab/Enter accept the menu (and apply auto-import edits). Kit binds Tab →
+/// indent and ignores `additionalTextEdits` on accept.
 pub fn install_tab_accepts_completion<T: 'static>(
-    state: &Entity<gpui_kit::component::input::EditorState>,
+    state: &Entity<EditorState>,
     cx: &mut Context<T>,
 ) -> Subscription {
     state.update(cx, |_, cx| {
         let editor = cx.weak_entity();
+        let selected = Rc::new(Cell::new(0usize));
+        let menu_rev = Rc::new(Cell::new(0u64));
         cx.intercept_keystrokes(move |event, window, cx| {
-            if event.keystroke.key.as_str() != "tab" {
-                return;
-            }
+            let key = event.keystroke.key.as_str();
             let mods = &event.keystroke.modifiers;
-            if mods.shift || mods.control || mods.alt || mods.platform {
-                return;
-            }
             let Some(editor) = editor.upgrade() else {
                 return;
             };
+
+            // Track up/down so Enter/Tab accept the highlighted row (Kit keeps
+            // selection inside the private CompletionMenu list).
+            if matches!(key, "up" | "down") && !mods.shift && !mods.control && !mods.alt {
+                editor.update(cx, |state, _| {
+                    let menu = state.completion_menu_state();
+                    if !menu.open {
+                        return;
+                    }
+                    let rev = menu.revision();
+                    if menu_rev.get() != rev {
+                        menu_rev.set(rev);
+                        selected.set(0);
+                    }
+                    let len = menu.items.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let ix = selected.get();
+                    selected.set(match key {
+                        "down" => (ix + 1).min(len - 1),
+                        _ => ix.saturating_sub(1),
+                    });
+                });
+                return; // let Kit move the highlight
+            }
+
+            if !matches!(key, "tab" | "enter") {
+                return;
+            }
+            if mods.shift || mods.control || mods.alt || mods.platform {
+                return;
+            }
+
             let handled = editor.update(cx, |state, cx| {
-                if !state.completion_menu_state().open {
+                let menu = state.completion_menu_state();
+                if !menu.open || menu.items.is_empty() {
                     return false;
                 }
-                state.route_overlay_action(
-                    Box::new(gpui_kit::component::input::Enter {
-                        secondary: false,
-                        shift: false,
-                    }),
-                    window,
-                    cx,
-                )
+                let rev = menu.revision();
+                if menu_rev.get() != rev {
+                    menu_rev.set(rev);
+                    selected.set(0);
+                }
+                let ix = selected.get().min(menu.items.len() - 1);
+                let item = menu.items[ix].clone();
+                accept_completion_with_imports(state, &item, window, cx);
+                true
             });
             if handled {
                 cx.stop_propagation();
@@ -646,6 +757,21 @@ mod tests {
     #[test]
     fn filter_prefix_from_dot_query() {
         assert_eq!(super::completion_filter_prefix(".map"), "map");
+    }
+
+    #[test]
+    fn enrich_folds_label_details_into_detail() {
+        use lsp_types::{CompletionItem, CompletionItemLabelDetails};
+        let item = CompletionItem {
+            label: "useState".into(),
+            label_details: Some(CompletionItemLabelDetails {
+                detail: None,
+                description: Some("react".into()),
+            }),
+            ..Default::default()
+        };
+        let enriched = super::enrich_completion_detail(item);
+        assert_eq!(enriched.detail.as_deref(), Some("react"));
     }
 
     #[test]

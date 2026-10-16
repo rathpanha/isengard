@@ -5,6 +5,13 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-14** — LSP Install downloads into `…/isengard/lsp/` (app-local
   first, PATH fallback); Remove deletes that tree only (no OS package cmds).
+- **2026-10-16** — Completion docs popover: content-sized list+docs (not
+  stretched to full remaining width), sidebar-aware clamp, stack when tight,
+  docs scroll at 240px max height (vendored Kit patch on `gpui-component`).
+- **2026-10-16** — Auto-import completions: advertise `resolveSupport` /
+  `labelDetailsSupport`, enable tsserver module-export prefs, resolve items
+  for `additionalTextEdits`, show import source in `detail`, and apply
+  import edits on Tab/Enter accept (restart the language server once).
 - **2026-10-16** — Completion accept: synthesize/clamp `textEdit` to the
   typed segment after `.` so Enter keeps `a.map` (Kit's latch otherwise
   replaces the whole `a.map` with `map`). Tab accepts the open menu
