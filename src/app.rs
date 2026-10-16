@@ -42,6 +42,7 @@ use crate::config::{
 };
 use crate::editor::document;
 use crate::editor::language::Language;
+use crate::editor::selection_matches;
 use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
 use crate::lsp::{
@@ -625,6 +626,10 @@ pub struct IsengardApp {
     /// Fill decorations for project-search hits in the active preview editor.
     /// Dropping the handle does not clear them — we `dispose` on replace.
     search_hit_decorations: Option<RangeDecorationCollection>,
+    /// Soft fills for other occurrences of the current selection (per editor).
+    selection_match_decorations: HashMap<EntityId, RangeDecorationCollection>,
+    /// Coalesce deferred selection-match refreshes (drag-select fires often).
+    selection_match_gen: u64,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
     /// Bottom integrated terminal (lazy; created on first show).
@@ -788,6 +793,8 @@ impl IsengardApp {
             search_generation: 0,
             search_cancel: Arc::new(AtomicBool::new(false)),
             search_hit_decorations: None,
+            selection_match_decorations: HashMap::new(),
+            selection_match_gen: 0,
             tabs: TabList::default(),
             app_menu_bar,
             terminal,
@@ -1974,14 +1981,20 @@ impl IsengardApp {
                         let text = state.read(cx).value().to_string();
                         this.lsp.did_change(&path, &text);
                     }
+                    this.schedule_selection_matches(&state, cx);
                     cx.notify();
                 }
             }),
-            // Re-render on cursor moves so the status bar's Ln/Col stays current.
-            cx.observe(&state, |_, _, cx| cx.notify()),
+            // Cursor/selection → status bar Ln/Col + selection-match highlights.
+            cx.observe(&state, |this, state, cx| {
+                this.schedule_selection_matches(&state, cx);
+                cx.notify();
+            }),
             // Kit binds Tab → indent; accept the completion menu instead.
             install_tab_accepts_completion(&state, cx),
         ];
+
+        self.ensure_selection_match_collection(&state, cx);
 
         self.tabs.push(EditorTab {
             path: path.to_path_buf(),
@@ -2411,6 +2424,9 @@ impl IsengardApp {
         for ix in indexes.into_iter().rev() {
             if let Some(tab) = self.tabs.get(ix) {
                 self.lsp.did_close(&tab.path);
+                if let Some(state) = tab.editor_state() {
+                    self.clear_selection_matches(state.entity_id(), cx);
+                }
             }
             self.tabs.remove(ix);
         }
@@ -2950,12 +2966,17 @@ impl IsengardApp {
                         tab.is_modified = true;
                         tab.preview = false;
                     }
+                    this.schedule_selection_matches(&state, cx);
                     cx.notify();
                 }
             }),
-            cx.observe(&state, |_, _, cx| cx.notify()),
+            cx.observe(&state, |this, state, cx| {
+                this.schedule_selection_matches(&state, cx);
+                cx.notify();
+            }),
             install_tab_accepts_completion(&state, cx),
         ];
+        self.ensure_selection_match_collection(&state, cx);
         self.tabs.push(EditorTab {
             path,
             body: TabBody::Text {
@@ -4242,7 +4263,7 @@ impl IsengardApp {
         if let Some(prev) = self.search_hit_decorations.take() {
             prev.dispose(cx);
         }
-        let fill = cx.theme().warning.opacity(0.35);
+        let fill = cx.theme().warning.opacity(0.35); // search hits (distinct from selection matches)
         let hit_line = hit.line as u32;
         let hit_col = hit.col as u32;
         let hit_end = (hit.col + hit.match_len) as u32;
@@ -4278,6 +4299,112 @@ impl IsengardApp {
             collection
         });
         self.search_hit_decorations = Some(collection);
+    }
+
+    /// Empty decoration bucket so later refreshes only `set` (no create-under-observe).
+    fn ensure_selection_match_collection(
+        &mut self,
+        state: &Entity<EditorState>,
+        cx: &mut Context<Self>,
+    ) {
+        let id = state.entity_id();
+        if self.selection_match_decorations.contains_key(&id) {
+            return;
+        }
+        let collection = state.update(cx, |state, cx| {
+            state.create_range_decorations_collection(Vec::new(), cx)
+        });
+        self.selection_match_decorations.insert(id, collection);
+    }
+
+    /// Queue a selection-match refresh after the current effect cycle.
+    ///
+    /// The deferred callback must not `IsengardApp::update` across an
+    /// `EditorState::update` — decoration `set` notifies the editor, which
+    /// re-enters our observe and nested-updates the app.
+    fn schedule_selection_matches(
+        &mut self,
+        state: &Entity<EditorState>,
+        cx: &mut Context<Self>,
+    ) {
+        self.selection_match_gen = self.selection_match_gen.wrapping_add(1);
+        let ticket = self.selection_match_gen;
+        let state = state.downgrade();
+        let app = cx.weak_entity();
+        cx.defer(move |cx| {
+            let Some(app_entity) = app.upgrade() else {
+                return;
+            };
+            if app_entity.read(cx).selection_match_gen != ticket {
+                return;
+            }
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let id = state.entity_id();
+            // Same wash Kit paints for hover-symbol / inactive search hits:
+            // selection hue with saturation crushed (reads as soft white).
+            let fill = Hsla {
+                s: 0.1,
+                ..cx.theme().selection
+            };
+
+            let (range, needle, haystack) = {
+                let editor = state.read(cx);
+                (
+                    editor.selected_range(),
+                    editor.selected_text().to_string(),
+                    editor.value().to_string(),
+                )
+            };
+
+            let decorations = if range.is_empty()
+                || !selection_matches::should_highlight(&needle)
+            {
+                Vec::new()
+            } else {
+                selection_matches::find_selection_matches(&haystack, &needle, range)
+                    .into_iter()
+                    .map(|r| {
+                        RangeDecoration::new(r)
+                            .with_style(RangeDecorationStyle::Fill)
+                            .with_color(fill)
+                    })
+                    .collect()
+            };
+
+            // Prefer the pre-created handle; lazy-create if a tab skipped ensure.
+            let collection = app_entity
+                .read(cx)
+                .selection_match_decorations
+                .get(&id)
+                .cloned();
+            let collection = match collection {
+                Some(c) => c,
+                None => {
+                    let c = state.update(cx, |state, cx| {
+                        state.create_range_decorations_collection(Vec::new(), cx)
+                    });
+                    app_entity.update(cx, |this, _| {
+                        this.selection_match_decorations.insert(id, c.clone());
+                    });
+                    c
+                }
+            };
+            // `RangeDecorationCollection::set` always notifies, even on identical
+            // content. Notifying re-enters our observe → schedule → set loop.
+            let next: Vec<_> = decorations.iter().map(|d| d.range().clone()).collect();
+            if collection.get_ranges(cx) == next {
+                return;
+            }
+            collection.set(decorations, cx);
+        });
+    }
+
+    fn clear_selection_matches(&mut self, id: EntityId, cx: &mut App) {
+        if let Some(prev) = self.selection_match_decorations.remove(&id) {
+            prev.dispose(cx);
+        }
     }
 
     fn replace_in_file(

@@ -65,7 +65,8 @@ tabs, highlighted editor, status bar):
   prefilter; cancels in-flight scans on new query; skips `node_modules`/
   `target`/media/binaries and files >1 MiB; open buffers preferred over disk;
   Replace in File / Replace All (confirm); click match to open (result row +
-  editor highlight). Results list paints at most 500 hits.
+  editor highlight). Results list paints at most 500 hits. Selecting text in
+  an editor soft-highlights other exact occurrences in that file.
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
   + per-file); Suggest/Commit from selection; Open File + discard;

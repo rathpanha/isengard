@@ -185,7 +185,9 @@ Add a row here whenever a new shared component is created.
   (Material `tree_icon` + workspace-relative path) + match rows (`Ln` +
   line preview with the match span on `theme.warning` fill);
   click opens a preview tab, selects the hit, and fills every match in that
-  file (`RangeDecoration`). Replace in File applies
+  file (`RangeDecoration`). Selecting non-empty text in an editor soft-fills
+  other exact occurrences in that buffer (`accent` @ ~22% — distinct from
+  search’s `warning` hits). Replace in File applies
   to the selected result's file; Replace All confirms first (choice dialog).
   Open editor buffers win over disk for search/replace; closed files write
   UTF-8 to disk. Honors `.gitignore` (even without a `.git` dir); skips

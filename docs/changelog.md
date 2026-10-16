@@ -5,6 +5,9 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-14** — LSP Install downloads into `…/isengard/lsp/` (app-local
   first, PATH fallback); Remove deletes that tree only (no OS package cmds).
+- **2026-10-16** — Selection matches: soft-highlight other exact occurrences
+  of the selected text. Skip no-op `set`s (Kit always notifies). Fill uses
+  Kit's hover wash (`selection` with `s: 0.1`) so matches match symbol hover.
 - **2026-10-16** — Completion docs popover: content-sized list+docs (not
   stretched to full remaining width), sidebar-aware clamp, stack when tight,
   docs scroll at 240px max height (vendored Kit patch on `gpui-component`).
