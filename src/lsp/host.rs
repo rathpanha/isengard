@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -14,11 +15,12 @@ use lsp_types::notification::{
     PublishDiagnostics,
 };
 use lsp_types::{
-    ClientCapabilities, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, GeneralClientCapabilities, HoverClientCapabilities,
-    InitializeParams, MarkupKind, PositionEncodingKind, PublishDiagnosticsParams,
-    TextDocumentClientCapabilities, TextDocumentContentChangeEvent, TextDocumentItem,
-    TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
+    ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    GeneralClientCapabilities, HoverClientCapabilities, InitializeParams, MarkupKind,
+    PositionEncodingKind, PublishDiagnosticsParams, TextDocumentClientCapabilities,
+    TextDocumentContentChangeEvent, TextDocumentItem, TextDocumentSyncClientCapabilities,
+    WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
 
@@ -82,7 +84,9 @@ pub enum AttachOutcome {
 
 struct RunningServer {
     client: Arc<LspClient>,
-    versions: HashMap<PathBuf, i32>,
+    /// Shared with [`DocBridge`] so request-path sync and Change notifications
+    /// stay on one monotonic version clock.
+    versions: HashMap<PathBuf, Arc<AtomicI32>>,
 }
 
 /// Owns language servers for the current window workspace.
@@ -444,15 +448,17 @@ impl LspHost {
             None => return,
         };
 
-        if !server.versions.contains_key(path) {
-            let version = 0;
+        let version = if let Some(v) = server.versions.get(path) {
+            v.clone()
+        } else {
+            let v = Arc::new(AtomicI32::new(0));
             if let Err(err) = client.notify(
                 DidOpenTextDocument::METHOD,
                 DidOpenTextDocumentParams {
                     text_document: TextDocumentItem {
                         uri: uri.clone(),
                         language_id: language_id.to_string(),
-                        version,
+                        version: 0,
                         text: text.to_string(),
                     },
                 },
@@ -460,12 +466,15 @@ impl LspHost {
                 log::warn!("LSP didOpen: {err:#}");
                 return;
             }
-            server.versions.insert(path.to_path_buf(), version);
-        }
+            server.versions.insert(path.to_path_buf(), v.clone());
+            v
+        };
 
         let bridge = Rc::new(DocBridge {
             client: client.clone(),
             uri,
+            version,
+            completion_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         });
         let show = show_document_handler(path.to_path_buf(), app, open_location);
 
@@ -487,11 +496,10 @@ impl LspHost {
             return;
         };
         for server in self.servers.values_mut() {
-            let Some(version) = server.versions.get_mut(path) else {
+            let Some(version) = server.versions.get(path) else {
                 continue;
             };
-            *version += 1;
-            let version = *version;
+            let version = version.fetch_add(1, Ordering::SeqCst) + 1;
             let _ = server.client.notify(
                 DidChangeTextDocument::METHOD,
                 DidChangeTextDocumentParams {
@@ -657,7 +665,20 @@ fn client_capabilities() -> ClientCapabilities {
                 will_save_wait_until: Some(false),
                 did_save: Some(true),
             }),
-            completion: Some(Default::default()),
+            completion: Some(CompletionClientCapabilities {
+                dynamic_registration: Some(false),
+                context_support: Some(true),
+                completion_item: Some(CompletionItemCapability {
+                    snippet_support: Some(true),
+                    documentation_format: Some(vec![
+                        MarkupKind::Markdown,
+                        MarkupKind::PlainText,
+                    ]),
+                    deprecated_support: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
             hover: Some(HoverClientCapabilities {
                 dynamic_registration: Some(false),
                 content_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),

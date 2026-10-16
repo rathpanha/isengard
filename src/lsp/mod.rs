@@ -13,6 +13,7 @@ mod protocol;
 mod registry;
 mod uri;
 
+pub use bridge::install_tab_accepts_completion;
 pub use client::LspClient;
 pub use host::{
     AttachOutcome, CatalogServer, LspEvent, LspHost, MissingServerOffer, ServerDisplayStatus,

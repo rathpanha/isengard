@@ -45,7 +45,8 @@ tabs, highlighted editor, status bar):
   `npm install --prefix …/lsp/pkg/…` for Node servers (needs system `node`/`npm`
   as runtime only). `pylsp` / `clangd` / etc. stay PATH-only (no Install).
   Status bar: one LSP icon → short list with Install / Remove (Remove deletes
-  app-local files only). `config.json` → `lsp`; Open Config File…. Untitled
+  app-local files only). Go-to-definition defers cross-file opens (avoids GPUI
+  nested-update panic). `config.json` → `lsp`; Open Config File…. Untitled
   buffers skip LSP until saved.
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /

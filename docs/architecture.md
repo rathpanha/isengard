@@ -170,7 +170,8 @@ src/
   Lazy-start on first matching file open; full-document `didChange`;
   `publishDiagnostics` → Kit `diagnostics_mut`. Providers hang on
   `EditorState::lsp_mut()`. Cross-file go-to-def uses Kit `show_document` →
-  `open_file` + cursor. Workspace switch shuts servers down. No Tokio — stdio
+  deferred `open_file` + cursor (never nest entity updates inside the editor
+  lease — that panicked). Workspace switch shuts servers down. No Tokio — stdio
   + flume like the terminal. Start is async so the status bar can show yellow
   while spawning. Missing server → Install dialog (`lsp::install` download
   recipes) or toast. Status bar: one icon → short Popover

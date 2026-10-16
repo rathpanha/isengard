@@ -5,6 +5,21 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-14** — LSP Install downloads into `…/isengard/lsp/` (app-local
   first, PATH fallback); Remove deletes that tree only (no OS package cmds).
+- **2026-10-16** — Completion accept: synthesize/clamp `textEdit` to the
+  typed segment after `.` so Enter keeps `a.map` (Kit's latch otherwise
+  replaces the whole `a.map` with `map`). Tab accepts the open menu
+  (Kit only bound Tab → indent).
+- **2026-10-16** — Rank/filter completions by the segment after `.` (Kit
+  latches `a.map` as the query; without this, `flatMap` outranks / hides `map`).
+  Drop superseded completion replies so a slow `a.` response cannot overwrite
+  the refined `a.map` menu.
+- **2026-10-16** — Fix stale/wrong completions: sync `didChange` on the
+  request path before completion (Kit raced ahead of the Change subscription),
+  and treat queries ending in `.` as TriggerCharacter.
+- **2026-10-16** — Fix completion popup empty: normalize Kit's bogus
+  multi-char `triggerCharacter` to LSP `Invoked` before the server sees it.
+- **2026-10-16** — Fix go-to-definition crash: defer cross-file open so we
+  don't nest GPUI entity updates inside the editor.
 - **2026-10-14** — LSP row status is a fixed circular dot (not a collapsed bar).
 - **2026-10-14** — LSP popover lists only active-language + installed servers
   (not the full registry dump).

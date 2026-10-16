@@ -46,7 +46,8 @@ use crate::editor::tabs::TabList;
 use crate::file_tree::tree_icon;
 use crate::lsp::{
     AttachOutcome, CatalogServer, LspClient, LspEvent, LspHost, MissingServerOffer,
-    ServerDisplayStatus, is_app_local, recipe_for_command, run_install, run_uninstall,
+    ServerDisplayStatus, install_tab_accepts_completion, is_app_local, recipe_for_command,
+    run_install, run_uninstall,
 };
 use crate::git::{
     ConflictHunk, ConflictSide, GitPanel, GitPanelEvent, HunkSide, OverviewMark, RepoStatus,
@@ -1978,6 +1979,8 @@ impl IsengardApp {
             }),
             // Re-render on cursor moves so the status bar's Ln/Col stays current.
             cx.observe(&state, |_, _, cx| cx.notify()),
+            // Kit binds Tab → indent; accept the completion menu instead.
+            install_tab_accepts_completion(&state, cx),
         ];
 
         self.tabs.push(EditorTab {
@@ -2951,6 +2954,7 @@ impl IsengardApp {
                 }
             }),
             cx.observe(&state, |_, _, cx| cx.notify()),
+            install_tab_accepts_completion(&state, cx),
         ];
         self.tabs.push(EditorTab {
             path,
