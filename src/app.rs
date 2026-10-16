@@ -1006,6 +1006,9 @@ impl IsengardApp {
     }
 
     fn apply_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
+        // Welcome recent rows unmount on switch; clear any path tooltip that
+        // lost its trigger (Kit hide can race a pending show timer).
+        window.dismiss_tooltip(cx);
         self.persist_session(cx);
         self.tabs = TabList::default();
         self.workspace = match switch {
@@ -2414,6 +2417,8 @@ impl IsengardApp {
     }
 
     fn close_tabs(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        // Tab × tooltips lose their trigger on remove (incl. ⌘W while hovered).
+        window.dismiss_tooltip(cx);
         // Remove from the end so earlier indexes stay valid while we scan.
         let mut indexes: Vec<usize> = paths
             .iter()
@@ -4015,6 +4020,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Accept buttons (and their tooltips) leave the tree when the conflict resolves.
+        window.dismiss_tooltip(cx);
         let Some(ix) = self.tabs.active_index() else {
             return;
         };
@@ -4040,6 +4047,7 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.dismiss_tooltip(cx);
         let Some(ix) = self.tabs.active_index() else {
             return;
         };

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex, v_flex,
 };
@@ -140,6 +140,8 @@ impl TerminalPanel {
         let Some(ix) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
+        // Close × tooltip can stick if the tab unmounts before Kit's hide settles.
+        window.dismiss_tooltip(cx);
         self.tabs.remove(ix);
         if self.tabs.is_empty() {
             self.active = 0;

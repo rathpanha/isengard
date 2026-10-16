@@ -283,9 +283,21 @@ pub(crate) trait ManagedTooltipExt:
             }
         })
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            // `TooltipOverlay::hide` clears the visible popup but does not bump
+            // its epoch, so a show_task that already passed its timer can still
+            // apply content afterward (stuck tooltip after a fast click that
+            // unmounts the trigger — e.g. welcome recent folders).
             if let Some(overlay) = WindowState::tooltip_overlay(window, cx) {
                 overlay.update(cx, |overlay, cx| {
                     overlay.hide(cx);
+                });
+                let overlay = overlay.downgrade();
+                window.defer(cx, move |_, cx| {
+                    if let Some(overlay) = overlay.upgrade() {
+                        overlay.update(cx, |overlay, cx| {
+                            overlay.hide(cx);
+                        });
+                    }
                 });
             }
         })

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     kbd::Kbd,
@@ -249,9 +249,12 @@ fn render_recent(
                 .tooltip(id.clone())
                 .on_click(cx.listener({
                     let path = path.to_path_buf();
-                    move |this, _, window, cx| match kind {
-                        RecentKind::Folder => this.open_folder(&path, window, cx),
-                        RecentKind::Workspace => this.open_workspace_file(&path, window, cx),
+                    move |this, _, window, cx| {
+                        window.dismiss_tooltip(cx);
+                        match kind {
+                            RecentKind::Folder => this.open_folder(&path, window, cx),
+                            RecentKind::Workspace => this.open_workspace_file(&path, window, cx),
+                        }
                     }
                 })),
         )
@@ -273,8 +276,9 @@ fn render_recent(
                 .xsmall()
                 .icon(IconName::Close)
                 .tooltip("Remove from recent")
-                .on_click(cx.listener(move |this, _, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
+                    window.dismiss_tooltip(cx);
                     match kind {
                         RecentKind::Folder => this.remove_recent_folder(&path, cx),
                         RecentKind::Workspace => this.remove_recent_workspace(&path, cx),

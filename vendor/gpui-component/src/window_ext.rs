@@ -78,6 +78,9 @@ pub trait WindowExt: Sized {
     /// Returns number of notifications.
     fn notifications(&mut self, cx: &mut App) -> Rc<Vec<Entity<Notification>>>;
 
+    /// Dismiss any managed tooltip for this window (visible or pending show).
+    fn dismiss_tooltip(&mut self, cx: &mut App);
+
     /// Return the currently focused input state.
     ///
     /// Covers `Input`, `Textarea`, `Editor` and `OtpInput`, use
@@ -201,6 +204,21 @@ impl WindowExt for Window {
                 .read(cx)
                 .notifications(),
         )
+    }
+
+    #[inline]
+    fn dismiss_tooltip(&mut self, cx: &mut App) {
+        if let Some(overlay) = WindowState::tooltip_overlay(self, cx) {
+            overlay.update(cx, |overlay, cx| overlay.hide(cx));
+            // Same race as managed_tooltip mouse_down: pending show may apply
+            // after hide if the timer already fired.
+            let overlay = overlay.downgrade();
+            self.defer(cx, move |_, cx| {
+                if let Some(overlay) = overlay.upgrade() {
+                    overlay.update(cx, |overlay, cx| overlay.hide(cx));
+                }
+            });
+        }
     }
 
     #[inline]

@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-16** — Stuck managed tooltips: Kit hide + deferred re-hide on
+  click; also `dismiss_tooltip` on workspace switch, tab/terminal close,
+  welcome recent open/remove, and conflict Accept (trigger unmount paths).
 - **2026-10-14** — LSP Install downloads into `…/isengard/lsp/` (app-local
   first, PATH fallback); Remove deletes that tree only (no OS package cmds).
 - **2026-10-16** — Selection matches: soft-highlight other exact occurrences

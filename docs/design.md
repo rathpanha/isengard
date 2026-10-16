@@ -80,7 +80,12 @@ section here.
   el.cursor_pointer())`). Shared components in `src/ui/components.rs`
   already include it.
 - **Tooltips** on every icon-only button, naming the action ("Close",
-  "Remove from recent").
+  "Remove from recent"). Kit's managed tooltip can stick if the trigger
+  unmounts while a delayed show is in flight (or on keyboard close while
+  hovered). Call `window.dismiss_tooltip(cx)` on any action that removes the
+  hovered control: workspace switch, tab/terminal close, welcome recent
+  remove/open, conflict Accept. Click paths also get a Kit-level hide +
+  deferred re-hide (vendored `managed_tooltip`).
 
 ## 4. Shared components (`src/ui/components.rs`)
 
