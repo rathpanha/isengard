@@ -629,8 +629,12 @@ pub struct IsengardApp {
     search_hit_decorations: Option<RangeDecorationCollection>,
     /// Soft fills for other occurrences of the current selection (per editor).
     selection_match_decorations: HashMap<EntityId, RangeDecorationCollection>,
-    /// Coalesce deferred selection-match refreshes (drag-select fires often).
+    /// Coalesce / debounce selection-match refreshes (observe + drag fire often).
     selection_match_gen: u64,
+    /// Last selection range we scheduled matches for (skip scroll/blink no-ops).
+    selection_match_last_range: HashMap<EntityId, std::ops::Range<usize>>,
+    /// Last cursor shown in the status bar (skip app re-render on scroll/blink).
+    status_bar_cursor: Option<(u32, u32)>,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
     /// Bottom integrated terminal (lazy; created on first show).
@@ -796,6 +800,8 @@ impl IsengardApp {
             search_hit_decorations: None,
             selection_match_decorations: HashMap::new(),
             selection_match_gen: 0,
+            selection_match_last_range: HashMap::new(),
+            status_bar_cursor: None,
             tabs: TabList::default(),
             app_menu_bar,
             terminal,
@@ -1985,14 +1991,16 @@ impl IsengardApp {
                         let text = state.read(cx).value().to_string();
                         this.lsp.did_change(&path, &text);
                     }
+                    // Buffer changed: occurrences may move even if range stays.
+                    this.selection_match_last_range.remove(&state.entity_id());
                     this.schedule_selection_matches(&state, cx);
                     cx.notify();
                 }
             }),
             // Cursor/selection → status bar Ln/Col + selection-match highlights.
+            // Scroll/blink also notify the editor — ignore those no-ops.
             cx.observe(&state, |this, state, cx| {
-                this.schedule_selection_matches(&state, cx);
-                cx.notify();
+                this.on_editor_state_observed(&state, cx);
             }),
             // Kit binds Tab → indent; accept the completion menu instead.
             install_tab_accepts_completion(&state, cx),
@@ -3011,13 +3019,13 @@ impl IsengardApp {
                         tab.is_modified = true;
                         tab.preview = false;
                     }
+                    this.selection_match_last_range.remove(&state.entity_id());
                     this.schedule_selection_matches(&state, cx);
                     cx.notify();
                 }
             }),
             cx.observe(&state, |this, state, cx| {
-                this.schedule_selection_matches(&state, cx);
-                cx.notify();
+                this.on_editor_state_observed(&state, cx);
             }),
             install_tab_accepts_completion(&state, cx),
         ];
@@ -4365,91 +4373,173 @@ impl IsengardApp {
         self.selection_match_decorations.insert(id, collection);
     }
 
-    /// Queue a selection-match refresh after the current effect cycle.
+    /// Editor observe fires on scroll/blink too — only refresh matches / status
+    /// bar when the selection or cursor actually moved.
+    fn on_editor_state_observed(
+        &mut self,
+        state: &Entity<EditorState>,
+        cx: &mut Context<Self>,
+    ) {
+        self.schedule_selection_matches(state, cx);
+        let cursor = state.read(cx).cursor_position();
+        let key = (cursor.line, cursor.character);
+        if self.status_bar_cursor != Some(key) {
+            self.status_bar_cursor = Some(key);
+            cx.notify();
+        }
+    }
+
+    /// Queue a selection-match refresh (debounced).
     ///
-    /// The deferred callback must not `IsengardApp::update` across an
-    /// `EditorState::update` — decoration `set` notifies the editor, which
-    /// re-enters our observe and nested-updates the app.
+    /// Hot path: `cx.observe` fires on scroll and blink as well as selection
+    /// changes. Skip when the selected range is unchanged. Never call Kit's
+    /// `value()` until the selection is worth scanning. Clears stay immediate;
+    /// scans wait ~50ms so drag-select doesn't thrash.
     fn schedule_selection_matches(
         &mut self,
         state: &Entity<EditorState>,
         cx: &mut Context<Self>,
     ) {
+        let id = state.entity_id();
+        // Cheap peek: selection only (no full-buffer copy).
+        let (range, needle, haystack_len) = {
+            let editor = state.read(cx);
+            (
+                editor.selected_range(),
+                editor.selected_text().to_string(),
+                editor.text().len(),
+            )
+        };
+        if self.selection_match_last_range.get(&id) == Some(&range) {
+            return;
+        }
+        self.selection_match_last_range.insert(id, range.clone());
+
         self.selection_match_gen = self.selection_match_gen.wrapping_add(1);
         let ticket = self.selection_match_gen;
+
+        let worth_scan = !range.is_empty()
+            && selection_matches::should_highlight(&needle)
+            && haystack_len <= selection_matches::MAX_HAYSTACK_BYTES;
+
         let state = state.downgrade();
-        let app = cx.weak_entity();
-        cx.defer(move |cx| {
-            let Some(app_entity) = app.upgrade() else {
-                return;
-            };
-            if app_entity.read(cx).selection_match_gen != ticket {
-                return;
-            }
-            let Some(state) = state.upgrade() else {
-                return;
-            };
-            let id = state.entity_id();
-            // Same wash Kit paints for hover-symbol / inactive search hits:
-            // selection hue with saturation crushed (reads as soft white).
-            let fill = Hsla {
-                s: 0.1,
-                ..cx.theme().selection
-            };
-
-            let (range, needle, haystack) = {
-                let editor = state.read(cx);
-                (
-                    editor.selected_range(),
-                    editor.selected_text().to_string(),
-                    editor.value().to_string(),
-                )
-            };
-
-            let decorations = if range.is_empty()
-                || !selection_matches::should_highlight(&needle)
-            {
-                Vec::new()
-            } else {
-                selection_matches::find_selection_matches(&haystack, &needle, range)
-                    .into_iter()
-                    .map(|r| {
-                        RangeDecoration::new(r)
-                            .with_style(RangeDecorationStyle::Fill)
-                            .with_color(fill)
-                    })
-                    .collect()
-            };
-
-            // Prefer the pre-created handle; lazy-create if a tab skipped ensure.
-            let collection = app_entity
-                .read(cx)
-                .selection_match_decorations
-                .get(&id)
-                .cloned();
-            let collection = match collection {
-                Some(c) => c,
-                None => {
-                    let c = state.update(cx, |state, cx| {
-                        state.create_range_decorations_collection(Vec::new(), cx)
-                    });
-                    app_entity.update(cx, |this, _| {
-                        this.selection_match_decorations.insert(id, c.clone());
-                    });
-                    c
+        if !worth_scan {
+            // Clear stale fills right away (still deferred to avoid nested notify).
+            let app = cx.weak_entity();
+            cx.defer(move |cx| {
+                let Some(app_entity) = app.upgrade() else {
+                    return;
+                };
+                if app_entity.read(cx).selection_match_gen != ticket {
+                    return;
                 }
-            };
-            // `RangeDecorationCollection::set` always notifies, even on identical
-            // content. Notifying re-enters our observe → schedule → set loop.
-            let next: Vec<_> = decorations.iter().map(|d| d.range().clone()).collect();
-            if collection.get_ranges(cx) == next {
-                return;
-            }
-            collection.set(decorations, cx);
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                Self::apply_selection_match_decorations(
+                    &app_entity,
+                    &state,
+                    Vec::new(),
+                    cx,
+                );
+            });
+            return;
+        }
+
+        // Debounce the expensive rope → String + scan (drag-select).
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.selection_match_gen != ticket {
+                    return;
+                }
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
+                let id = state.entity_id();
+                let fill = Hsla {
+                    s: 0.1,
+                    ..cx.theme().selection
+                };
+                // Re-read: selection may have changed during the debounce wait.
+                let (range, needle, haystack) = {
+                    let editor = state.read(cx);
+                    let range = editor.selected_range();
+                    let needle = editor.selected_text().to_string();
+                    if range.is_empty()
+                        || !selection_matches::should_highlight(&needle)
+                        || editor.text().len() > selection_matches::MAX_HAYSTACK_BYTES
+                    {
+                        Self::apply_selection_match_decorations_for(
+                            this, id, &state, Vec::new(), cx,
+                        );
+                        return;
+                    }
+                    // `text().to_string()` once — avoid Kit `value()` (same copy +
+                    // SharedString wrap) on this hot path.
+                    (range, needle, editor.text().to_string())
+                };
+                let decorations = selection_matches::find_selection_matches(
+                    &haystack, &needle, range,
+                )
+                .into_iter()
+                .map(|r| {
+                    RangeDecoration::new(r)
+                        .with_style(RangeDecorationStyle::Fill)
+                        .with_color(fill)
+                })
+                .collect();
+                Self::apply_selection_match_decorations_for(
+                    this, id, &state, decorations, cx,
+                );
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn apply_selection_match_decorations(
+        app: &Entity<Self>,
+        state: &Entity<EditorState>,
+        decorations: Vec<RangeDecoration>,
+        cx: &mut App,
+    ) {
+        let id = state.entity_id();
+        app.update(cx, |this, cx| {
+            Self::apply_selection_match_decorations_for(this, id, state, decorations, cx);
         });
     }
 
+    fn apply_selection_match_decorations_for(
+        this: &mut Self,
+        id: EntityId,
+        state: &Entity<EditorState>,
+        decorations: Vec<RangeDecoration>,
+        cx: &mut App,
+    ) {
+        let collection = match this.selection_match_decorations.get(&id).cloned() {
+            Some(c) => c,
+            None => {
+                let c = state.update(cx, |state, cx| {
+                    state.create_range_decorations_collection(Vec::new(), cx)
+                });
+                this.selection_match_decorations.insert(id, c.clone());
+                c
+            }
+        };
+        // `RangeDecorationCollection::set` always notifies, even on identical
+        // content. Notifying re-enters our observe → schedule → set loop.
+        let next: Vec<_> = decorations.iter().map(|d| d.range().clone()).collect();
+        if collection.get_ranges(cx) == next {
+            return;
+        }
+        collection.set(decorations, cx);
+    }
+
     fn clear_selection_matches(&mut self, id: EntityId, cx: &mut App) {
+        self.selection_match_last_range.remove(&id);
         if let Some(prev) = self.selection_match_decorations.remove(&id) {
             prev.dispose(cx);
         }

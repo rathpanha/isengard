@@ -3,6 +3,15 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-17** — LSP catalog: cache `is_server_ready` (PATH / rust-analyzer
+  `--version`) so a missing server no longer stalls scroll and UI animation on
+  every status-bar paint; skip re-spawn while start is in Error until retry.
+- **2026-10-16** — Selection matches / scroll: ignore editor observe no-ops
+  (scroll + blink) — only refresh matches when the selected range changes and
+  only re-render the app when Ln/Col changes.
+- **2026-10-16** — Selection matches: stop materializing the whole buffer on
+  every cursor move (`value()`); clear immediately when idle, debounce scans
+  (~50ms), skip files >512 KiB.
 - **2026-10-16** — Drag to reorder editor tabs and terminal tabs within each
   strip (left `drag_border` insert; trailing drop zone; session order persists).
   Editor drag binds on `Tab` (not a parent wrapper) + unique `element_id`

@@ -46,9 +46,10 @@ tabs, highlighted editor, status bar):
   `npm install --prefix …/lsp/pkg/…` for Node servers (needs system `node`/`npm`
   as runtime only). `pylsp` / `clangd` / etc. stay PATH-only (no Install).
   Status bar: one LSP icon → short list with Install / Remove (Remove deletes
-  app-local files only). Go-to-definition defers cross-file opens (avoids GPUI
-  nested-update panic). `config.json` → `lsp`; Open Config File…. Untitled
-  buffers skip LSP until saved.
+  app-local files only; ready/PATH probes are cached — never re-run every
+  paint). Go-to-definition defers cross-file opens (avoids GPUI nested-update
+  panic). `config.json` → `lsp`; Open Config File…. Untitled buffers skip LSP
+  until saved.
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
@@ -66,8 +67,9 @@ tabs, highlighted editor, status bar):
   prefilter; cancels in-flight scans on new query; skips `node_modules`/
   `target`/media/binaries and files >1 MiB; open buffers preferred over disk;
   Replace in File / Replace All (confirm); click match to open (result row +
-  editor highlight). Results list paints at most 500 hits. Selecting text in
-  an editor soft-highlights other exact occurrences in that file.
+  editor highlight).   Results list paints at most 500 hits. Selecting text in
+  an editor soft-highlights other exact occurrences in that file
+  (debounced; skipped for buffers >512 KiB).
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
   + per-file); Suggest/Commit from selection; Open File + discard;

@@ -1,5 +1,6 @@
 //! Workspace-scoped language servers: start, document sync, diagnostics events.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -99,6 +100,9 @@ pub struct LspHost {
     /// Starting / error / running overlay (running also implied by `servers`).
     lifecycle: HashMap<String, ServerDisplayStatus>,
     missing_toasted: HashSet<String>,
+    /// Cached [`is_server_ready`] — PATH walks / `rust-analyzer --version` must
+    /// not run on every status-bar paint (that stuttered the whole UI).
+    ready_cache: RefCell<HashMap<String, bool>>,
     events_tx: flume::Sender<LspEvent>,
     events_rx: flume::Receiver<LspEvent>,
 }
@@ -112,6 +116,7 @@ impl Default for LspHost {
             servers: HashMap::new(),
             lifecycle: HashMap::new(),
             missing_toasted: HashSet::new(),
+            ready_cache: RefCell::new(HashMap::new()),
             events_tx,
             events_rx,
         }
@@ -141,11 +146,37 @@ impl LspHost {
             server.client.shutdown();
         }
         self.lifecycle.clear();
+        self.invalidate_ready_cache();
+    }
+
+    /// Drop cached PATH / app-local probes (call after install / uninstall).
+    pub fn invalidate_ready_cache(&self) {
+        self.ready_cache.borrow_mut().clear();
+    }
+
+    /// [`is_server_ready`] once per command until [`Self::invalidate_ready_cache`].
+    fn cached_ready(&self, command: &str) -> bool {
+        if let Some(&v) = self.ready_cache.borrow().get(command) {
+            return v;
+        }
+        let v = is_server_ready(command);
+        self.ready_cache
+            .borrow_mut()
+            .insert(command.to_string(), v);
+        v
     }
 
     /// Allow another missing-server prompt after a failed/cancelled install.
     pub fn clear_missing_prompt(&mut self, process_key: &str) {
         self.missing_toasted.remove(process_key);
+        // Install may have placed the binary — allow attach to retry.
+        if matches!(
+            self.lifecycle.get(process_key),
+            Some(ServerDisplayStatus::Error(_))
+        ) {
+            self.lifecycle.remove(process_key);
+        }
+        self.invalidate_ready_cache();
     }
 
     /// Returns `true` the first time we should offer install for this server.
@@ -180,7 +211,10 @@ impl LspHost {
             .filter_map(|process_key| {
                 let recipe = recipe_for_command(&process_key);
                 let status = self.status_for(&process_key);
-                let on_path = is_server_ready(&process_key);
+                // Never call `is_server_ready` uncached here — status bar paints
+                // this every frame; a missing rust-analyzer with a rustup shim
+                // used to spawn `--version` on each paint and freeze scroll.
+                let on_path = self.cached_ready(&process_key);
                 let remembered = self.settings.known.iter().any(|k| k == &process_key);
                 let live = matches!(
                     status,
@@ -243,6 +277,7 @@ impl LspHost {
         let paths = self.stop_server(process_key);
         self.forget_known(process_key);
         self.lifecycle.remove(process_key);
+        self.invalidate_ready_cache();
         let recipe = recipe_for_command(process_key)
             .filter(|_| super::install::is_app_local(process_key));
         (paths, recipe)
@@ -304,6 +339,19 @@ impl LspHost {
         ) {
             // Spawn already in flight; document wires when [`finish_start`] runs.
             return AttachOutcome::Done;
+        }
+
+        // Prior start failed (often "not found"). Re-probe once per attach —
+        // not every paint — so a brew/PATH install can recover; otherwise stay quiet.
+        if matches!(
+            self.lifecycle.get(&process_key),
+            Some(ServerDisplayStatus::Error(_))
+        ) {
+            self.ready_cache.borrow_mut().remove(&process_key);
+            if !self.cached_ready(&process_key) {
+                return AttachOutcome::Done;
+            }
+            self.lifecycle.remove(&process_key);
         }
 
         if let Some(server) = self.servers.get(&process_key)

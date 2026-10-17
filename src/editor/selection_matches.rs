@@ -6,6 +6,8 @@ use std::ops::Range;
 /// Skip huge / empty / whitespace-only selections (same spirit as VS Code).
 const MAX_NEEDLE_BYTES: usize = 200;
 const MAX_MATCHES: usize = 500;
+/// Don't materialize / scan buffers bigger than this (UI-thread cost).
+pub const MAX_HAYSTACK_BYTES: usize = 512 * 1024;
 
 /// Whether this selection should drive occurrence highlights.
 pub fn should_highlight(needle: &str) -> bool {
