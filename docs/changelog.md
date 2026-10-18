@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-17** — LSP Install/Remove: dismiss the catalog popover and restore
+  editor focus so File > Close Folder/Workspace keeps a live menu target.
 - **2026-10-17** — LSP catalog: cache `is_server_ready` (PATH / rust-analyzer
   `--version`) so a missing server no longer stalls scroll and UI animation on
   every status-bar paint; skip re-spawn while start is in Error until retry.

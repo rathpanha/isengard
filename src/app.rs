@@ -24,7 +24,7 @@ use gpui_kit::component::{
     },
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},
-    popover::Popover,
+    popover::{Popover, PopoverState},
     resizable::{ResizableState, h_resizable, resizable_panel, v_resizable},
     scroll::ScrollableElement as _,
     status_bar::StatusBar,
@@ -635,6 +635,9 @@ pub struct IsengardApp {
     selection_match_last_range: HashMap<EntityId, std::ops::Range<usize>>,
     /// Last cursor shown in the status bar (skip app re-render on scroll/blink).
     status_bar_cursor: Option<(u32, u32)>,
+    /// Controlled LSP catalog popover — install/remove must close it or focus
+    /// dies on the ephemeral trigger and File > Close Folder stops working.
+    lsp_catalog_open: bool,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
     /// Bottom integrated terminal (lazy; created on first show).
@@ -802,6 +805,7 @@ impl IsengardApp {
             selection_match_gen: 0,
             selection_match_last_range: HashMap::new(),
             status_bar_cursor: None,
+            lsp_catalog_open: false,
             tabs: TabList::default(),
             app_menu_bar,
             terminal,
@@ -1268,9 +1272,9 @@ impl IsengardApp {
                                     .label("Not now")
                                     .on_click(move |_, window, cx| {
                                         window.close_dialog(cx);
-                                        let _ = app_dismiss.update(cx, |this, _| {
+                                        let _ = app_dismiss.update(cx, |this, cx| {
                                             // Keep missing_toasted set so we don't spam.
-                                            let _ = this;
+                                            this.restore_focus_after_lsp_ui(window, cx);
                                         });
                                     }),
                             )
@@ -1287,6 +1291,7 @@ impl IsengardApp {
                                                 window,
                                                 cx,
                                             );
+                                            this.restore_focus_after_lsp_ui(window, cx);
                                         });
                                     }),
                             ),
@@ -1361,8 +1366,14 @@ impl IsengardApp {
                                 .cursor_pointer()
                                 .outline()
                                 .label("Cancel")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
+                                .on_click({
+                                    let app_cancel = app.clone();
+                                    move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let _ = app_cancel.update(cx, |this, cx| {
+                                            this.restore_focus_after_lsp_ui(window, cx);
+                                        });
+                                    }
                                 }),
                         )
                         .child(
@@ -1374,6 +1385,7 @@ impl IsengardApp {
                                     window.close_dialog(cx);
                                     let _ = app_ok.update(cx, |this, cx| {
                                         this.run_lsp_remove(&key_ok, window, cx);
+                                        this.restore_focus_after_lsp_ui(window, cx);
                                     });
                                 }),
                         ),
@@ -1398,26 +1410,30 @@ impl IsengardApp {
         self.clear_lsp_providers_for_paths(&paths, cx);
         self.config.lsp = self.lsp.settings().clone();
         self.config.save();
-        cx.notify();
 
         let Some(recipe) = recipe else {
             notify_success(format!("Removed {label}"), window, cx);
+            self.restore_focus_after_lsp_ui(window, cx);
             return;
         };
 
         let name = recipe.name.to_string();
         notify_success(format!("Uninstalling {name}…"), window, cx);
+        self.restore_focus_after_lsp_ui(window, cx);
         cx.spawn_in(window, async move |this, window| {
             let result = window
                 .background_spawn(async move { run_uninstall(&recipe) })
                 .await;
-            this.update_in(window, |_, window, cx| match result {
-                Ok(()) => notify_success(format!("Removed {name}"), window, cx),
-                Err(err) => notify_error(
-                    format!("Forgot {name} in Isengard, but uninstall failed: {err}"),
-                    window,
-                    cx,
-                ),
+            this.update_in(window, |this, window, cx| {
+                match result {
+                    Ok(()) => notify_success(format!("Removed {name}"), window, cx),
+                    Err(err) => notify_error(
+                        format!("Forgot {name} in Isengard, but uninstall failed: {err}"),
+                        window,
+                        cx,
+                    ),
+                }
+                this.restore_focus_after_lsp_ui(window, cx);
             })
             .ok()
         })
@@ -1482,39 +1498,42 @@ impl IsengardApp {
     ) {
         let name = recipe.name.to_string();
         notify_success(format!("Installing {name}…"), window, cx);
+        self.restore_focus_after_lsp_ui(window, cx);
 
         cx.spawn_in(window, async move |this, window| {
             let result = window
                 .background_spawn(async move { run_install(&recipe) })
                 .await;
-            this.update_in(window, |this, window, cx| match result {
-                Ok(()) => {
-                    this.lsp.clear_missing_prompt(&process_key);
-                    this.lsp.remember_known(&process_key);
-                    this.config.lsp = this.lsp.settings().clone();
-                    this.config.save();
-                    notify_success(
-                        format!("{name} installed — enabling IntelliSense"),
-                        window,
-                        cx,
-                    );
-                    if let (Some(path), Some(language)) = (path, language) {
-                        let state = this
-                            .tabs
-                            .iter()
-                            .find(|t| t.path == path)
-                            .and_then(|t| t.editor_state())
-                            .cloned();
-                        if let Some(state) = state {
-                            this.lsp_attach_tab(&path, language, &state, window, cx);
+            this.update_in(window, |this, window, cx| {
+                match result {
+                    Ok(()) => {
+                        this.lsp.clear_missing_prompt(&process_key);
+                        this.lsp.remember_known(&process_key);
+                        this.config.lsp = this.lsp.settings().clone();
+                        this.config.save();
+                        notify_success(
+                            format!("{name} installed — enabling IntelliSense"),
+                            window,
+                            cx,
+                        );
+                        if let (Some(path), Some(language)) = (path, language) {
+                            let state = this
+                                .tabs
+                                .iter()
+                                .find(|t| t.path == path)
+                                .and_then(|t| t.editor_state())
+                                .cloned();
+                            if let Some(state) = state {
+                                this.lsp_attach_tab(&path, language, &state, window, cx);
+                            }
                         }
                     }
-                    cx.notify();
+                    Err(err) => {
+                        this.lsp.clear_missing_prompt(&process_key);
+                        notify_error(format!("Could not install {name}: {err}"), window, cx);
+                    }
                 }
-                Err(err) => {
-                    this.lsp.clear_missing_prompt(&process_key);
-                    notify_error(format!("Could not install {name}: {err}"), window, cx);
-                }
+                this.restore_focus_after_lsp_ui(window, cx);
             })
             .ok()
         })
@@ -2164,6 +2183,16 @@ impl IsengardApp {
             Some(state) => state.update(cx, |state, cx| state.focus(window, cx)),
             None => self.focus_handle.focus(window, cx),
         }
+    }
+
+    /// After LSP catalog / install dialog chrome: park focus on the editor
+    /// (or the app handle) so native File menu actions keep a live target.
+    fn restore_focus_after_lsp_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.lsp_catalog_open = false;
+        window.dismiss_tooltip(cx);
+        self.focus_active_editor(window, cx);
+        self.refresh_menus(cx);
+        cx.notify();
     }
 
     /// Writes an on-disk tab. Untitled buffers must go through [`Self::request_save`].
@@ -5610,6 +5639,14 @@ impl IsengardApp {
                         .child(
                             Popover::new("lsp-catalog")
                                 .anchor(Anchor::BottomRight)
+                                .open(self.lsp_catalog_open)
+                                .on_open_change(cx.listener(|this, open, window, cx| {
+                                    this.lsp_catalog_open = *open;
+                                    if !*open {
+                                        this.focus_active_editor(window, cx);
+                                    }
+                                    cx.notify();
+                                }))
                                 .trigger(
                                     Button::new("status-lsp")
                                         .ghost()
@@ -5618,7 +5655,8 @@ impl IsengardApp {
                                         .icon(LucideIcon::BrainCircuit)
                                         .tooltip("Language Servers"),
                                 )
-                                .content(move |_, _, cx| {
+                                .content(move |_state: &mut PopoverState, _, cx| {
+                                    let popover = cx.weak_entity();
                                     let empty = servers.is_empty();
                                     v_flex()
                                         .w(px(280.))
@@ -5641,6 +5679,8 @@ impl IsengardApp {
                                         .children(servers.iter().map(|server| {
                                             let app_install = app.clone();
                                             let app_remove = app.clone();
+                                            let popover_install = popover.clone();
+                                            let popover_remove = popover.clone();
                                             let key = server.process_key.clone();
                                             let key_remove = key.clone();
                                             let label = server.label.clone();
@@ -5700,11 +5740,23 @@ impl IsengardApp {
                                                         .icon(LucideIcon::Download)
                                                         .tooltip("Install")
                                                         .on_click(move |_, window, cx| {
+                                                            if let Some(p) =
+                                                                popover_install.upgrade()
+                                                            {
+                                                                p.update(cx, |p, cx| {
+                                                                    p.dismiss(window, cx);
+                                                                });
+                                                            }
                                                             let _ =
                                                                 app_install.update(cx, |this, cx| {
+                                                                    this.lsp_catalog_open = false;
                                                                     this.run_lsp_install_command(
                                                                         &key, window, cx,
                                                                     );
+                                                                    this.focus_active_editor(
+                                                                        window, cx,
+                                                                    );
+                                                                    cx.notify();
                                                                 });
                                                         }),
                                                     )
@@ -5720,13 +5772,22 @@ impl IsengardApp {
                                                         .icon(LucideIcon::Trash)
                                                         .tooltip("Remove")
                                                         .on_click(move |_, window, cx| {
+                                                            if let Some(p) =
+                                                                popover_remove.upgrade()
+                                                            {
+                                                                p.update(cx, |p, cx| {
+                                                                    p.dismiss(window, cx);
+                                                                });
+                                                            }
                                                             let _ =
                                                                 app_remove.update(cx, |this, cx| {
+                                                                    this.lsp_catalog_open = false;
                                                                     this.offer_lsp_remove(
                                                                         &key_remove,
                                                                         window,
                                                                         cx,
                                                                     );
+                                                                    cx.notify();
                                                                 });
                                                         }),
                                                     )
