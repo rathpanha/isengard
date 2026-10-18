@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-18** — LSP catalog: Install returns after Remove — `installed` means
+  app-local (or live), not PATH; ready-cache pinned false while uninstall runs.
+- **2026-10-18** — LSP status marks are block-style squares (status-bar badge +
+  catalog rows), not Kit’s round `Badge::dot` / `rounded_full`.
 - **2026-10-17** — LSP Install/Remove: dismiss the catalog popover and restore
   editor focus so File > Close Folder/Workspace keeps a live menu target.
 - **2026-10-17** — LSP catalog: cache `is_server_ready` (PATH / rust-analyzer

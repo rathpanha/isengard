@@ -211,16 +211,14 @@ impl LspHost {
             .filter_map(|process_key| {
                 let recipe = recipe_for_command(&process_key);
                 let status = self.status_for(&process_key);
-                // Never call `is_server_ready` uncached here — status bar paints
-                // this every frame; a missing rust-analyzer with a rustup shim
-                // used to spawn `--version` on each paint and freeze scroll.
-                let on_path = self.cached_ready(&process_key);
-                let remembered = self.settings.known.iter().any(|k| k == &process_key);
+                // App-local only (cheap `is_file`) — not PATH. PATH used to keep
+                // `installed` true after Remove, which hid the Install button.
+                let app_local = super::install::is_app_local(&process_key);
                 let live = matches!(
                     status,
                     ServerDisplayStatus::Running | ServerDisplayStatus::Starting
                 );
-                let installed = on_path || remembered || live;
+                let installed = app_local || live;
                 // Skip inert rows: no recipe and nothing installed / focused.
                 if !installed && recipe.is_none() {
                     return None;
@@ -275,11 +273,16 @@ impl LspHost {
     /// Uninstall deletes app-local files only (never system packages).
     pub fn remove_server(&mut self, process_key: &str) -> (Vec<PathBuf>, Option<InstallRecipe>) {
         let paths = self.stop_server(process_key);
-        self.forget_known(process_key);
-        self.lifecycle.remove(process_key);
-        self.invalidate_ready_cache();
+        // Capture recipe while the app-local bin still exists.
         let recipe = recipe_for_command(process_key)
             .filter(|_| super::install::is_app_local(process_key));
+        self.forget_known(process_key);
+        self.lifecycle.remove(process_key);
+        // Files may still be on disk until async uninstall finishes — pin false
+        // so a mid-flight catalog paint cannot cache "ready" and hide Install.
+        self.ready_cache
+            .borrow_mut()
+            .insert(process_key.to_string(), false);
         (paths, recipe)
     }
 

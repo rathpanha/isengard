@@ -14,7 +14,6 @@ type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Context<Isenga
 use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
-    badge::Badge,
     button::{Button, ButtonGroup, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
@@ -1433,6 +1432,7 @@ impl IsengardApp {
                         cx,
                     ),
                 }
+                this.lsp.invalidate_ready_cache();
                 this.restore_focus_after_lsp_ui(window, cx);
             })
             .ok()
@@ -5632,10 +5632,10 @@ impl IsengardApp {
                 let app = cx.entity().downgrade();
                 let servers = lsp_catalog;
                 this.child(
-                    Badge::new()
-                        .dot()
-                        .xsmall()
-                        .color(agg)
+                    // Kit `Badge::dot` is always a circle — paint a block-style
+                    // square ourselves (same language as dirty-tab marks).
+                    div()
+                        .relative()
                         .child(
                             Popover::new("lsp-catalog")
                                 .anchor(Anchor::BottomRight)
@@ -5698,13 +5698,14 @@ impl IsengardApp {
                                                     cx.theme().muted_foreground
                                                 }
                                             };
-                                            // Status is the coloured dot only. Empty flex
-                                            // kids collapse `size_*` into a hairline bar —
-                                            // pin both axes with min_w/min_h.
+                                            // Status mark only. Empty flex kids collapse
+                                            // `size_*` into a hairline bar — pin both axes.
+                                            // Install when we have a recipe and no app-local
+                                            // copy (PATH alone must not hide re-install).
                                             let can_install =
                                                 !server.installed && server.recipe.is_some();
-                                            // Remove only deletes app-local installs (not OS PATH).
-                                            let can_remove = is_app_local(&server.process_key);
+                                            let can_remove = server.installed
+                                                && is_app_local(&server.process_key);
                                             h_flex()
                                                 .w_full()
                                                 .items_center()
@@ -5717,7 +5718,6 @@ impl IsengardApp {
                                                         .h(px(7.))
                                                         .min_w(px(7.))
                                                         .min_h(px(7.))
-                                                        .rounded_full()
                                                         .flex_shrink_0()
                                                         .bg(status_color),
                                                 )
@@ -5794,6 +5794,14 @@ impl IsengardApp {
                                                 })
                                         }))
                                 }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .size(px(6.))
+                                .bg(agg),
                         ),
                 )
             })

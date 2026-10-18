@@ -160,8 +160,11 @@ Add a row here whenever a new shared component is created.
   file tab is active) — not on welcome. Language servers: one status-bar
   `BrainCircuit` icon (badge from live servers). Popover lists only installed /
   remembered servers plus the active tab’s default (not every language). Row:
-  status **dot** (fixed 7×7 circle — not a collapsed bar) + name; Download /
-  Trash icons. Install is still a shell recipe into the user toolchain.
+  status mark (fixed 7×7 **square**, block style — not a circle or collapsed
+  bar) + name; Download when not app-local, Trash when app-local. A system
+  PATH binary must not hide Install after Remove. Status-bar `BrainCircuit`
+  badge is the same square (Kit’s `Badge::dot` is round — do not use it).
+  Install downloads into the app data dir (not the user toolchain).
 - **Bottom terminal panel:** Kit `v_resizable("editor-term-split")` under the
   **editor column only** (file tree stays full height in `main-split`); when
   the sidebar is hidden, under the full editor body. Requires an open
