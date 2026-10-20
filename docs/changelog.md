@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-20** — Moved welcome screen `src/ui/welcome.rs` → `src/app/welcome.rs`
+  (it renders from `IsengardApp`); removes the `app` ↔ `ui::welcome` import
+  cycle. No behavior change.
 - **2026-10-20** — Agent tooling: optional local graphify code graph of `src/`
   (gitignored; scope in `.graphifyignore`, `docs/` excluded and read directly);
   graphify rules added to both `CLAUDE.md` and `AGENTS.md`.

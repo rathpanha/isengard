@@ -10,7 +10,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
-use crate::app::{IsengardApp, NewFile, NewWorkspace, OpenFile, OpenFolder, OpenWorkspace};
+use super::{IsengardApp, NewFile, NewWorkspace, OpenFile, OpenFolder, OpenWorkspace};
 
 #[derive(Clone, Copy)]
 enum RecentKind {
@@ -20,7 +20,7 @@ enum RecentKind {
 
 /// Start page shown while nothing is open: start actions plus the recent
 /// workspaces and recent folders lists (each hidden when empty).
-pub fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
+pub(super) fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyElement {
     let muted = cx.theme().muted_foreground;
     let mut recents: Vec<AnyElement> = Vec::new();
     // Workspaces before folders, matching the Start actions above.

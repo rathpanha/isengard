@@ -110,7 +110,8 @@ src/
 │   ├── terminal.rs      bottom PTY panel show/create/cwd
 │   ├── terminal_cwd.rs  multi-root “Open Terminal in…” picker
 │   ├── chrome.rs        sidebar toggle, About, config, quit
-│   └── render.rs        title/sidebar/editor/status-bar paint + `Render`
+│   ├── render.rs        title/sidebar/editor/status-bar paint + `Render`
+│   └── welcome.rs       welcome screen (start actions + recent folders)
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
@@ -160,8 +161,7 @@ src/
     ├── components.rs    shared compositions encoding docs/design.md rules
     │                    (center_dialog)
     ├── file_tree.rs     FileTreePanel: FsNode -> TreeItem sync, TreeEvent handling, render
-    ├── tab_drag.rs      editor/terminal tab drag payloads + preview
-    └── welcome.rs       welcome screen (start actions + recent folders)
+    └── tab_drag.rs      editor/terminal tab drag payloads + preview
 ```
 
 ## How it fits together

@@ -18,6 +18,7 @@
 //! | `terminal` / `terminal_cwd` | Bottom PTY panel + cwd picker |
 //! | `chrome` | Sidebar toggle, About, config, quit |
 //! | `render` | Title/sidebar/editor/status-bar paint + `Render` |
+//! | `welcome` | Welcome screen (start actions + recents) |
 
 mod actions;
 mod chrome;
@@ -31,6 +32,7 @@ mod tab;
 mod terminal;
 mod terminal_cwd;
 mod tree;
+mod welcome;
 mod workspace;
 
 // `use super::*` in children only sees `pub` items — re-export deps + sibling types.
@@ -94,7 +96,6 @@ pub(super) use crate::theme;
 pub(super) use crate::ui::components::{center_dialog, notify_error, notify_success};
 pub(super) use crate::ui::file_tree::{FileTreePanel, TreeEditTarget};
 pub(super) use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
-pub(super) use crate::ui::welcome;
 pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 
 use tab::EditorTab;
