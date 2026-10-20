@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-20** — Tree path actions (`RenamePath`, `DeletePath`, `NewFileIn`,
+  `NewFolderIn`, `RemoveWorkspaceFolder`) moved from `app/actions.rs` to
+  `ui/file_tree.rs`; `ui/` no longer imports `app`. No behavior change.
 - **2026-10-20** — Headless UI integration tests (`src/app/ui_tests.rs`) for
   dirty mark/undo, Save, Save All failure and tab-close dialog; config path is
   disabled under test; LSP event pump uses `recv_async` (blocking recv hung the

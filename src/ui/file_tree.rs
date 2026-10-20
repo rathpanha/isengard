@@ -15,11 +15,34 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use serde::Deserialize;
 
-use crate::app::{
-    DeletePath, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
-};
 use crate::file_tree::{FsNode, GitIgnoreIndex, compute_guide_masks, tree_icon};
+
+/// Removes one root folder from the workspace (tree context menu on a root).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct RemoveWorkspaceFolder(pub PathBuf);
+
+/// Renames a tree path (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct RenamePath(pub PathBuf);
+
+/// Moves a tree path to the OS Trash (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct DeletePath(pub PathBuf);
+
+/// Creates a new file inside this directory (tree context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct NewFileIn(pub PathBuf);
+
+/// Creates a new folder inside this directory (tree context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct NewFolderIn(pub PathBuf);
 
 /// Separates a directory path from the suffix of its placeholder child's id.
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";

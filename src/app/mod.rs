@@ -96,7 +96,10 @@ pub(super) use crate::search::{
 pub(super) use crate::terminal::TerminalPanel;
 pub(super) use crate::theme;
 pub(super) use crate::ui::components::{center_dialog, notify_error, notify_success};
-pub(super) use crate::ui::file_tree::{FileTreePanel, TreeEditTarget};
+pub(super) use crate::ui::file_tree::{
+    DeletePath, FileTreePanel, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
+    TreeEditTarget,
+};
 pub(super) use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
 pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 
@@ -111,10 +114,10 @@ pub(super) type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Con
 pub use actions::init;
 pub use actions::{
     About, AddFolderToWorkspace, CloseAllTabs, CloseOtherTabs, CloseTab, CloseTabAt,
-    CloseWorkspace, DecreaseFontSize, DeletePath, DeleteSelectedTreeItem, FindInFiles,
-    IncreaseFontSize, NewFile, NewFileIn, NewFolderIn, NewTerminal, NewWorkspace,
-    OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit, RemoveWorkspaceFolder,
-    RenamePath, RenameSelectedTreeItem, ResetFontSize, Save, SaveAll, SaveWorkspaceAs,
+    CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
+    IncreaseFontSize, NewFile, NewTerminal, NewWorkspace,
+    OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit,
+    RenameSelectedTreeItem, ResetFontSize, Save, SaveAll, SaveWorkspaceAs,
     NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, TogglePreview, ToggleSidebar, ToggleTerminal,
 };
 

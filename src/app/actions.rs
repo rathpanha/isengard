@@ -44,31 +44,6 @@ actions!(
     ]
 );
 
-/// Removes one root folder from the workspace (tree context menu on a root).
-#[derive(Action, Clone, PartialEq, Deserialize)]
-#[action(namespace = isengard, no_json)]
-pub struct RemoveWorkspaceFolder(pub PathBuf);
-
-/// Renames a tree path (context menu).
-#[derive(Action, Clone, PartialEq, Deserialize)]
-#[action(namespace = isengard, no_json)]
-pub struct RenamePath(pub PathBuf);
-
-/// Moves a tree path to the OS Trash (context menu).
-#[derive(Action, Clone, PartialEq, Deserialize)]
-#[action(namespace = isengard, no_json)]
-pub struct DeletePath(pub PathBuf);
-
-/// Creates a new file inside this directory (tree context menu).
-#[derive(Action, Clone, PartialEq, Deserialize)]
-#[action(namespace = isengard, no_json)]
-pub struct NewFileIn(pub PathBuf);
-
-/// Creates a new folder inside this directory (tree context menu).
-#[derive(Action, Clone, PartialEq, Deserialize)]
-#[action(namespace = isengard, no_json)]
-pub struct NewFolderIn(pub PathBuf);
-
 /// Closes the tab for this path (tab context menu; may not be the active tab).
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]

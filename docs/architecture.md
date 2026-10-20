@@ -98,7 +98,7 @@ src/
 │                        (QuitMode::LastWindowClosed)
 ├── app/                 IsengardApp entity (one GPUI view; split by concern)
 │   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`), module map
-│   ├── actions.rs       `actions!`, path-carrying actions, key bindings, menu bridge
+│   ├── actions.rs       `actions!`, tab path actions, key bindings, menu bridge
 │   ├── tab.rs           `EditorTab` / `TabBody` / `DiffKind`
 │   ├── workspace.rs     open/switch/persist workspace, recents, titles
 │   ├── session.rs       session + window geometry restore/persist
@@ -160,7 +160,8 @@ src/
 └── ui/
     ├── components.rs    shared compositions encoding docs/design.md rules
     │                    (center_dialog)
-    ├── file_tree.rs     FileTreePanel: FsNode -> TreeItem sync, TreeEvent handling, render
+    ├── file_tree.rs     FileTreePanel: FsNode -> TreeItem sync, TreeEvent handling, render;
+    │                    tree path actions (RenamePath, DeletePath, NewFileIn, …)
     └── tab_drag.rs      editor/terminal tab drag payloads + preview
 ```
 
@@ -210,7 +211,8 @@ src/
   `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
   the tree's context menu. Same pattern for `RenamePath` / `DeletePath` /
-  `NewFileIn` / `NewFolderIn`. Blank-space New File/Folder uses a panel
+  `NewFileIn` / `NewFolderIn`. These five are defined in `ui/file_tree.rs`
+  (the dispatcher) and handled in `app/` — `ui/` never imports `app`. Blank-space New File/Folder uses a panel
   `ContextMenuExt` around the tree (row menus suppress it). A thin
   toolbar above the tree dispatches the same actions (parent from
   selection, else first root). Selection shortcuts bind only in the Kit
