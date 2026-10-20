@@ -32,7 +32,8 @@ tabs, highlighted editor, status bar):
   Trash. Double-click focuses the editor.
 - **Tabs:** Kit `Tab`s in `h_flex` (not `TabBar` — needed for per-tab
   `ContextMenu`); Material file icon + name as tab children; Close / Close
-  Others / Close All; preview tabs; dirty mark; Markdown/SVG Edit–Preview;
+  Others / Close All; preview tabs; dirty mark (cleared by undoing back to
+  the saved text); Markdown/SVG Edit–Preview;
   raster image preview tabs; drag within the strip to reorder (persists in
   session). Details in design.
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
@@ -83,7 +84,9 @@ tabs, highlighted editor, status bar):
   Accept Both.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
-  dir / root). Linux in-window close × confirms unsaved changes.
+  dir / root). Linux in-window close × confirms unsaved changes. Save All
+  keeps going past a failed file, lists every failure in one toast, and then
+  cancels the pending close / quit / switch.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard / File / Edit / View). Menu items omit by state (welcome vs
   folder/workspace vs tabs) — see design. Status bar while a workspace is
@@ -110,8 +113,6 @@ shortcuts. Check these first if something is off.
 - Interactive flows not yet verified by a human (see above).
 - No UI integration tests yet; GPUI Kit supports them via the `test-support`
   feature and `#[gpui_kit::test]` — worth adding for tab close, dialogs, tree.
-- Modified flag is set on any edit and not cleared by undoing back to the saved
-  text.
 - No Save As; no file watching; no "Open Recent" in the native menu
   (welcome screen only). Tree New File creates on disk after the inline
   name (distinct from menu New File / `⌘N`, which stays untitled until
@@ -126,7 +127,8 @@ shortcuts. Check these first if something is off.
   workspace does not offer to save it (only switching does). Workspace
   `settings` are stored but not applied. Session restore does not restore
   unsaved buffer text or auto-open last workspace on launch.
-- Save All stops at the first failing file.
+- Save All: an untitled buffer whose write fails after the Save dialog still
+  stops the queue (on-disk files carry on and report together).
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
 - App icons for `cargo run`: macOS Dock + Windows `.exe` embed + Linux X11
   window icon are implemented; Wayland still needs

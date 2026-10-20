@@ -427,7 +427,7 @@ impl IsengardApp {
                 state.set_value(new_text, window, cx);
             });
             if let Some(tab) = self.tabs.find_mut(|t| t.path == *path) {
-                tab.is_modified = true;
+                tab.refresh_modified(cx);
                 tab.preview = false;
             }
             cx.notify();

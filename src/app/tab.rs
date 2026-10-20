@@ -15,6 +15,9 @@ pub(super) enum TabBody {
     Text {
         language: Language,
         state: Entity<EditorState>,
+        /// Buffer as last loaded / saved (O(1) rope clone). `is_modified` is
+        /// derived from it, so undoing back to the saved text clears the mark.
+        saved: Rope,
         /// Rendered view (Markdown → TextView, SVG → img) instead of the source editor.
         rendered_preview: bool,
         _subscriptions: Vec<Subscription>,
@@ -104,6 +107,21 @@ impl EditorTab {
             } => *rendered_preview,
             TabBody::Diff { .. } | TabBody::Image => false,
         }
+    }
+
+    /// Re-derives `is_modified` from the buffer vs the saved snapshot.
+    pub(super) fn refresh_modified(&mut self, cx: &App) {
+        if let TabBody::Text { state, saved, .. } = &self.body {
+            self.is_modified = state.read(cx).text() != saved;
+        }
+    }
+
+    /// Records the current buffer as the saved baseline (after write / reload).
+    pub(super) fn mark_saved(&mut self, cx: &App) {
+        if let TabBody::Text { state, saved, .. } = &mut self.body {
+            *saved = state.read(cx).text().clone();
+        }
+        self.is_modified = false;
     }
 
     pub(super) fn supports_rendered_preview(&self) -> bool {

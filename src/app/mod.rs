@@ -52,7 +52,7 @@ pub(super) use gpui_kit::component::{
     h_flex,
     input::{
         Editor, EditorState, InputEvent, InputState, Position, RangeDecoration,
-        RangeDecorationCollection, RangeDecorationStyle, RopeExt as _, TabSize,
+        RangeDecorationCollection, RangeDecorationStyle, Rope, RopeExt as _, TabSize,
     },
     list::ListItem,
     menu::{AppMenuBar, ContextMenuExt as _},

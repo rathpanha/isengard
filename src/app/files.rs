@@ -81,7 +81,7 @@ impl IsengardApp {
                         t.editor_state()
                             .is_some_and(|s| s.entity_id() == id)
                     }) {
-                        tab.is_modified = true;
+                        tab.refresh_modified(cx);
                         // Editing pins a preview tab (VS Code behaviour).
                         tab.preview = false;
                     }
@@ -106,11 +106,13 @@ impl IsengardApp {
 
         self.ensure_selection_match_collection(&state, cx);
 
+        let saved = state.read(cx).text().clone();
         self.tabs.push(EditorTab {
             path: path.to_path_buf(),
             body: TabBody::Text {
                 language,
                 state: state.clone(),
+                saved,
                 rendered_preview: false,
                 _subscriptions: subscriptions,
             },
@@ -149,7 +151,7 @@ impl IsengardApp {
             state.set_value(text, window, cx);
         });
         if let Some(tab) = self.tabs.get_mut(ix) {
-            tab.is_modified = false;
+            tab.mark_saved(cx);
         }
         cx.notify();
     }
@@ -289,7 +291,7 @@ impl IsengardApp {
             let text = state.read(cx).value();
             let saved_path = tab.path.clone();
             document::write_text(&saved_path, &text)?;
-            tab.is_modified = false;
+            tab.mark_saved(cx);
             saved_path
         };
         self.reload_lsp_settings_if_config(&saved_path);
@@ -411,7 +413,7 @@ impl IsengardApp {
         } else {
             let attach = if let Some(tab) = self.tabs.find_mut(|t| t.path == *old_path) {
                 tab.path = new_path.clone();
-                tab.is_modified = false;
+                tab.mark_saved(cx);
                 tab.untitled_save_dir = None;
                 if let TabBody::Text {
                     language, state, ..
@@ -464,12 +466,16 @@ impl IsengardApp {
             .filter(|t| t.is_modified)
             .map(|t| t.path.clone())
             .collect();
-        self.request_save_queue(dirty, Rc::new(after), abort_message, window, cx);
+        self.request_save_queue(dirty, Vec::new(), Rc::new(after), abort_message, window, cx);
     }
 
+    /// Saves `paths` in order. An on-disk write failure is collected and the queue
+    /// moves on, so one bad file can't strand the rest; any failure still blocks
+    /// `after` (close / quit / switch) and is reported in one toast at the end.
     pub(super) fn request_save_queue(
         &mut self,
         mut paths: Vec<PathBuf>,
+        mut failures: Vec<String>,
         after: AfterSaveAll,
         abort_message: Option<&'static str>,
         window: &mut Window,
@@ -492,6 +498,7 @@ impl IsengardApp {
                     Rc::new(move |this, _, window, cx| {
                         this.request_save_queue(
                             rest.clone(),
+                            failures.clone(),
                             after.clone(),
                             abort_message,
                             window,
@@ -505,9 +512,12 @@ impl IsengardApp {
                 return;
             }
             if let Err(err) = self.save_tab(&path, cx) {
-                return notify_error(format!("Save failed: {err:#}"), window, cx);
+                failures.push(format!("{}: {err:#}", document::tab_label(&path)));
             }
             paths.remove(0);
+        }
+        if !failures.is_empty() {
+            return notify_error(save_failures_message(&failures), window, cx);
         }
         after(self, window, cx);
     }
@@ -774,7 +784,7 @@ impl IsengardApp {
                         t.editor_state()
                             .is_some_and(|s| s.entity_id() == entity_id)
                     }) {
-                        tab.is_modified = true;
+                        tab.refresh_modified(cx);
                         tab.preview = false;
                     }
                     this.selection_match_last_range.remove(&state.entity_id());
@@ -788,11 +798,13 @@ impl IsengardApp {
             install_tab_accepts_completion(&state, cx),
         ];
         self.ensure_selection_match_collection(&state, cx);
+        let saved = state.read(cx).text().clone();
         self.tabs.push(EditorTab {
             path,
             body: TabBody::Text {
                 language,
                 state,
+                saved,
                 rendered_preview: false,
                 _subscriptions: subscriptions,
             },
@@ -987,5 +999,30 @@ impl IsengardApp {
         theme::apply(&self.config, Some(window), cx);
         self.config.save();
         cx.notify();
+    }
+}
+
+/// One toast for every file Save All could not write.
+fn save_failures_message(failures: &[String]) -> String {
+    match failures {
+        [one] => format!("Save failed: {one}"),
+        many => format!("Could not save {} files:\n{}", many.len(), many.join("\n")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_failures_message;
+
+    #[test]
+    fn single_failure_keeps_save_failed_prefix() {
+        let msg = save_failures_message(&["a.rs: permission denied".into()]);
+        assert_eq!(msg, "Save failed: a.rs: permission denied");
+    }
+
+    #[test]
+    fn multiple_failures_are_listed_together() {
+        let msg = save_failures_message(&["a.rs: denied".into(), "b.rs: disk full".into()]);
+        assert_eq!(msg, "Could not save 2 files:\na.rs: denied\nb.rs: disk full");
     }
 }

@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-20** — Dirty mark is derived from a saved-text rope snapshot, so
+  undoing back to the saved text clears it; Save All no longer stops at the
+  first failed file (one toast lists all failures; close/quit/switch still
+  cancelled).
 - **2026-10-20** — Moved welcome screen `src/ui/welcome.rs` → `src/app/welcome.rs`
   (it renders from `IsengardApp`); removes the `app` ↔ `ui::welcome` import
   cycle. No behavior change.
