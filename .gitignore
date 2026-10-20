@@ -2,3 +2,4 @@ target/
 .env
 .DS_Store
 graphify-out/
+.claude/settings.local.json

@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-20** — Agent tooling: optional local graphify code graph of `src/`
+  (gitignored; scope in `.graphifyignore`, `docs/` excluded and read directly);
+  graphify rules added to both `CLAUDE.md` and `AGENTS.md`.
 - **2026-10-18** — Split monolith `app.rs` (~6k) into `src/app/` by concern
   (actions, tabs, workspace/session, files/tree, lsp, search, git, terminal,
   chrome, render); docs map updated. No behavior change.

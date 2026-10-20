@@ -1,0 +1,16 @@
+# graphify scope: code in src/ only. docs/ is read directly by agents (see CLAUDE.md).
+/docs/
+/vendor/
+/assets/
+/scripts/
+/tmp/
+/target/
+/.claude/
+/build.rs
+/Cargo.toml
+/Cargo.lock
+/AGENTS.md
+/CLAUDE.md
+/CONTRIBUTING.md
+/LICENSE
+/.env.example
