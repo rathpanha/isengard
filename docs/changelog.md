@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-18** — Split monolith `app.rs` (~6k) into `src/app/` by concern
+  (actions, tabs, workspace/session, files/tree, lsp, search, git, terminal,
+  chrome, render); docs map updated. No behavior change.
 - **2026-10-18** — LSP catalog: Install returns after Remove — `installed` means
   app-local (or live), not PATH; ready-cache pinned false while uninstall runs.
 - **2026-10-18** — LSP status marks are block-style squares (status-bar badge +

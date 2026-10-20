@@ -96,7 +96,21 @@ src/
 │                        WholeWord/Regex/Replace/ReplaceAll), gpui_kit::init,
 │                        fonts, theme, key bindings, menus, window
 │                        (QuitMode::LastWindowClosed)
-├── app.rs               IsengardApp view: actions, tabs, dialogs, layout, status bar
+├── app/                 IsengardApp entity (one GPUI view; split by concern)
+│   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`), module map
+│   ├── actions.rs       `actions!`, path-carrying actions, key bindings, menu bridge
+│   ├── tab.rs           `EditorTab` / `TabBody` / `DiffKind`
+│   ├── workspace.rs     open/switch/persist workspace, recents, titles
+│   ├── session.rs       session + window geometry restore/persist
+│   ├── files.rs         open/save/close tabs, untitled, font/preview
+│   ├── tree.rs          inline create/rename/delete in the file tree
+│   ├── lsp.rs           LSP attach, install/remove UI, event pump
+│   ├── search.rs        project search/replace + selection soft-highlight
+│   ├── git.rs           Source Control diff/conflict tabs
+│   ├── terminal.rs      bottom PTY panel show/create/cwd
+│   ├── terminal_cwd.rs  multi-root “Open Terminal in…” picker
+│   ├── chrome.rs        sidebar toggle, About, config, quit
+│   └── render.rs        title/sidebar/editor/status-bar paint + `Render`
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
@@ -154,13 +168,15 @@ src/
 
 - `gpui_kit::open_window` wraps `IsengardApp` in a `Root` (needed for dialogs,
   notifications, tooltips, menus). Never add a second Root.
-- **Actions**: declared with `actions!(isengard, [...])` in `app.rs`, bound in
-  `app::init` (`secondary-*` = Cmd on macOS, Ctrl elsewhere), handled by
-  `.on_action(cx.listener(..))` on the root div, which `track_focus`es
+- **Actions**: declared with `actions!(isengard, [...])` in `app/actions.rs`,
+  bound in `app::init` (`secondary-*` = Cmd on macOS, Ctrl elsewhere), handled
+  by `.on_action(cx.listener(..))` on the root div, which `track_focus`es
   `IsengardApp::focus_handle`. Actions only reach the handlers if focus is
   inside the view — `focus_active_editor` refocuses the editor or the root.
   A global `Quit` fallback in `app::init` quits without checking (used when a
-  dialog holds focus).
+  dialog holds focus). Action types are re-exported at `crate::app::*` for
+  menus/UI. New `IsengardApp` methods go in the matching `app/*.rs` concern
+  file (child `impl` blocks can touch private fields); do not grow `mod.rs`.
 - **Tabs**: `TabList<EditorTab>`; each `EditorTab` owns an `Entity<EditorState>`
   plus two subscriptions: `InputEvent::Change` → mark modified (+ LSP
   `didChange`), and `observe` → re-render (keeps Ln/Col current).
