@@ -32,6 +32,8 @@ mod tab;
 mod terminal;
 mod terminal_cwd;
 mod tree;
+#[cfg(test)]
+mod ui_tests;
 mod welcome;
 mod workspace;
 

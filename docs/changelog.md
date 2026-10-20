@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-20** — Headless UI integration tests (`src/app/ui_tests.rs`) for
+  dirty mark/undo, Save, Save All failure and tab-close dialog; config path is
+  disabled under test; LSP event pump uses `recv_async` (blocking recv hung the
+  test scheduler).
 - **2026-10-20** — Dirty mark is derived from a saved-text rope snapshot, so
   undoing back to the saved text clears it; Save All no longer stops at the
   first failed file (one toast lists all failures; close/quit/switch still

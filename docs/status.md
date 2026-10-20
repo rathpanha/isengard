@@ -111,8 +111,9 @@ shortcuts. Check these first if something is off.
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).
 - Interactive flows not yet verified by a human (see above).
-- No UI integration tests yet; GPUI Kit supports them via the `test-support`
-  feature and `#[gpui_kit::test]` — worth adding for tab close, dialogs, tree.
+- UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
+  Save, Save All with a failing file, and tab close with the unsaved dialog;
+  file tree, workspace switch and terminal flows are not covered yet.
 - No Save As; no file watching; no "Open Recent" in the native menu
   (welcome screen only). Tree New File creates on disk after the inline
   name (distinct from menu New File / `⌘N`, which stays untitled until

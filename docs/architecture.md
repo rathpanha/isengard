@@ -294,6 +294,13 @@ src/
 - **Tests:** `use gpui_kit::*` brings in gpui's `test` macro, which shadows
   `#[test]`. In test modules of files that glob-import `gpui_kit`, import the
   needed items explicitly instead of `use super::*`.
+- **UI tests:** `src/app/ui_tests.rs` drives the real `IsengardApp` headlessly
+  (`#[gpui_kit::test]`, dev-dep `gpui-kit/test-support`): keystrokes via
+  `window.input` / `press`, dialog buttons by id (`dialog-primary` /
+  `dialog-secondary`), temp-dir fixtures. Under `cfg(test)`
+  `AppConfig::default_path()` is `None`, so tests never touch the user config.
+  Never block inside `background_spawn` (e.g. `flume::recv`): the test
+  scheduler runs background tasks inline and hangs — use `recv_async`.
 - Commits go on `master` (user's choice). Only commit when the user asks.
 - Doc updates follow [README.md](README.md) (living topic file + one changelog
   bullet).

@@ -216,6 +216,11 @@ impl Default for AppConfig {
 impl AppConfig {
     /// `<config dir>/isengard/config.json`, e.g. `~/Library/Application Support/isengard/config.json`.
     pub fn default_path() -> Option<PathBuf> {
+        // UI tests drive the real app; they must never read or overwrite the
+        // user's config (load/save become defaults/no-ops).
+        if cfg!(test) {
+            return None;
+        }
         dirs::config_dir().map(|dir| dir.join("isengard").join("config.json"))
     }
 

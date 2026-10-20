@@ -34,12 +34,9 @@ impl IsengardApp {
     pub(super) fn start_lsp_event_pump(&self, cx: &mut Context<Self>) {
         let rx = self.lsp.events();
         cx.spawn(async move |this, cx| {
-            loop {
-                let rx = rx.clone();
-                let event = cx.background_spawn(async move { rx.recv() }).await;
-                let Ok(event) = event else {
-                    break;
-                };
+            // Async recv: no pool thread parked per wait (and GPUI's test
+            // scheduler runs background tasks inline, where a blocking recv hangs).
+            while let Ok(event) = rx.recv_async().await {
                 let _ = this.update(cx, |this, cx| this.handle_lsp_event(event, cx));
             }
         })
