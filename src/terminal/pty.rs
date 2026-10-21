@@ -3,18 +3,15 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use parking_lot::Mutex;
-use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
-
-use crate::terminal::output_buffer::{CapturedExit, SharedExit};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 /// Owns a live PTY session (master + child process).
 pub struct PtySession {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-    child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    _child: Box<dyn Child + Send + Sync>,
 }
 
 /// A program to run in a terminal tab instead of the default shell (e.g. the
@@ -78,7 +75,7 @@ impl PtySession {
         Ok((
             Self {
                 master,
-                child: Arc::new(Mutex::new(child)),
+                _child: child,
             },
             writer,
             reader,
@@ -96,48 +93,6 @@ impl PtySession {
 
     pub fn master_handle(&self) -> Arc<Mutex<Box<dyn MasterPty + Send>>> {
         self.master.clone()
-    }
-
-    /// Kill the child (ACP `terminal/kill` / `terminal/release`).
-    pub fn kill(&self) -> Result<()> {
-        self.child
-            .lock()
-            .kill()
-            .context("kill terminal child")
-    }
-
-    /// Non-blocking poll of the child exit status.
-    pub fn try_wait(&self) -> Result<Option<ExitStatus>> {
-        self.child
-            .lock()
-            .try_wait()
-            .context("wait for terminal child")
-    }
-
-    /// Poll until the child exits, then record the status on `exit`.
-    pub fn watch_exit(self: &Self, exit: Arc<SharedExit>) {
-        let child = self.child.clone();
-        std::thread::Builder::new()
-            .name("pty-exit-watch".into())
-            .spawn(move || {
-                loop {
-                    match child.lock().try_wait() {
-                        Ok(Some(status)) => {
-                            exit.set(CapturedExit::from_portable(&status));
-                            break;
-                        }
-                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                        Err(_) => {
-                            exit.set(CapturedExit {
-                                exit_code: None,
-                                signal: Some("error".into()),
-                            });
-                            break;
-                        }
-                    }
-                }
-            })
-            .ok();
     }
 }
 

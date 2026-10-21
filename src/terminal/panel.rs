@@ -1,8 +1,6 @@
 //! Bottom terminal panel: multi-tab shells + Kit chrome.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 
 use gpui_kit::component::{
     ActiveTheme as _, IconName, Sizable as _, WindowExt as _,
@@ -14,9 +12,6 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 use crate::editor::document;
 use crate::editor::tabs::reorder_for_drop_before;
 use crate::terminal::colors::ColorPalette;
-use crate::terminal::output_buffer::{
-    CapturedExit, DEFAULT_OUTPUT_BYTE_LIMIT, OutputBuffer, SharedExit, TeeReader,
-};
 use crate::terminal::pty::{PtySession, TerminalCommand};
 use crate::terminal::view::{TerminalConfig, TerminalView};
 use crate::theme;
@@ -26,26 +21,11 @@ struct TerminalTab {
     id: usize,
     title: String,
     cwd: PathBuf,
-    /// One-off program tabs (agent login / ACP) are not restored with the session.
+    /// One-off program tabs (agent login) are not restored with the session.
     persist: bool,
-    /// ACP `terminalId` when this tab was created for the agent.
-    agent_id: Option<String>,
     view: Entity<TerminalView>,
     /// Kept so the PTY stays alive for the life of the tab.
-    session: PtySession,
-}
-
-struct AgentTerm {
-    tab_id: usize,
-    capture: Arc<Mutex<OutputBuffer>>,
-    exit: Arc<SharedExit>,
-}
-
-/// Snapshot for ACP `terminal/output`.
-pub struct AgentTerminalOutput {
-    pub output: String,
-    pub truncated: bool,
-    pub exit: Option<CapturedExit>,
+    _session: PtySession,
 }
 
 /// Host view for the integrated terminal: tab strip + active [`TerminalView`].
@@ -54,8 +34,6 @@ pub struct TerminalPanel {
     tabs: Vec<TerminalTab>,
     active: usize,
     next_id: usize,
-    next_agent_id: u64,
-    agent_terms: HashMap<String, AgentTerm>,
 }
 
 impl TerminalPanel {
@@ -65,8 +43,6 @@ impl TerminalPanel {
             tabs: Vec::new(),
             active: 0,
             next_id: 1,
-            next_agent_id: 1,
-            agent_terms: HashMap::new(),
         }
     }
 
@@ -98,7 +74,6 @@ impl TerminalPanel {
 
     /// Drop every session (e.g. workspace switch / welcome).
     pub fn clear_sessions(&mut self, cx: &mut Context<Self>) {
-        self.agent_terms.clear();
         self.tabs.clear();
         self.active = 0;
         cx.notify();
@@ -134,7 +109,7 @@ impl TerminalPanel {
         self.tabs.clear();
         self.active = 0;
         for cwd in cwds.iter().filter(|p| p.is_dir()) {
-            if let Ok(tab) = self.spawn_tab(cwd.clone(), None, None, cx) {
+            if let Ok(tab) = self.spawn_tab(cwd.clone(), None, cx) {
                 self.tabs.push(tab);
             }
         }
@@ -158,7 +133,7 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let tab = self.spawn_tab(cwd, None, None, cx)?;
+        let tab = self.spawn_tab(cwd, None, cx)?;
         self.push_active(tab, window, cx);
         Ok(())
     }
@@ -172,113 +147,9 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let mut tab = self.spawn_tab(cwd, Some(command), None, cx)?;
+        let mut tab = self.spawn_tab(cwd, Some(command), cx)?;
         tab.title = title;
         self.push_active(tab, window, cx);
-        Ok(())
-    }
-
-    /// ACP `terminal/create`: spawn a command tab, tee output, return `terminalId`.
-    pub fn create_agent_terminal(
-        &mut self,
-        command: &TerminalCommand,
-        cwd: PathBuf,
-        output_byte_limit: Option<u64>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Result<String, String> {
-        let limit = output_byte_limit
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_OUTPUT_BYTE_LIMIT);
-        let capture = Arc::new(Mutex::new(OutputBuffer::new(limit)));
-        let exit = Arc::new(SharedExit::default());
-        let acp_id = format!("term_{}", self.next_agent_id);
-        self.next_agent_id += 1;
-
-        let title = {
-            let mut t = command.program.file_name().map_or_else(
-                || command.program.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            if !command.args.is_empty() {
-                t.push(' ');
-                t.push_str(&command.args.join(" "));
-            }
-            if t.chars().count() > 40 {
-                t = t.chars().take(39).collect::<String>() + "…";
-            }
-            t
-        };
-
-        let mut tab = self.spawn_tab(cwd, Some(command), Some(capture.clone()), cx)?;
-        tab.title = title;
-        tab.agent_id = Some(acp_id.clone());
-        tab.session.watch_exit(exit.clone());
-        let tab_id = tab.id;
-        self.push_active(tab, window, cx);
-        self.agent_terms.insert(
-            acp_id.clone(),
-            AgentTerm {
-                tab_id,
-                capture,
-                exit,
-            },
-        );
-        Ok(acp_id)
-    }
-
-    pub fn agent_terminal_output(&self, id: &str) -> Result<AgentTerminalOutput, String> {
-        let term = self
-            .agent_terms
-            .get(id)
-            .ok_or_else(|| format!("Unknown terminal: {id}"))?;
-        let (output, truncated) = term.capture.lock().unwrap().snapshot();
-        Ok(AgentTerminalOutput {
-            output,
-            truncated,
-            exit: term.exit.get(),
-        })
-    }
-
-    /// Receiver that completes when the agent terminal's process exits.
-    pub fn agent_terminal_exit_rx(
-        &self,
-        id: &str,
-    ) -> Result<flume::Receiver<CapturedExit>, String> {
-        let term = self
-            .agent_terms
-            .get(id)
-            .ok_or_else(|| format!("Unknown terminal: {id}"))?;
-        Ok(term.exit.subscribe())
-    }
-
-    pub fn kill_agent_terminal(&self, id: &str) -> Result<(), String> {
-        let term = self
-            .agent_terms
-            .get(id)
-            .ok_or_else(|| format!("Unknown terminal: {id}"))?;
-        let tab = self
-            .tabs
-            .iter()
-            .find(|t| t.id == term.tab_id)
-            .ok_or_else(|| format!("Terminal tab gone: {id}"))?;
-        tab.session.kill().map_err(|err| err.to_string())
-    }
-
-    /// ACP `terminal/release`: kill if needed, drop the id, close the tab.
-    pub fn release_agent_terminal(
-        &mut self,
-        id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        let Some(term) = self.agent_terms.remove(id) else {
-            return Err(format!("Unknown terminal: {id}"));
-        };
-        if let Some(tab) = self.tabs.iter().find(|t| t.id == term.tab_id) {
-            let _ = tab.session.kill();
-        }
-        self.close_tab(term.tab_id, window, cx);
         Ok(())
     }
 
@@ -348,9 +219,6 @@ impl TerminalPanel {
         let Some(ix) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
-        if let Some(agent_id) = self.tabs[ix].agent_id.clone() {
-            self.agent_terms.remove(&agent_id);
-        }
         // Close × tooltip can stick if the tab unmounts before Kit's hide settles.
         window.dismiss_tooltip(cx);
         self.tabs.remove(ix);
@@ -380,7 +248,6 @@ impl TerminalPanel {
         &mut self,
         cwd: PathBuf,
         command: Option<&TerminalCommand>,
-        capture: Option<Arc<Mutex<OutputBuffer>>>,
         cx: &mut Context<Self>,
     ) -> Result<TerminalTab, String> {
         let cols = 80u16;
@@ -406,12 +273,7 @@ impl TerminalPanel {
         };
 
         let view = cx.new(|cx| {
-            let view = if let Some(capture) = capture {
-                TerminalView::new(writer, TeeReader::new(reader, capture), config, cx)
-            } else {
-                TerminalView::new(writer, reader, config, cx)
-            };
-            view.with_resize_callback(move |c, r| {
+            TerminalView::new(writer, reader, config, cx).with_resize_callback(move |c, r| {
                 let _ = master.lock().resize(portable_pty::PtySize {
                     cols: c as u16,
                     rows: r as u16,
@@ -429,9 +291,8 @@ impl TerminalPanel {
             title,
             cwd,
             persist: command.is_none(),
-            agent_id: None,
             view,
-            session,
+            _session: session,
         })
     }
 
