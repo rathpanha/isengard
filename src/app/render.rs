@@ -2,6 +2,7 @@
 use super::*;
 use super::tab::{DiffKind, TabBody};
 use super::lsp::lsp_aggregate_color;
+use gpui_kit::component::Icon;
 
 impl IsengardApp {
     pub(super) fn render_sidebar_chrome(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -681,9 +682,9 @@ impl IsengardApp {
                         .cursor_pointer()
                         .small()
                         .icon(if sidebar_visible {
-                            IconName::PanelLeftClose
+                            Icon::new(IconName::PanelLeftClose).text_color(cx.theme().info)
                         } else {
-                            IconName::PanelLeftOpen
+                            Icon::new(IconName::PanelLeftOpen)
                         })
                         .tooltip(if sidebar_visible {
                             "Hide Sidebar"
@@ -908,7 +909,11 @@ impl IsengardApp {
                         .ghost()
                         .cursor_pointer()
                         .small()
-                        .icon(IconName::SquareTerminal)
+                        .icon(if term_visible {
+                            Icon::new(IconName::SquareTerminal).text_color(cx.theme().info)
+                        } else {
+                            Icon::new(IconName::SquareTerminal)
+                        })
                         .tooltip(if term_visible {
                             "Minimize Terminal"
                         } else {
@@ -923,8 +928,11 @@ impl IsengardApp {
                         .ghost()
                         .cursor_pointer()
                         .small()
-                        .icon(LucideIcon::Bot)
-                        .selected(self.agent_visible)
+                        .icon(if self.agent_visible {
+                            Icon::new(LucideIcon::Bot).text_color(cx.theme().info)
+                        } else {
+                            Icon::new(LucideIcon::Bot)
+                        })
                         .tooltip(if self.agent_visible {
                             "Hide Agent Panel"
                         } else {

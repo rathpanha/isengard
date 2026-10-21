@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Status-bar toggles (sidebar, terminal, agent) show an
+  info-blue icon when active instead of the gray `selected` background.
 - **2026-10-21** — Agent Mode/Model band is a fixed 36px row (scroll, no
   wrap); open no longer clears options with `None` — stops the composer
   height jump when controls arrive.

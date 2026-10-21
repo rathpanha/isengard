@@ -444,3 +444,5 @@ Add a row here whenever a new shared component is created.
 - **Config, not Preferences UI:** durable knobs (e.g. LSP enable/command)
   live in `config.json`. Expose **Open Config File…** in the Isengard menu;
   do not add a settings / preferences panel.
+
+- Status-bar toggle buttons: active = info-blue icon (`theme.info`), never the gray `selected` fill.
