@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent transcript tightens space between consecutive tool
+  rows (shell execute…): scroller `pb_2`, tool/file-change entry padding
+  reduced (was section-sized `pb_8` gaps).
 - **2026-10-21** — Explorer tints dirty git paths (and parent folders):
   modified warning, new/untracked success, delete/conflict danger.
 - **2026-10-21** — Agent **N Files** card starts collapsed; Review button

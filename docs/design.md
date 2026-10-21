@@ -220,7 +220,9 @@ Add a row here whenever a new shared component is created.
   `TextView` markdown (selectable); thoughts muted `text_xs` with a left
   `border_l_2` rule; tool calls as bordered rows (Lucide kind icon, title,
   muted path, right status: Kit `Spinner` while running, `Check` success,
-  `CircleX` danger);   after a turn that changed files (git dirty delta since turn start —
+  `CircleX` danger) — consecutive tools (e.g. shell execute) sit tight
+  (`MessageScroller` row `pb_2`, tool entry `py_0p5` / card `py_0p5`, not
+  section `pb_8`);   after a turn that changed files (git dirty delta since turn start —
   including shell create/edit/delete — and/or ACP write / Edit/Move/
   Delete tools), a bordered **N Files** summary under the reply (starts
   collapsed; chevron expands; Material path icon + basename, green `+N` /

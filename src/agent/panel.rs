@@ -3281,11 +3281,16 @@ fn render_entry(
             .child(text.clone())
             .into_any_element(),
     };
+    // Tool / file-change rows are bordered cards — keep outer padding
+    // tight so consecutive shell tools don't float apart. Bubbles /
+    // markdown keep a touch more air via scroller pb_2.
+    let entry_py = matches!(entry, Entry::Tool(_) | Entry::FileChanges { .. });
     div()
         .id(("agent-entry", ix))
         .w_full()
         .px_3()
-        .py_1()
+        .when(entry_py, |d| d.py_0p5())
+        .when(!entry_py, |d| d.py_1())
         .child(body)
         .into_any_element()
 }
@@ -3429,9 +3434,9 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
     let tool_key = tool.id.to_string();
     v_flex()
         .w_full()
-        .gap_2()
+        .gap_1()
         .px_2()
-        .py_1()
+        .py_0p5()
         .border_1()
         .border_color(theme.border)
         .bg(theme.background)

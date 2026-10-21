@@ -349,7 +349,9 @@ impl RenderOnce for MessageScroller {
                 .px_3()
                 // Spacing between rows only, like a CSS gap: the list's own
                 // bottom padding owns the gap after the last row.
-                .when(index + 1 < item_count, |this| this.pb_8())
+                // pb_2 (not pb_8): agent tool stacks (shell execute…) sit
+                // consecutive; section-sized gaps looked like empty cards.
+                .when(index + 1 < item_count, |this| this.pb_2())
                 .when_some(row_inset_left, |this, left| this.pl(left))
                 .when_some(row_inset_right, |this, right| this.pr(right))
                 .refine_style(&row_style)
