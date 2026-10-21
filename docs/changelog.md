@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Git Suggest uses the Ready ACP agent for a commit-message
+  draft (any agent; silent turn); falls back to the path heuristic when
+  none is connected.
+- **2026-10-21** — User chat bubbles are selectable (`TextView`), matching
+  agent replies.
 - **2026-10-21** — Agent attachment chips drop the leading `@` (basename /
   image thumb only); chat refs use Material icons, not Lucide.
 - **2026-10-21** — Agent `@` / attachment chips use Material file icons

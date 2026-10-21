@@ -119,6 +119,17 @@ impl IsengardApp {
                     .unwrap_or_default();
                 notify_warning(format!("The agent in {name} is waiting for your approval"), window, cx);
             }
+            AgentPanelEvent::CommitSuggestReady { root, message } => {
+                self.git.update(cx, |git, cx| {
+                    git.apply_commit_message(root, message, window, cx);
+                });
+            }
+            AgentPanelEvent::CommitSuggestFailed { root } => {
+                self.git.update(cx, |git, cx| {
+                    git.set_suggest_busy(root, false, cx);
+                    git.apply_heuristic_suggest(root, window, cx);
+                });
+            }
             _ => {}
         }
     }

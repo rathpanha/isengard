@@ -74,7 +74,8 @@ tabs, highlighted editor, status bar):
   (debounced; skipped for buffers >512 KiB).
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
-  + per-file); Suggest/Commit from selection; Open File + discard;
+  + per-file); Suggest (AI via Ready ACP agent, else path heuristic) /
+  Commit from selection; Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
   dirty). Merge/rebase/cherry-pick surfaced as a status line + `U` rows

@@ -2,8 +2,43 @@
 use super::*;
 use super::tab::{DiffKind, TabBody};
 use super::tab::conflict_side_to_hunk;
+use crate::git::build_commit_suggest_prompt;
 
 impl IsengardApp {
+    /// Suggest: AI via the Ready ACP agent when connected, else path heuristic.
+    pub(super) fn suggest_git_commit(
+        &mut self,
+        root: PathBuf,
+        paths: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let agent = self.agent.clone();
+        let can_ai = agent
+            .as_ref()
+            .is_some_and(|a| a.read(cx).can_prompt());
+        if can_ai {
+            let prompt = build_commit_suggest_prompt(&root, &paths);
+            let started = agent
+                .as_ref()
+                .map(|a| {
+                    a.update(cx, |agent, cx| {
+                        agent.request_commit_message(root.clone(), prompt, cx)
+                    })
+                })
+                .unwrap_or(false);
+            if started {
+                self.git.update(cx, |git, cx| {
+                    git.set_suggest_busy(&root, true, cx);
+                });
+                return;
+            }
+        }
+        self.git.update(cx, |git, cx| {
+            git.apply_heuristic_suggest(&root, window, cx);
+        });
+    }
+
     pub(super) fn on_show_git(
         &mut self,
         _: &ShowGit,

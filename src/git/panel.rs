@@ -57,6 +57,11 @@ pub enum GitPanelEvent {
     },
     /// Ask the app to confirm discarding every change in a repo.
     ConfirmDiscardAll { repo: PathBuf, count: usize },
+    /// Suggest a commit message for the selected paths (AI if an agent is Ready).
+    SuggestCommit {
+        root: PathBuf,
+        paths: Vec<String>,
+    },
     ToastError(String),
     ToastSuccess(String),
 }
@@ -258,8 +263,38 @@ impl GitPanel {
         cx.notify();
     }
 
-    /// Fill the commit box from **selected** change paths (draft only).
-    fn suggest_message(&mut self, root: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    /// Ask the app to fill the commit box (AI when an agent is Ready, else heuristic).
+    fn suggest_message(&mut self, root: &Path, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
+            return;
+        };
+        if section.busy.is_some() {
+            return;
+        }
+        let paths: Vec<String> = section
+            .status
+            .changes
+            .iter()
+            .filter(|c| section.selected.contains(&c.rel_path))
+            .map(|c| c.rel_path.clone())
+            .collect();
+        if paths.is_empty() {
+            cx.emit(GitPanelEvent::ToastError("No files selected".into()));
+            return;
+        }
+        cx.emit(GitPanelEvent::SuggestCommit {
+            root: root.to_path_buf(),
+            paths,
+        });
+    }
+
+    /// Path-heuristic draft (fallback when no agent is Ready).
+    pub fn apply_heuristic_suggest(
+        &mut self,
+        root: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
             return;
         };
@@ -271,15 +306,38 @@ impl GitPanel {
             .cloned()
             .collect();
         let Some(msg) = suggest_commit_message(&selected) else {
-            cx.emit(GitPanelEvent::ToastError(
-                "No files selected".into(),
-            ));
+            cx.emit(GitPanelEvent::ToastError("No files selected".into()));
             return;
         };
+        self.apply_commit_message(root, &msg, window, cx);
+    }
+
+    /// Put `msg` in the repo's commit box and clear Suggest busy.
+    pub fn apply_commit_message(
+        &mut self,
+        root: &Path,
+        msg: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(section) = self.section_mut(root) else {
+            return;
+        };
+        section.busy = None;
         let message = section.message.clone();
         message.update(cx, |state, cx| {
-            state.set_value(msg, window, cx);
+            state.set_value(msg.to_owned(), window, cx);
         });
+        cx.notify();
+    }
+
+    /// Spin Suggest while an agent turn runs (or clear on failure before fallback).
+    pub fn set_suggest_busy(&mut self, root: &Path, busy: bool, cx: &mut Context<Self>) {
+        self.set_busy(
+            root,
+            busy.then_some(BusyOp::Suggest),
+            cx,
+        );
     }
 
     fn set_change_selected(
@@ -537,6 +595,7 @@ enum Mutation {
 #[derive(Clone, PartialEq, Eq)]
 enum BusyOp {
     Commit,
+    Suggest,
     Pull,
     Push,
     DiscardAll,
@@ -757,15 +816,18 @@ impl Render for GitPanel {
                                     .justify_end()
                                     .gap_1()
                                     .child(
-                                        outline_btn(format!("git-suggest-{si}").into())
-                                            .label("Suggest")
-                                            .disabled(busy || nothing_selected || lock_suggest)
-                                            .on_click({
-                                                let root = root.clone();
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.suggest_message(&root, window, cx);
-                                                })
-                                            }),
+                                        with_loading(
+                                            outline_btn(format!("git-suggest-{si}").into())
+                                                .label("Suggest"),
+                                            busy_op == Some(BusyOp::Suggest),
+                                        )
+                                        .disabled(busy || nothing_selected || lock_suggest)
+                                        .on_click({
+                                            let root = root.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.suggest_message(&root, window, cx);
+                                            })
+                                        }),
                                     )
                                     .child(
                                         with_loading(

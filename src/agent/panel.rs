@@ -31,8 +31,8 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::acp::schema::{
     ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    PlanEntry, PlanEntryStatus, SessionUpdate, StopReason, ToolCall, ToolCallId, ToolCallStatus,
-    ToolCallUpdate, ToolKind,
+    PlanEntry, PlanEntryStatus, SessionUpdate, StopReason, TextContent, ToolCall, ToolCallId,
+    ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
@@ -66,6 +66,10 @@ pub enum AgentPanelEvent {
     /// A tool is waiting for approval (the app toasts if this panel is in
     /// the background).
     PermissionRequested,
+    /// Silent commit-message turn finished with a draft for Source Control.
+    CommitSuggestReady { root: PathBuf, message: String },
+    /// Silent commit-message turn failed / was cancelled — Git falls back.
+    CommitSuggestFailed { root: PathBuf },
 }
 
 #[derive(Clone)]
@@ -259,7 +263,15 @@ pub struct AgentPanel {
     scroller: Entity<MessageScrollerState>,
     input: Entity<TextareaState>,
     install_error: Option<SharedString>,
+    /// In-flight Source Control AI Suggest (accumulates assistant text; not shown in chat).
+    commit_suggest: Option<CommitSuggest>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// One-shot commit-message request from the Git panel (any ACP agent).
+struct CommitSuggest {
+    root: PathBuf,
+    text: String,
 }
 
 struct MentionMenu {
@@ -393,6 +405,7 @@ impl AgentPanel {
             scroller,
             input,
             install_error: None,
+            commit_suggest: None,
             _subscriptions: vec![enter, keys],
         }
     }
@@ -651,9 +664,73 @@ impl AgentPanel {
         matches!(self.status, Status::Suspended) && self.connection.is_none()
     }
 
+    /// Connected session idle — Git Suggest can ask for an AI commit message.
+    pub fn can_prompt(&self) -> bool {
+        matches!(self.status, Status::Ready)
+            && !self.turn_running
+            && self.connection.is_some()
+            && self.session.is_some()
+            && self.commit_suggest.is_none()
+    }
+
     #[cfg(test)]
     pub fn is_ready(&self) -> bool {
-        matches!(self.status, Status::Ready) && !self.turn_running
+        self.can_prompt()
+    }
+
+    /// One-shot commit-message turn (any ACP agent). Does not add chat bubbles.
+    ///
+    /// Returns `false` if the agent is not Ready — caller should use the heuristic.
+    pub fn request_commit_message(
+        &mut self,
+        root: PathBuf,
+        prompt: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.can_prompt() {
+            return false;
+        }
+        let Some(connection) = &self.connection else {
+            return false;
+        };
+        connection.prompt(vec![ContentBlock::Text(TextContent::new(prompt))]);
+        self.turn_running = true;
+        self.commit_suggest = Some(CommitSuggest {
+            root,
+            text: String::new(),
+        });
+        cx.notify();
+        true
+    }
+
+    fn finish_commit_suggest(&mut self, ok: bool, cx: &mut Context<Self>) {
+        let Some(pending) = self.commit_suggest.take() else {
+            return;
+        };
+        if ok {
+            let message = crate::git::scrub_commit_message(&pending.text);
+            if message.is_empty() {
+                cx.emit(AgentPanelEvent::CommitSuggestFailed { root: pending.root });
+            } else {
+                cx.emit(AgentPanelEvent::CommitSuggestReady {
+                    root: pending.root,
+                    message,
+                });
+            }
+        } else {
+            cx.emit(AgentPanelEvent::CommitSuggestFailed { root: pending.root });
+        }
+    }
+
+    /// Abort an in-flight Suggest turn (tools / permissions / disconnect).
+    fn abort_commit_suggest(&mut self, cx: &mut Context<Self>) {
+        if self.commit_suggest.is_none() {
+            return;
+        }
+        if let Some(connection) = &self.connection {
+            connection.cancel();
+        }
+        self.finish_commit_suggest(false, cx);
     }
 
     /// Prompt box (the app focuses it when showing the panel).
@@ -719,6 +796,9 @@ impl AgentPanel {
 
     /// Drop the connection (kills the agent) and cancel open prompts.
     fn disconnect(&mut self, cx: &mut Context<Self>) {
+        if self.commit_suggest.is_some() {
+            self.finish_commit_suggest(false, cx);
+        }
         self.connection = None;
         self.session = None;
         self.opening = None;
@@ -1047,8 +1127,12 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn turn_finished(&mut self, cx: &mut Context<Self>) {
+    fn turn_finished(&mut self, suggest_ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
+        // Resolve before reconnect/suspend so Git still gets a Suggest result.
+        if self.commit_suggest.is_some() {
+            self.finish_commit_suggest(suggest_ok, cx);
+        }
         if std::mem::take(&mut self.reconnect_after_turn) && !self.suspend_after_turn {
             self.start(cx);
         } else if self.suspend_after_turn {
@@ -1104,34 +1188,49 @@ impl AgentPanel {
                 }
             }
             AgentEvent::TurnEnded(reason) => {
-                let note = match reason {
-                    StopReason::EndTurn => None,
-                    StopReason::Cancelled => Some("Stopped."),
-                    StopReason::MaxTokens => Some("Stopped: the reply hit the token limit."),
-                    StopReason::MaxTurnRequests => Some("Stopped: too many steps in one turn."),
-                    StopReason::Refusal => Some("The agent declined to continue."),
-                    _ => Some("Stopped."),
-                };
-                if let Some(note) = note {
-                    self.push_notice(note, false, cx);
+                let silent = self.commit_suggest.is_some();
+                let suggest_ok = matches!(reason, StopReason::EndTurn);
+                if !silent {
+                    let note = match reason {
+                        StopReason::EndTurn => None,
+                        StopReason::Cancelled => Some("Stopped."),
+                        StopReason::MaxTokens => Some("Stopped: the reply hit the token limit."),
+                        StopReason::MaxTurnRequests => Some("Stopped: too many steps in one turn."),
+                        StopReason::Refusal => Some("The agent declined to continue."),
+                        _ => Some("Stopped."),
+                    };
+                    if let Some(note) = note {
+                        self.push_notice(note, false, cx);
+                    }
                 }
-                self.turn_finished(cx);
+                self.turn_finished(suggest_ok, cx);
             }
             AgentEvent::TurnFailed(message) => {
-                self.push_notice(message, true, cx);
-                self.turn_finished(cx);
+                if self.commit_suggest.is_none() {
+                    self.push_notice(message, true, cx);
+                }
+                self.turn_finished(false, cx);
             }
             AgentEvent::AuthRequired(methods) => {
                 self.disconnect(cx);
                 self.status = Status::LoginRequired(methods);
             }
             AgentEvent::Permission(ask) => {
-                self.ask_permission(ask, cx);
-                cx.emit(AgentPanelEvent::PermissionRequested);
+                if self.commit_suggest.is_some() {
+                    // Suggest turns must not open tools — deny and fall back.
+                    let _ = ask.reply.send(None);
+                    self.abort_commit_suggest(cx);
+                } else {
+                    self.ask_permission(ask, cx);
+                    cx.emit(AgentPanelEvent::PermissionRequested);
+                }
             }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
             AgentEvent::Closed(error) => {
+                if self.commit_suggest.is_some() {
+                    self.finish_commit_suggest(false, cx);
+                }
                 if !matches!(self.status, Status::LoginRequired(_) | Status::Suspended) {
                     let message = error.unwrap_or_else(|| "The agent exited.".into());
                     self.status = Status::Failed(message.into());
@@ -1146,16 +1245,30 @@ impl AgentPanel {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let Some(text) = block_text(&chunk.content) {
-                    self.append_text(false, &text, cx);
+                    if let Some(pending) = &mut self.commit_suggest {
+                        pending.text.push_str(&text);
+                    } else {
+                        self.append_text(false, &text, cx);
+                    }
                 }
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
+                // Thoughts are not the commit message — ignore during Suggest.
+                if self.commit_suggest.is_some() {
+                    return;
+                }
                 if let Some(text) = block_text(&chunk.content) {
                     self.append_text(true, &text, cx);
                 }
             }
+            SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_)
+                if self.commit_suggest.is_some() =>
+            {
+                self.abort_commit_suggest(cx);
+            }
             SessionUpdate::ToolCall(call) => self.upsert_tool_call(call, cx),
             SessionUpdate::ToolCallUpdate(update) => self.update_tool_call(update, cx),
+            SessionUpdate::Plan(_) if self.commit_suggest.is_some() => {}
             SessionUpdate::Plan(plan) => {
                 if let Some(ix) = self.entries.iter().rposition(|e| matches!(e, Entry::Plan(_))) {
                     self.entries[ix] = Entry::Plan(plan.entries);
@@ -1165,6 +1278,7 @@ impl AgentPanel {
                 }
             }
             // Only arrives while `session/load` replays history.
+            SessionUpdate::UserMessageChunk(_) if self.commit_suggest.is_some() => {}
             SessionUpdate::UserMessageChunk(chunk) => {
                 if let Some(text) = block_text(&chunk.content) {
                     self.append_user(&text, cx);
@@ -1437,7 +1551,17 @@ fn render_entry(
                                 v_flex()
                                     .gap_1()
                                     .when(has_text, |col| {
-                                        col.child(div().text_sm().child(text.clone()))
+                                        // Same selectable TextView as agent replies (plain `div`
+                                        // text is not mouse-selectable in GPUI).
+                                        col.child(
+                                            div().text_sm().child(
+                                                TextView::markdown(
+                                                    SharedString::from(format!("agent-user-{ix}")),
+                                                    text.clone(),
+                                                )
+                                                .selectable(true),
+                                            ),
+                                        )
                                     })
                                     .when(!refs.is_empty(), |col| {
                                         col.child(

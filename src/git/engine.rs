@@ -548,6 +548,118 @@ pub fn suggest_commit_message(changes: &[GitChange]) -> Option<String> {
     Some(body)
 }
 
+/// Soft ceiling so an AI Suggest turn does not swallow a multi‑MB diff.
+const MAX_COMMIT_SUGGEST_CONTEXT: usize = 32_000;
+
+/// Status + `git diff HEAD` for selected paths (capped), for AI Suggest prompts.
+pub fn commit_suggest_context(repo: &Path, rel_paths: &[String]) -> String {
+    if rel_paths.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut status_args: Vec<&str> = Vec::with_capacity(3 + rel_paths.len());
+    status_args.extend_from_slice(&["status", "--short", "--"]);
+    for p in rel_paths {
+        status_args.push(p.as_str());
+    }
+    if let Ok(status) = git(repo, &status_args)
+        && !status.is_empty()
+    {
+        out.push_str(&status);
+        out.push_str("\n\n");
+    }
+    let mut diff_args: Vec<&str> = Vec::with_capacity(3 + rel_paths.len());
+    diff_args.extend_from_slice(&["diff", "HEAD", "--"]);
+    for p in rel_paths {
+        diff_args.push(p.as_str());
+    }
+    if let Ok(diff) = git(repo, &diff_args)
+        && !diff.is_empty()
+    {
+        out.push_str(&diff);
+    }
+    truncate_chars(&out, MAX_COMMIT_SUGGEST_CONTEXT)
+}
+
+/// Recent subject lines (newest first) so the agent can match repo style.
+pub fn recent_commit_subjects(repo: &Path, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let n = limit.to_string();
+    match git(repo, &["log", &format!("-{n}"), "--pretty=format:%s"]) {
+        Ok(out) if !out.is_empty() => out.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Prompt for any connected ACP agent (Claude or otherwise).
+pub fn build_commit_suggest_prompt(repo: &Path, rel_paths: &[String]) -> String {
+    let subjects = recent_commit_subjects(repo, 8);
+    let recent = if subjects.is_empty() {
+        "(none)".to_owned()
+    } else {
+        subjects
+            .iter()
+            .map(|s| format!("- {s}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let paths = rel_paths
+        .iter()
+        .map(|p| format!("- {p}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let context = commit_suggest_context(repo, rel_paths);
+    format!(
+        "Write a git commit message for the selected changes below.\n\n\
+         Rules:\n\
+         - Reply with ONLY the commit message (subject line, optional short body).\n\
+         - No quotes, no markdown fences, no preamble or explanation.\n\
+         - Match the style of recent commits when possible.\n\
+         - Imperative mood; keep the subject concise.\n\
+         - Do not use tools.\n\n\
+         Recent commits:\n{recent}\n\n\
+         Selected paths:\n{paths}\n\n\
+         Diff / status:\n{context}\n"
+    )
+}
+
+/// Strip model fluff (fences, quotes) into a commit-box draft.
+pub fn scrub_commit_message(raw: &str) -> String {
+    let mut s = raw.trim().to_owned();
+    if s.starts_with("```") {
+        let mut lines = s.lines();
+        let _ = lines.next();
+        let body: Vec<&str> = lines.collect();
+        let mut joined = body.join("\n");
+        if let Some(stripped) = joined.strip_suffix("```") {
+            joined = stripped.trim_end().to_owned();
+        }
+        s = joined.trim().to_owned();
+    }
+    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        s = s[1..s.len() - 1].trim().to_owned();
+    }
+    // Drop a leading "Commit message:" style label on the first line.
+    if let Some(rest) = s
+        .strip_prefix("Commit message:")
+        .or_else(|| s.strip_prefix("commit message:"))
+    {
+        s = rest.trim().to_owned();
+    }
+    truncate_chars(&s, 4_000)
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
 fn suggest_verb(changes: &[GitChange]) -> &'static str {
     let all_new = changes.iter().all(|c| c.status == '?' || c.status == 'A');
     let all_del = changes.iter().all(|c| c.status == 'D');
@@ -1335,6 +1447,19 @@ DD both_deleted.rs\n";
         );
         // feature diverged: 1 ahead (its commit), 1 behind (base's new commit).
         assert_eq!(ahead_behind_upstream(&root), (1, 1));
+    }
+
+    #[test]
+    fn scrub_commit_message_strips_fences_and_labels() {
+        assert_eq!(
+            scrub_commit_message("```\nfix: handle empty list\n```"),
+            "fix: handle empty list"
+        );
+        assert_eq!(
+            scrub_commit_message("Commit message: Add widget"),
+            "Add widget"
+        );
+        assert_eq!(scrub_commit_message("\"docs: tweak README\""), "docs: tweak README");
     }
 
     #[test]

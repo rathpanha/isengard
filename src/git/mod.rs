@@ -9,7 +9,7 @@ pub use diff_highlight::{
     line_highlight_ranges, overview_marks,
 };
 pub use engine::{
-    ConflictSide, RepoStatus, change_at_path, conflict_file_sides, discover_repos,
-    file_sides, load_workspace_status,
+    ConflictSide, RepoStatus, build_commit_suggest_prompt, change_at_path, conflict_file_sides,
+    discover_repos, file_sides, load_workspace_status, scrub_commit_message,
 };
 pub use panel::{GitPanel, GitPanelEvent};

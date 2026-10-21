@@ -205,7 +205,8 @@ Add a row here whenever a new shared component is created.
   transcript on screen. A background workspace's agent asking for approval
   raises a warning toast (`notify_warning`). Transcript in Kit
   `MessageScroller` (tail follow + jump-to-latest): user text in a
-  `Secondary` `Bubble` aligned end; agent replies as streamed
+  `Secondary` `Bubble` aligned end as selectable `TextView` markdown (same
+  selection as agent replies); agent replies as streamed
   `TextView` markdown (selectable); thoughts muted `text_xs` with a left
   `border_l_2` rule; tool calls as bordered rows (Lucide kind icon, title,
   muted path, right status: Kit `Spinner` while running, `Check` success,
@@ -272,11 +273,15 @@ Add a row here whenever a new shared component is created.
   repos (none for a single repo or under the last). Per
   section: repo name + branch, outlined Pull / Push (`Pull (N)` /
   `Push (N)` when behind / ahead of upstream), multi-line commit
-  `Textarea` + outlined Suggest (path heuristic draft, no AI) + Commit
-  (disabled while message empty or nothing selected), collapsible
-  changes list with select-all + per-file checkboxes (default none
-  selected; Commit/`Suggest` use selection only; `git add -- <paths>`
-  then commit).   Change rows:
+  `Textarea` + outlined Suggest + Commit (disabled while message empty
+  or nothing selected), collapsible changes list with select-all +
+  per-file checkboxes (default none selected; Commit/`Suggest` use
+  selection only; `git add -- <paths>` then commit). Suggest: when the
+  workspace Agent panel has a Ready ACP session, one-shot prompt (any
+  connected agent — not Claude-only) fills the box from selected-path
+  diff + recent subjects; otherwise the path heuristic draft. Suggest
+  spins while the turn runs; never auto-commits; tools/cancel fall back
+  to the heuristic. Change rows:
   checkbox + Material `tree_icon` + path, status letter on the right,
   ghost Open File + Undo discard (confirms). The change whose
   diff/conflict tab is active is highlighted (`ListItem::selected` +
