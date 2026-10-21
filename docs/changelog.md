@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent panel shows Claude plan usage (5-hour session +
+  weekly) as two green/yellow/red bars under the header, polled every 2 min
+  from Anthropic's OAuth usage endpoint with the existing Claude Code login.
+
 - **2026-10-21** — Agent composer Mode / Model / Version / Context / Fast /
   Effort picks persist across restarts and new chats: saved per
   folder/workspace (`sessions.<key>.agent_prefs`) plus a global last-used

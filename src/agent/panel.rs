@@ -23,9 +23,11 @@ use gpui_kit::component::{
     message::{Message, MessageAlignment, MessageContent},
     message_scroller::{MessageScroller, MessageScrollerState},
     popover::{Popover, PopoverState},
+    progress::Progress,
     scroll::ScrollableElement as _,
     spinner::Spinner,
     switch::Switch,
+    tooltip::Tooltip,
     text::{TextView, TextViewState},
     v_flex,
 };
@@ -46,6 +48,7 @@ use crate::agent::prompt::{
     self, Attachment, PromptCaps, MAX_ATTACHMENTS, display_user_message, image_from_bytes,
     image_from_path,
 };
+use crate::agent::limits;
 use crate::editor::document;
 use crate::file_tree::tree_icon;
 use crate::config::{AgentChat, AgentPrefValue, AgentPrefs, AgentSettings, MAX_AGENT_CHATS};
@@ -331,6 +334,8 @@ pub struct AgentPanel {
     usage: Option<ContextUsage>,
     /// Last known usage per chat id (this process only — not persisted).
     usage_by_chat: HashMap<String, ContextUsage>,
+    /// Claude plan limits (5-hour session + week); `None` until fetched.
+    plan_limits: Option<limits::PlanLimits>,
     /// Agent is mid-compaction (`CompactionUpdate` InProgress).
     compacting: bool,
     /// Files written/deleted during the current turn (flushed to a summary card).
@@ -498,6 +503,31 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Plan limits come from Claude's own login; skip for custom agents.
+        #[cfg(not(test))]
+        if settings.command.is_none() {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    let fetched = cx.background_spawn(async { limits::fetch() }).await;
+                    let alive = this
+                        .update(cx, |this, cx| {
+                            // Keep the last good value across transient failures.
+                            if let Ok(l) = fetched {
+                                this.plan_limits = Some(l);
+                                cx.notify();
+                            }
+                        })
+                        .is_ok();
+                    if !alive {
+                        break;
+                    }
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(120))
+                        .await;
+                }
+            })
+            .detach();
+        }
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -605,6 +635,7 @@ impl AgentPanel {
             prefs,
             usage: None,
             usage_by_chat: HashMap::new(),
+            plan_limits: None,
             compacting: false,
             turn_file_changes: HashMap::new(),
             turn_git_baseline: None,
@@ -3720,6 +3751,73 @@ impl AgentPanel {
             .into_any_element()
     }
 
+    /// Slim strip under the header: 5-hour session + weekly plan usage.
+    fn render_plan_limits(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let l = self.plan_limits.as_ref()?;
+        if l.session.is_none() && l.week.is_none() {
+            return None;
+        }
+        let theme = cx.theme();
+        let bar = |id: &'static str, label: &'static str, w: &limits::Window| {
+            let pct = w.percent.clamp(0.0, 100.0);
+            let color = if pct >= 90.0 {
+                theme.danger
+            } else if pct >= 70.0 {
+                theme.warning
+            } else {
+                theme.success
+            };
+            let tip: SharedString = match &w.resets_at {
+                Some(at) => format!("{label} limit {pct:.0}% used · resets {at}").into(),
+                None => format!("{label} limit {pct:.0}% used").into(),
+            };
+            h_flex()
+                .id(id)
+                .flex_1()
+                .min_w_0()
+                .gap_2()
+                .items_center()
+                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(label),
+                )
+                .child(
+                    Progress::new(SharedString::from(format!("{id}-bar")))
+                        .flex_1()
+                        .color(color)
+                        .value(pct),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(color)
+                        .child(format!("{pct:.0}%")),
+                )
+        };
+        Some(
+            h_flex()
+                .w_full()
+                .flex_shrink_0()
+                .gap_3()
+                .px_3()
+                .py_1()
+                .border_b_1()
+                .border_color(theme.border)
+                .when_some(l.session.as_ref(), |row, w| {
+                    row.child(bar("agent-limit-session", "5h", w))
+                })
+                .when_some(l.week.as_ref(), |row, w| {
+                    row.child(bar("agent-limit-week", "Week", w))
+                })
+                .into_any_element(),
+        )
+    }
+
     /// Mode: prefer ACP `configOptions` (category mode), else legacy `modes`.
     fn render_mode_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let model_id = find_select(
@@ -4798,6 +4896,7 @@ impl Render for AgentPanel {
                 this.new_chat(window, cx);
             }))
             .child(self.render_header(cx))
+            .children(self.render_plan_limits(cx))
             .child(
                 div()
                     .flex_1()
