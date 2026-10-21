@@ -918,6 +918,22 @@ impl IsengardApp {
                             this.on_toggle_terminal(&ToggleTerminal, window, cx)
                         })),
                 )
+                .child(
+                    Button::new("toggle-agent")
+                        .ghost()
+                        .cursor_pointer()
+                        .small()
+                        .icon(LucideIcon::Bot)
+                        .selected(self.agent_visible)
+                        .tooltip(if self.agent_visible {
+                            "Hide Agent Panel"
+                        } else {
+                            "Show Agent Panel"
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_agent_panel(&ToggleAgentPanel, window, cx)
+                        })),
+                )
             });
 
         StatusBar::new()
@@ -955,6 +971,34 @@ impl IsengardApp {
                 resizable_panel()
                     .size(height)
                     .child(self.terminal.clone()),
+            )
+            .into_any_element()
+    }
+
+    fn show_agent_panel(&self) -> bool {
+        self.agent_visible && !self.show_welcome() && self.file_tree.is_open()
+    }
+
+    /// Agent panel as the right child of `agent-split` (full height beside
+    /// sidebar + editor + terminal).
+    fn with_agent_panel(&self, main: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let width = px(self.agent_width.max(200.));
+        let app = cx.entity().downgrade();
+        let split_id = self
+            .workspace
+            .session_key()
+            .unwrap_or_else(|| "none".into());
+        h_resizable(SharedString::from(format!("agent-split-{split_id}")))
+            .on_resize(move |state, _, cx| {
+                let _ = app.update(cx, |this, cx| {
+                    this.remember_agent_width(state, cx);
+                });
+            })
+            .child(resizable_panel().child(main))
+            .child(
+                resizable_panel()
+                    .size(width)
+                    .child(div().size_full().min_w_0().overflow_hidden().child(self.agent.clone())),
             )
             .into_any_element()
     }
@@ -1014,6 +1058,11 @@ impl Render for IsengardApp {
         } else {
             self.render_editor_with_terminal(cx)
         };
+        let main = if self.show_agent_panel() {
+            self.with_agent_panel(main, cx)
+        } else {
+            main
+        };
 
         v_flex()
             .id("isengard")
@@ -1057,6 +1106,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_toggle_terminal))
             .on_action(cx.listener(Self::on_new_terminal))
             .on_action(cx.listener(Self::on_terminal_tabs_changed))
+            .on_action(cx.listener(Self::on_toggle_agent_panel))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_open_config_file))
             .on_action(cx.listener(Self::on_quit))

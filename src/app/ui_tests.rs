@@ -12,7 +12,8 @@ use gpui_kit::{
     base::Root, px, size, test::TestWindowExt as _,
 };
 
-use super::IsengardApp;
+use super::{AgentPanelEvent, IsengardApp};
+use crate::acp::{FileRead, FileWrite};
 use crate::config::AppConfig;
 
 struct Harness {
@@ -24,6 +25,13 @@ struct Harness {
 
 impl Harness {
     fn new(cx: &mut TestAppContext) -> Self {
+        let mut config = AppConfig::default();
+        // Never launch a real agent (Claude may be installed on the dev box).
+        config.agent.command = Some("/nonexistent/isengard-test-agent".into());
+        Self::with_config(config, cx)
+    }
+
+    fn with_config(config: AppConfig, cx: &mut TestAppContext) -> Self {
         let menu_bar = cx.update(|cx| {
             gpui_kit::init(cx);
             crate::editor::highlights::init();
@@ -40,7 +48,7 @@ impl Harness {
                 ..Default::default()
             };
             let (window, app) = gpui_kit::open_window(options, cx, |window, cx| {
-                cx.new(|cx| IsengardApp::new(AppConfig::default(), None, menu_bar, window, cx))
+                cx.new(|cx| IsengardApp::new(config, None, menu_bar, window, cx))
             })
             .expect("open test window");
             (window.downcast::<Root>().expect("Kit Root"), app)
@@ -98,8 +106,12 @@ impl Harness {
     }
 
     fn has(&self, id: &'static str, cx: &mut TestAppContext) -> bool {
-        cx.update_window(self.window.into(), |_, window, _| window.try_find(id).is_some())
-            .expect("window alive")
+        cx.update_window(self.window.into(), |_, window, cx| {
+            // Observe the current state, not the last frame painted.
+            window.render_frame(cx);
+            window.try_find(id).is_some()
+        })
+        .expect("window alive")
     }
 
     /// `(is_modified, buffer text)` for the tab at `path`, or `None` if closed.
@@ -207,4 +219,92 @@ fn closing_a_dirty_tab_then_save_writes_and_closes(cx: &mut TestAppContext) {
     h.click("dialog-primary", cx);
     assert_eq!(h.tab(&path, cx), None);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "Xhello");
+}
+
+impl Harness {
+    fn folder(&self, name: &str) -> PathBuf {
+        let path = self.dir.path().join(name);
+        std::fs::create_dir_all(&path).expect("create folder");
+        path
+    }
+
+    fn open_folder(&self, path: &Path, cx: &mut TestAppContext) {
+        self.with_app(cx, |app, window, cx| app.open_folder(path, window, cx));
+    }
+
+    fn agent_visible(&self, cx: &mut TestAppContext) -> bool {
+        cx.read(|cx| self.app.read(cx).agent_visible)
+    }
+
+    fn agent_event(&self, event: AgentPanelEvent, cx: &mut TestAppContext) {
+        self.with_app(cx, |app, window, cx| app.handle_agent_event(&event, window, cx));
+    }
+}
+
+#[gpui_kit::test]
+fn agent_panel_toggles_and_is_remembered_per_folder(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let a = h.folder("a");
+    let b = h.folder("b");
+    h.open_folder(&a, cx);
+    assert!(!h.agent_visible(cx), "hidden by default");
+
+    h.press("secondary-alt-b", cx);
+    assert!(h.agent_visible(cx));
+    assert!(h.has("agent-hide", cx));
+
+    h.open_folder(&b, cx);
+    assert!(!h.agent_visible(cx), "a new folder starts hidden");
+    assert!(!h.has("agent-hide", cx));
+
+    h.open_folder(&a, cx);
+    assert!(h.agent_visible(cx), "restored with the folder's session");
+
+    h.press("secondary-alt-b", cx);
+    assert!(!h.agent_visible(cx));
+}
+
+#[gpui_kit::test]
+fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("a.txt", "one\ntwo\nthree\n");
+    h.open(&path, cx);
+    h.input("X", cx);
+
+    let (reply, answer) = flume::bounded(1);
+    h.agent_event(
+        AgentPanelEvent::ReadFile(FileRead {
+            path: path.clone(),
+            line: Some(1),
+            limit: Some(1),
+            reply,
+        }),
+        cx,
+    );
+    assert_eq!(answer.try_recv().unwrap(), Ok("Xone\n".into()), "open buffer wins over disk");
+
+    let (reply, answer) = flume::bounded(1);
+    h.agent_event(
+        AgentPanelEvent::WriteFile(FileWrite {
+            path: path.clone(),
+            content: "agent\n".into(),
+            reply,
+        }),
+        cx,
+    );
+    assert_eq!(answer.try_recv().unwrap(), Ok(()));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "agent\n");
+    assert_eq!(h.tab(&path, cx), Some((false, "agent\n".into())), "tab shows saved agent text");
+
+    let (reply, answer) = flume::bounded(1);
+    h.agent_event(
+        AgentPanelEvent::ReadFile(FileRead {
+            path: PathBuf::from("relative.txt"),
+            line: None,
+            limit: None,
+            reply,
+        }),
+        cx,
+    );
+    assert!(answer.try_recv().unwrap().is_err(), "relative paths are rejected");
 }

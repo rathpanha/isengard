@@ -105,6 +105,8 @@ impl IsengardApp {
             sidebar_width: self.sidebar_width,
             sidebar_visible: self.sidebar_visible,
             terminal_height: self.terminal_height,
+            agent_visible: self.agent_visible,
+            agent_width: self.agent_width,
         };
         self.config.put_session(key, session);
         self.config.save();
@@ -114,6 +116,8 @@ impl IsengardApp {
         self.sidebar_width = DEFAULT_SIDEBAR_WIDTH;
         self.sidebar_visible = true;
         self.terminal_height = DEFAULT_TERMINAL_HEIGHT;
+        self.agent_visible = false;
+        self.agent_width = DEFAULT_AGENT_WIDTH;
     }
 
     /// Reopens saved tabs (with cursor/scroll), expands dirs, and restores terminals.
@@ -139,6 +143,15 @@ impl IsengardApp {
         } else {
             DEFAULT_TERMINAL_HEIGHT
         };
+        self.agent_width = if session.agent_width >= 200. {
+            session.agent_width
+        } else {
+            DEFAULT_AGENT_WIDTH
+        };
+        self.agent_visible = session.agent_visible && !self.workspace.folders().is_empty();
+        if self.agent_visible {
+            self.agent.update(cx, |agent, cx| agent.ensure_started(cx));
+        }
         self.file_tree.expand_paths(&session.expanded, cx);
         let git_statuses = session
             .open_files
@@ -288,6 +301,17 @@ impl IsengardApp {
             let w = f32::from(w).clamp(100., 800.);
             if (self.sidebar_width - w).abs() > 0.5 {
                 self.sidebar_width = w;
+                self.persist_session(cx);
+            }
+        }
+    }
+
+    pub(super) fn remember_agent_width(&mut self, state: &Entity<ResizableState>, cx: &App) {
+        let sizes = state.read(cx).sizes();
+        if let Some(&w) = sizes.get(1) {
+            let w = f32::from(w).clamp(200., 1200.);
+            if (self.agent_width - w).abs() > 0.5 {
+                self.agent_width = w;
                 self.persist_session(cx);
             }
         }

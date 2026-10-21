@@ -14,9 +14,23 @@ pub struct PtySession {
     _child: Box<dyn Child + Send + Sync>,
 }
 
+/// A program to run in a terminal tab instead of the default shell (e.g. the
+/// agent's `--cli auth login`).
+#[derive(Debug, Clone)]
+pub struct TerminalCommand {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
 impl PtySession {
-    /// Opens a PTY and spawns the user's default shell with `cwd`.
-    pub fn spawn(cwd: &Path, cols: u16, rows: u16) -> Result<(Self, Box<dyn Write + Send>, Box<dyn Read + Send>)> {
+    /// Opens a PTY and spawns `command` (or the user's default shell) in `cwd`.
+    pub fn spawn(
+        cwd: &Path,
+        command: Option<&TerminalCommand>,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(Self, Box<dyn Write + Send>, Box<dyn Read + Send>)> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -27,7 +41,17 @@ impl PtySession {
             })
             .context("open PTY")?;
 
-        let mut cmd = CommandBuilder::new(default_shell());
+        let mut cmd = match command {
+            Some(command) => {
+                let mut cmd = CommandBuilder::new(&command.program);
+                cmd.args(&command.args);
+                for (key, value) in &command.env {
+                    cmd.env(key, value);
+                }
+                cmd
+            }
+            None => CommandBuilder::new(default_shell()),
+        };
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");

@@ -12,7 +12,7 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 use crate::editor::document;
 use crate::editor::tabs::reorder_for_drop_before;
 use crate::terminal::colors::ColorPalette;
-use crate::terminal::pty::PtySession;
+use crate::terminal::pty::{PtySession, TerminalCommand};
 use crate::terminal::view::{TerminalConfig, TerminalView};
 use crate::theme;
 use crate::ui::tab_drag::{TabDragPreview, TerminalTabDrag};
@@ -21,6 +21,8 @@ struct TerminalTab {
     id: usize,
     title: String,
     cwd: PathBuf,
+    /// One-off program tabs (agent login) are not restored with the session.
+    persist: bool,
     view: Entity<TerminalView>,
     /// Kept so the PTY stays alive for the life of the tab.
     _session: PtySession,
@@ -77,12 +79,22 @@ impl TerminalPanel {
         cx.notify();
     }
 
+    /// Cwds of the shell tabs to restore (one-off program tabs are skipped).
     pub fn session_cwds(&self) -> Vec<PathBuf> {
-        self.tabs.iter().map(|t| t.cwd.clone()).collect()
+        self.tabs
+            .iter()
+            .filter(|t| t.persist)
+            .map(|t| t.cwd.clone())
+            .collect()
     }
 
+    /// Index of the active tab within [`Self::session_cwds`].
     pub fn active_index(&self) -> usize {
-        self.active
+        self.tabs
+            .iter()
+            .take(self.active)
+            .filter(|t| t.persist)
+            .count()
     }
 
     /// Respawn tabs from saved cwds (skips missing directories).
@@ -97,7 +109,7 @@ impl TerminalPanel {
         self.tabs.clear();
         self.active = 0;
         for cwd in cwds.iter().filter(|p| p.is_dir()) {
-            if let Ok(tab) = self.spawn_tab(cwd.clone(), cx) {
+            if let Ok(tab) = self.spawn_tab(cwd.clone(), None, cx) {
                 self.tabs.push(tab);
             }
         }
@@ -121,13 +133,32 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let tab = self.spawn_tab(cwd, cx)?;
+        let tab = self.spawn_tab(cwd, None, cx)?;
+        self.push_active(tab, window, cx);
+        Ok(())
+    }
+
+    /// Run `command` in a new tab titled `title` (not restored with the session).
+    pub fn add_command_session(
+        &mut self,
+        cwd: PathBuf,
+        title: String,
+        command: &TerminalCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let mut tab = self.spawn_tab(cwd, Some(command), cx)?;
+        tab.title = title;
+        self.push_active(tab, window, cx);
+        Ok(())
+    }
+
+    fn push_active(&mut self, tab: TerminalTab, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
         self.visible = true;
         self.focus_active(window, cx);
         cx.notify();
-        Ok(())
     }
 
     pub fn select_tab(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -213,10 +244,15 @@ impl TerminalPanel {
         }
     }
 
-    fn spawn_tab(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Result<TerminalTab, String> {
+    fn spawn_tab(
+        &mut self,
+        cwd: PathBuf,
+        command: Option<&TerminalCommand>,
+        cx: &mut Context<Self>,
+    ) -> Result<TerminalTab, String> {
         let cols = 80u16;
         let rows = 24u16;
-        let (session, writer, reader) = match PtySession::spawn(&cwd, cols, rows) {
+        let (session, writer, reader) = match PtySession::spawn(&cwd, command, cols, rows) {
             Ok(parts) => parts,
             Err(err) => {
                 log::error!("terminal: failed to spawn PTY: {err:#}");
@@ -254,6 +290,7 @@ impl TerminalPanel {
             id,
             title,
             cwd,
+            persist: command.is_none(),
             view,
             _session: session,
         })

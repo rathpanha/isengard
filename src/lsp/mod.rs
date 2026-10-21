@@ -20,5 +20,5 @@ pub use host::{
     apply_diagnostics, path_for_diagnostics,
 };
 pub use install::{
-    InstallRecipe, is_app_local, recipe_for_command, run_install, run_uninstall,
+    InstallRecipe, is_app_local, npm_install, recipe_for_command, run_install, run_uninstall,
 };

@@ -31,6 +31,8 @@ actions!(
         ShowGit,
         ToggleTerminal,
         NewTerminal,
+        /// Show/hide the right-hand Agent panel (`⌘⌥B` / `Ctrl+Alt+B`).
+        ToggleAgentPanel,
         /// Fired by the terminal panel after tabs change (close / need persist).
         TerminalTabsChanged,
         /// Rename the tree selection (F2 while Tree focused).
@@ -106,6 +108,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-shift-f", FindInFiles, None),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
+        KeyBinding::new("secondary-alt-b", ToggleAgentPanel, None),
         // Tree selection only — do not steal Delete/F2 from the editor.
         KeyBinding::new("f2", RenameSelectedTreeItem, Some("Tree")),
         KeyBinding::new("delete", DeleteSelectedTreeItem, Some("Tree")),
@@ -187,6 +190,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &NewTerminal, cx| {
         with_active_app(cx, |app, window, cx| {
             app.on_new_terminal(&NewTerminal, window, cx);
+        });
+    });
+    cx.on_action(|_: &ToggleAgentPanel, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_toggle_agent_panel(&ToggleAgentPanel, window, cx);
         });
     });
     cx.on_action(|_: &TogglePreview, cx| {

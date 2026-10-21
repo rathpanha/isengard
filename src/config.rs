@@ -15,6 +15,8 @@ pub const MIN_WINDOW_HEIGHT: f32 = 400.0;
 pub const DEFAULT_SIDEBAR_WIDTH: f32 = 260.0;
 /// Default integrated terminal height in the editor vertical split.
 pub const DEFAULT_TERMINAL_HEIGHT: f32 = 200.0;
+/// Default Agent panel width on the right of the window.
+pub const DEFAULT_AGENT_WIDTH: f32 = 380.0;
 /// Cap for each recent list (folders and workspaces).
 pub const MAX_RECENT: usize = 8;
 /// Cap for persisted workspace sessions (tabs + tree expand).
@@ -95,6 +97,15 @@ pub struct WorkspaceSession {
     /// Integrated terminal panel height (px) in `editor-term-split`.
     #[serde(default = "default_terminal_height")]
     pub terminal_height: f32,
+    /// Whether the right-hand Agent panel was shown.
+    pub agent_visible: bool,
+    /// Agent panel width (px) in `agent-split`.
+    #[serde(default = "default_agent_width")]
+    pub agent_width: f32,
+}
+
+fn default_agent_width() -> f32 {
+    DEFAULT_AGENT_WIDTH
 }
 
 impl Default for WorkspaceSession {
@@ -109,6 +120,8 @@ impl Default for WorkspaceSession {
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_visible: true,
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
+            agent_visible: false,
+            agent_width: DEFAULT_AGENT_WIDTH,
         }
     }
 }
@@ -163,14 +176,31 @@ impl Default for LspSettings {
     }
 }
 
+/// External ACP agent for the Agent panel. Empty → built-in Claude Agent
+/// (app-local install, then `claude-agent-acp` on `PATH`). The agent owns the
+/// model and login; Isengard never stores API keys.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentSettings {
+    /// Executable speaking ACP over stdio (absolute, or looked up on `PATH`),
+    /// e.g. `"gemini"` with `args: ["--experimental-acp"]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+}
+
 /// User-facing settings, persisted as JSON in the platform config directory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     /// Code editor font size in pixels.
     pub font_size: f32,
-    /// Claude model used by the (upcoming) AI panel.
-    pub model: String,
+    /// Agent panel launch command — see [`AgentSettings`].
+    #[serde(default)]
+    pub agent: AgentSettings,
     /// Language Server Protocol (IntelliSense) — see [`LspSettings`].
     #[serde(default)]
     pub lsp: LspSettings,
@@ -199,7 +229,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
-            model: "claude-sonnet-4-5".to_owned(),
+            agent: AgentSettings::default(),
             lsp: LspSettings::default(),
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,
@@ -478,6 +508,31 @@ mod tests {
         let py = loaded.lsp.languages.get("python").unwrap();
         assert_eq!(py.command.as_deref(), Some("pyright-langserver"));
         assert_eq!(py.args.as_ref().unwrap(), &["--stdio".to_string()]);
+    }
+
+    #[test]
+    fn agent_settings_roundtrip_and_legacy_model_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.agent.command = Some("gemini".into());
+        config.agent.args = vec!["--experimental-acp".into()];
+        config.save_to(&path).unwrap();
+        let loaded = AppConfig::load_from(&path);
+        assert_eq!(loaded.agent, config.agent);
+
+        // Older configs carried an unused `model` key; it must not reset settings.
+        std::fs::write(&path, r#"{"font_size":16.0,"model":"claude-sonnet-4-5"}"#).unwrap();
+        let legacy = AppConfig::load_from(&path);
+        assert_eq!(legacy.font_size, 16.0);
+        assert_eq!(legacy.agent, AgentSettings::default());
+    }
+
+    #[test]
+    fn session_without_agent_fields_uses_defaults() {
+        let session: WorkspaceSession = serde_json::from_str(r#"{"open_files":[]}"#).unwrap();
+        assert!(!session.agent_visible);
+        assert_eq!(session.agent_width, DEFAULT_AGENT_WIDTH);
     }
 
     #[test]

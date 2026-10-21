@@ -1,7 +1,8 @@
 # Current status
 
 Phases 1–4 of the original plan are done and the UI has been ported from egui
-to GPUI Kit. Phase 5 (Claude AI panel) has not started.
+to GPUI Kit. Phase 5 is the Agent panel v1 (external ACP agents, Claude Agent
+by default) — see **Agent panel** below.
 
 Working features (verified by screenshots on macOS: welcome screen, file tree,
 tabs, highlighted editor, status bar):
@@ -87,6 +88,22 @@ tabs, highlighted editor, status bar):
   dir / root). Linux in-window close × confirms unsaved changes. Save All
   keeps going past a failed file, lists every failure in one toast, and then
   cancels the pending close / quit / switch.
+- **Agent panel (v1):** right-hand panel (View > Toggle Agent Panel /
+  `⌘⌥B` / `Ctrl+Alt+B` / status-bar `Bot`) chatting with an external agent
+  over the Agent Client Protocol, like Zed's external agents. Default is
+  Claude Agent (`@agentclientprotocol/claude-agent-acp`, pinned 0.94.0):
+  **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
+  Node.js; never global), else `claude-agent-acp` on `PATH`. Uses the user's
+  Claude Code login — no API key in Isengard. Not signed in → login buttons
+  run the agent's own `--cli auth login …` in a terminal tab, then Retry.
+  Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
+  markdown replies + thoughts, tool-call rows (kind icon, path, status),
+  plan checklist, inline permission buttons, Stop (`session/cancel`), New
+  Chat. Agent file reads use the open buffer (unsaved text) before disk;
+  writes go to disk and reload the open tab as saved. One session per
+  workspace in the first root; visibility + width persist per workspace;
+  workspace switch ends the session. Verified end to end against the real
+  adapter (read + shell tool turn) on Linux.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard / File / Edit / View). Menu items omit by state (welcome vs
   folder/workspace vs tabs) — see design. Status bar while a workspace is
@@ -112,8 +129,11 @@ shortcuts. Check these first if something is off.
   panel was open).
 - Interactive flows not yet verified by a human (see above).
 - UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
-  Save, Save All with a failing file, and tab close with the unsaved dialog;
-  file tree, workspace switch and terminal flows are not covered yet.
+  Save, Save All with a failing file, tab close with the unsaved dialog,
+  Agent panel toggle/restore per folder, and agent file read/write against
+  open buffers; file tree and terminal flows are not covered yet.
+  `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
+  permission).
 - No Save As; no file watching; no "Open Recent" in the native menu
   (welcome screen only). Tree New File creates on disk after the inline
   name (distinct from menu New File / `⌘N`, which stays untitled until
@@ -140,15 +160,17 @@ shortcuts. Check these first if something is off.
   as a whole is also **GPL-3.0-only** (`LICENSE`, `Cargo.toml`). See
   [CONTRIBUTING.md](../CONTRIBUTING.md) — forks are fine, PRs are not accepted.
 
-## Roadmap — Phase 5: Claude AI panel (not started)
+## Roadmap — Agent panel after v1
 
-- GPUI Kit has chat components (`Message`, `Bubble`, `MessageScroller`,
-  `TextView::markdown`) — use them for the panel.
-- `src/ai/`: Anthropic Messages API client with SSE streaming; run network work
-  with `cx.background_spawn` / `cx.spawn` (GPUI's executor) instead of a
-  separate tokio runtime if the HTTP client allows; push chunks into the view
-  and `cx.notify()`.
-- Panel as another `resizable_panel` on the right of `main-split`.
-- Config: API key from `ANTHROPIC_API_KEY` (see `.env.example`), first-launch
-  dialog if missing. Model name in `AppConfig.model` (currently
-  `"claude-sonnet-4-5"`; check the latest Claude model IDs before building).
+- Review agent edits as a diff before they land (v1 writes directly; undo +
+  Source Control are the safety net).
+- `terminal/*` client capability (agent commands in our terminal panel).
+- @-mention files / selection as prompt context; image paste.
+- Session history across restarts (`session/load`), several chats, switching
+  agents or modes/models inside the panel.
+- Multi-root: pass the other roots as additional directories (v1 uses the
+  first root only).
+- Auto-retry after the login terminal exits (v1 needs a Retry click).
+- Interactive checks still owed: permission buttons against the real adapter
+  (its default mode did not ask), Install button, login flow, and typing in
+  the prompt box (the automated run could not inject keystrokes).

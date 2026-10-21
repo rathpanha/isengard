@@ -46,6 +46,13 @@ License files: [`assets/fonts/OFL.txt`](../assets/fonts/OFL.txt),
 
 License: [`assets/icons/material/LICENSE`](../assets/icons/material/LICENSE).
 
+## AI agents
+
+| Project | Who | License | How we use it |
+| --- | --- | --- | --- |
+| [Agent Client Protocol](https://agentclientprotocol.com) (`agent-client-protocol` crate) | [agentclientprotocol](https://github.com/agentclientprotocol/rust-sdk) (created by Zed Industries) | Apache-2.0 | Protocol types + client connection for the Agent panel |
+| [`@agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) | agentclientprotocol | Apache-2.0 | Built-in Claude Agent; installed app-locally on demand, run as a subprocess (not bundled) |
+
 ## Rust crates (direct)
 
 These are the crates we declare in `Cargo.toml` (transitive crates are too
@@ -68,7 +75,9 @@ many to list; `cargo tree` is the full graph).
 | `portable-pty` | PTY + default shell spawn (wezterm) |
 | `open` | Open terminal URLs in the system browser |
 | `trash` | Move tree Delete to the OS Trash / Recycle Bin |
-| `parking_lot` / `flume` / `ropey` | Sync + channels for the adapted terminal view |
+| `parking_lot` / `flume` / `ropey` | Sync + channels for the adapted terminal view (flume also bridges the agent thread) |
+| `agent-client-protocol` | Agent panel ACP client (see AI agents above) |
+| `futures` | `block_on` executor for the agent connection thread |
 | `cc` | Build pin for tree-sitter/SQL + Windows resource embed |
 | `embed-resource` | Windows `.exe` icon (build) |
 | `objc2` / `objc2-app-kit` / `objc2-foundation` | macOS Dock icon at runtime |

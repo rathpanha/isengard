@@ -1,3 +1,5 @@
+mod acp;
+mod agent;
 mod app;
 mod branding;
 mod config;
@@ -42,6 +44,22 @@ gpui_kit::assets::icon_assets!(
         Circle,
         Download,
         Trash,
+        // Agent panel (status bar toggle, header, tool rows, composer).
+        Bot,
+        PanelRightClose,
+        SquarePen,
+        LogIn,
+        RotateCw,
+        ArrowUp,
+        Square,
+        Check,
+        CircleX,
+        FileText,
+        Pencil,
+        SquareTerminal,
+        Brain,
+        Globe,
+        Wrench,
     ]
 );
 

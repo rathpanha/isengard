@@ -7,6 +7,7 @@
 //! | Module | Responsibility |
 //! | --- | --- |
 //! | `actions` | Action types, key bindings, menu → app bridge |
+//! | `agent` | Right Agent panel: toggle, file/login requests from the agent |
 //! | `tab` | `EditorTab` / `TabBody` / diff kind |
 //! | `workspace` | Open/switch/persist workspace, recents, titles |
 //! | `session` | Session + window geometry restore/persist |
@@ -21,6 +22,7 @@
 //! | `welcome` | Welcome screen (start actions + recents) |
 
 mod actions;
+mod agent;
 mod chrome;
 mod files;
 mod git;
@@ -70,9 +72,10 @@ pub(super) use gpui_kit::component::{
 pub(super) use gpui_kit::{prelude::FluentBuilder as _, *};
 pub(super) use serde::Deserialize;
 
+pub(super) use crate::agent::{AgentPanel, AgentPanelEvent};
 pub(super) use crate::config::{
-    AppConfig, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_SIDEBAR_WIDTH, DEFAULT_TERMINAL_HEIGHT,
-    FileViewState, OpenFileEntry, WorkspaceSession,
+    AppConfig, DEFAULT_AGENT_WIDTH, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_TERMINAL_HEIGHT, FileViewState, OpenFileEntry, WorkspaceSession,
 };
 pub(super) use crate::editor::document;
 pub(super) use crate::editor::language::Language;
@@ -118,7 +121,8 @@ pub use actions::{
     IncreaseFontSize, NewFile, NewTerminal, NewWorkspace,
     OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit,
     RenameSelectedTreeItem, ResetFontSize, Save, SaveAll, SaveWorkspaceAs,
-    NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, TogglePreview, ToggleSidebar, ToggleTerminal,
+    NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel, TogglePreview,
+    ToggleSidebar, ToggleTerminal,
 };
 
 #[derive(Clone, Copy)]
@@ -205,6 +209,10 @@ pub struct IsengardApp {
     sidebar_width: f32,
     sidebar_visible: bool,
     terminal_height: f32,
+    /// Right-hand ACP agent chat (connects lazily on first show).
+    agent: Entity<AgentPanel>,
+    agent_visible: bool,
+    agent_width: f32,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
     /// Suppresses session writes while batch-restoring tabs.
@@ -345,6 +353,13 @@ impl IsengardApp {
 
         let terminal = cx.new(|_| TerminalPanel::new(&[]));
 
+        let agent_settings = config.agent.clone();
+        let agent = cx.new(|cx| AgentPanel::new(agent_settings, window, cx));
+        let agent_subscription =
+            cx.subscribe_in(&agent, window, |this, _, event: &AgentPanelEvent, window, cx| {
+                this.handle_agent_event(event, window, cx);
+            });
+
         let mut app = Self {
             config,
             focus_handle,
@@ -372,6 +387,9 @@ impl IsengardApp {
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_visible: true,
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
+            agent,
+            agent_visible: false,
+            agent_width: DEFAULT_AGENT_WIDTH,
             allow_quit: false,
             restoring_session: false,
             window_geometry_generation: 0,
@@ -381,6 +399,7 @@ impl IsengardApp {
                 tree_subscription,
                 search_subscription,
                 git_subscription,
+                agent_subscription,
                 bounds_sub,
             ],
         };

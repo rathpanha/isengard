@@ -3,6 +3,15 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent panel v1 (replaces the planned direct-API Claude
+  panel): right-hand chat with external agents over the Agent Client
+  Protocol (`agent-client-protocol` 3.4.0, own thread, no Tokio). Built-in
+  Claude Agent (`@agentclientprotocol/claude-agent-acp` 0.94.0) installs
+  app-locally and uses the Claude Code login; custom agents via
+  `config.agent`. Streaming replies, tool rows, plan, inline permissions,
+  Stop / New Chat, buffer-aware file read/write, terminal login. Dropped the
+  unused `AppConfig.model`; `npm_install` shared with LSP installs; terminal
+  can run one-off command tabs.
 - **2026-10-20** — Tree path actions (`RenamePath`, `DeletePath`, `NewFileIn`,
   `NewFolderIn`, `RemoveWorkspaceFolder`) moved from `app/actions.rs` to
   `ui/file_tree.rs`; `ui/` no longer imports `app`. No behavior change.

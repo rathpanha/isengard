@@ -185,6 +185,33 @@ Add a row here whenever a new shared component is created.
   always spawns a tab. Multi-root: root picker only when creating a session
   (↑↓ / Enter / Cancel), not when un-minimizing. Tab cwds, visibility, and
   panel height are stored per workspace in `sessions` (shells respawn).
+- **Agent panel (right):** Kit `h_resizable("agent-split-…")` around the
+  whole workspace body, so the panel runs full height beside sidebar +
+  editor + terminal. Only while a folder/workspace is open; omitted
+  entirely when hidden (no empty strip). Width + visibility per workspace in
+  `sessions` (default hidden, 380px). Toggle: status-bar `Bot` (`.selected`
+  while shown), View > Toggle Agent Panel, `⌘⌥B` / `Ctrl+Alt+B`; header
+  `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
+  status square (success ready, warning starting/working, danger failed,
+  muted otherwise) + agent name, ghost `SquarePen` New Chat. Background
+  `theme.sidebar` like the other panels. Transcript in Kit
+  `MessageScroller` (tail follow + jump-to-latest): user text in a
+  `Secondary` `Bubble` aligned end; agent replies as streamed
+  `TextView` markdown (selectable); thoughts muted `text_xs` with a left
+  `border_l_2` rule; tool calls as bordered rows (Lucide kind icon, title,
+  muted path, right status: Kit `Spinner` while running, `Check` success,
+  `CircleX` danger); plan as 7×7 status squares + text (done = muted +
+  line-through); notices `text_xs` muted or danger. **Permission prompts
+  are inline** on the tool row (not a modal — several can be open while
+  updates keep streaming): one button per agent option, `.small()`,
+  allow-once `.primary()`, allow-always `.outline()`, reject
+  `.danger().outline()`. Composer: auto-growing `Textarea` (Enter sends,
+  Shift+Enter newline) + muted hint + `.small()` primary Send (`ArrowUp`)
+  that becomes outlined Stop (`Square`) while a turn runs. Non-ready states
+  are one centred column: Spinner + "Starting…"; not installed → primary
+  Install (`Download`, loading while npm runs) + danger error line; login
+  → one button per agent login method (first primary, others outline) +
+  outline Retry; failed → danger message + primary Retry.
 - **Sidebar toggle:** file tree can be hidden while the workspace stays open.
   Width + visibility remembered per workspace in `sessions` (default 260px /
   visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /
@@ -323,7 +350,7 @@ Add a row here whenever a new shared component is created.
   - **Folder or workspace open:** File also Add Folder to Workspace…,
     Save Workspace As…, Close Folder / Close Workspace. Edit includes
     Find in Files. View includes sidebar / Explorer / Search / Source
-    Control / terminal.
+    Control / terminal / Agent panel.
   - **Tabs open:** Save, Save All, Close Tab, Edit clipboard/find, Toggle
     Preview, Increase / Decrease / Reset Font Size.
 - **New File:** opens an in-memory `Untitled-N` tab (welcome or workspace); no

@@ -745,35 +745,11 @@ fn install_npm(
     root: &Path,
 ) -> Result<(), String> {
     let pkg = pkg_dir(root, recipe.pkg_id);
-    let _ = fs::remove_dir_all(&pkg);
-    fs::create_dir_all(&pkg).map_err(|e| e.to_string())?;
-
-    let mut args = vec!["install".to_string(), "--prefix".to_string()];
-    args.push(pkg.to_string_lossy().into_owned());
-    for p in packages {
-        args.push(format!("{}@{}", p.name, p.version));
-    }
-
-    let output = Command::new("npm")
-        .args(&args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .map_err(|e| format!("Could not run `npm` (required for this server): {e}"))?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let detail = if err.trim().is_empty() {
-            out.trim()
-        } else {
-            err.trim()
-        };
-        return Err(if detail.is_empty() {
-            format!("`npm install` failed ({})", output.status)
-        } else {
-            detail.chars().take(400).collect()
-        });
-    }
+    let specs: Vec<String> = packages
+        .iter()
+        .map(|p| format!("{}@{}", p.name, p.version))
+        .collect();
+    npm_install(&pkg, &specs)?;
 
     for bin_name in recipe.bin_names {
         let nm_bin = pkg.join("node_modules").join(".bin").join(bin_name);
@@ -798,6 +774,39 @@ fn install_npm(
         write_wrapper(root, bin_name, &nm_bin)?;
     }
     Ok(())
+}
+
+/// Fresh `npm install --prefix <pkg> <specs…>` (wipes `pkg` first; never `-g`).
+/// Shared with the agent installer (`acp::install`).
+pub fn npm_install(pkg: &Path, specs: &[String]) -> Result<(), String> {
+    let _ = fs::remove_dir_all(pkg);
+    fs::create_dir_all(pkg).map_err(|e| e.to_string())?;
+
+    let mut args = vec!["install".to_string(), "--prefix".to_string()];
+    args.push(pkg.to_string_lossy().into_owned());
+    args.extend(specs.iter().cloned());
+
+    let output = Command::new("npm")
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("Could not run `npm` (Node.js is required): {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&output.stderr);
+    let out = String::from_utf8_lossy(&output.stdout);
+    let detail = if err.trim().is_empty() {
+        out.trim()
+    } else {
+        err.trim()
+    };
+    Err(if detail.is_empty() {
+        format!("`npm install` failed ({})", output.status)
+    } else {
+        detail.chars().take(400).collect()
+    })
 }
 
 fn bin_path(root: &Path, name: &str) -> PathBuf {

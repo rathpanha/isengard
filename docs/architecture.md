@@ -99,6 +99,7 @@ src/
 ├── app/                 IsengardApp entity (one GPUI view; split by concern)
 │   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`), module map
 │   ├── actions.rs       `actions!`, tab path actions, key bindings, menu bridge
+│   ├── agent.rs         Agent panel toggle, agent file read/write, login → terminal
 │   ├── tab.rs           `EditorTab` / `TabBody` / `DiffKind`
 │   ├── workspace.rs     open/switch/persist workspace, recents, titles
 │   ├── session.rs       session + window geometry restore/persist
@@ -131,6 +132,15 @@ src/
 │   ├── install.rs       app-local download / resolve (bin then PATH)
 │   ├── protocol.rs      Content-Length framing
 │   └── uri.rs           file:// path ↔ Uri
+├── acp/                 Agent Client Protocol host (no UI)
+│   ├── client.rs        `AgentConnection`: own thread, `block_on`, flume
+│   │                    commands in / `AgentEvent`s out (+ reply senders)
+│   ├── registry.rs      `config.agent` command, else built-in Claude Agent
+│   ├── install.rs       app-local `npm install --prefix …/agents/claude`
+│   └── files.rs         `slice_lines` for `fs/read_text_file` ranges
+├── agent/
+│   └── panel.rs         `AgentPanel`: status, transcript (`MessageScroller`),
+│                        tool rows, permission buttons, composer
 ├── file_tree/
 │   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
 │   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)
@@ -244,6 +254,26 @@ src/
   (`sidebar_width` / `sidebar_visible` / `terminal_height`); resizable
   element ids include the session key so Kit state does not leak across
   folders. `ToggleSidebar` / `⌘B`/`Ctrl+B`.
+- **Agent panel:** `IsengardApp::agent` is an `Entity<AgentPanel>`; shown as
+  the right child of `h_resizable("agent-split-{session key}")` around the
+  whole body (sidebar + editor + terminal) while a folder is open.
+  `agent_visible` / `agent_width` live on `WorkspaceSession`. The panel owns
+  `acp::AgentConnection` (lazy `ensure_started` on first show / restore) and
+  pumps its events with `cx.spawn` + `recv_async`; a `generation` counter
+  drops events from replaced connections. The connection runs the SDK's
+  connection future on a dedicated OS thread under
+  `futures::executor::block_on` — no Tokio, and nothing blocks GPUI's
+  executors. Requests that need the editor carry a flume reply sender and
+  are answered from a task spawned on the SDK connection so streaming
+  continues meanwhile; the panel re-emits file requests as
+  `AgentPanelEvent`s for `app/agent.rs` (buffer-first read, write + reload
+  tab). Auth: we advertise `auth.terminal`; `authRequired` (-32000) → login
+  buttons run `<agent command> <method args>` via
+  `TerminalPanel::add_command_session` (one-off tabs are not persisted).
+  `apply_switch` calls `reset_agent_for_workspace` (drops the agent: the SDK
+  kills its process group). Tests: `AgentConnection::spawn_with` takes any
+  `ConnectTo<Client>`; `acp::client` tests use `Channel::duplex` + a fake
+  `Agent` builder.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close
@@ -303,6 +333,9 @@ src/
   `AppConfig::default_path()` is `None`, so tests never touch the user config.
   Never block inside `background_spawn` (e.g. `flume::recv`): the test
   scheduler runs background tasks inline and hangs — use `recv_async`.
+  `Harness::has` renders a frame first and only sees registered Kit controls
+  (e.g. `Button` ids), not plain `div().id(..)`. The harness points
+  `agent.command` at a missing path so tests never launch a real agent.
 - Commits go on `master` (user's choice). Only commit when the user asks.
 - Doc updates follow [README.md](README.md) (living topic file + one changelog
   bullet).
@@ -323,5 +356,9 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 `url = "2"` for `file://` URIs; servers are external (app-local download dir
 and/or PATH — not inside the app binary). Download deps: `ureq`, `flate2`,
 `tar`, `zip`, `xz2`. `AppConfig.lsp` holds the master switch and `languages`
-map. Do not depend on crates.io `gpui-terminal` — it targets a different GPUI;
+map. Agent panel: `agent-client-protocol = "=3.4.0"` (feature `process`;
+schema `=1.12.0` comes with it) + `futures = "0.3"`; the Claude adapter is
+pinned in `acp/install.rs` (`CLAUDE_VERSION`). Upgrade both together — the
+3.x API and the adapter change quickly, and docs online often show the
+older 0.x/2.x API. Do not depend on crates.io `gpui-terminal` — it targets a different GPUI;
 our panel is a local adaptation.
