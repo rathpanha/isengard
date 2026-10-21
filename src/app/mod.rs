@@ -98,7 +98,7 @@ pub(super) use crate::search::{
 };
 pub(super) use crate::terminal::TerminalPanel;
 pub(super) use crate::theme;
-pub(super) use crate::ui::components::{center_dialog, notify_error, notify_success};
+pub(super) use crate::ui::components::{center_dialog, notify_error, notify_success, notify_warning};
 pub(super) use crate::ui::file_tree::{
     DeletePath, FileTreePanel, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
     TreeEditTarget,
@@ -209,8 +209,11 @@ pub struct IsengardApp {
     sidebar_width: f32,
     sidebar_visible: bool,
     terminal_height: f32,
-    /// Right-hand ACP agent chat (connects lazily on first show).
-    agent: Entity<AgentPanel>,
+    /// Agent panel of the open folder/workspace (connects lazily on first show).
+    agent: Option<Entity<AgentPanel>>,
+    /// Every folder/workspace's panel by session key, so a background agent
+    /// can finish its turn and a returning workspace finds its transcript.
+    agents: HashMap<String, (Entity<AgentPanel>, Subscription)>,
     agent_visible: bool,
     agent_width: f32,
     /// Set once the user chose to quit despite unsaved changes.
@@ -353,12 +356,6 @@ impl IsengardApp {
 
         let terminal = cx.new(|_| TerminalPanel::new(&[]));
 
-        let agent_settings = config.agent.clone();
-        let agent = cx.new(|cx| AgentPanel::new(agent_settings, window, cx));
-        let agent_subscription =
-            cx.subscribe_in(&agent, window, |this, _, event: &AgentPanelEvent, window, cx| {
-                this.handle_agent_event(event, window, cx);
-            });
 
         let mut app = Self {
             config,
@@ -387,7 +384,8 @@ impl IsengardApp {
             sidebar_width: DEFAULT_SIDEBAR_WIDTH,
             sidebar_visible: true,
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
-            agent,
+            agent: None,
+            agents: HashMap::new(),
             agent_visible: false,
             agent_width: DEFAULT_AGENT_WIDTH,
             allow_quit: false,
@@ -399,7 +397,6 @@ impl IsengardApp {
                 tree_subscription,
                 search_subscription,
                 git_subscription,
-                agent_subscription,
                 bounds_sub,
             ],
         };

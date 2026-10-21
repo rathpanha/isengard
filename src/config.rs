@@ -102,6 +102,27 @@ pub struct WorkspaceSession {
     /// Agent panel width (px) in `agent-split`.
     #[serde(default = "default_agent_width")]
     pub agent_width: f32,
+    /// Agent chats started in this folder/workspace, newest first. The agent
+    /// stores the transcripts; this is only Isengard's index of which belong here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub agent_chats: Vec<AgentChat>,
+    /// Chat reopened when the panel connects.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_active: Option<String>,
+}
+
+/// Cap for remembered agent chats per folder/workspace.
+pub const MAX_AGENT_CHATS: usize = 50;
+
+/// One agent chat (ACP session) in the per-workspace index.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentChat {
+    /// ACP `sessionId`.
+    pub id: String,
+    pub title: String,
+    /// Last prompt time, Unix seconds.
+    pub updated: u64,
 }
 
 fn default_agent_width() -> f32 {
@@ -122,6 +143,8 @@ impl Default for WorkspaceSession {
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
             agent_visible: false,
             agent_width: DEFAULT_AGENT_WIDTH,
+            agent_chats: Vec::new(),
+            agent_active: None,
         }
     }
 }
@@ -533,6 +556,32 @@ mod tests {
         let session: WorkspaceSession = serde_json::from_str(r#"{"open_files":[]}"#).unwrap();
         assert!(!session.agent_visible);
         assert_eq!(session.agent_width, DEFAULT_AGENT_WIDTH);
+        assert!(session.agent_chats.is_empty());
+        assert_eq!(session.agent_active, None);
+    }
+
+    #[test]
+    fn agent_chats_roundtrip_per_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.put_session(
+            "/code/app".into(),
+            WorkspaceSession {
+                agent_chats: vec![AgentChat {
+                    id: "s1".into(),
+                    title: "Fix the build".into(),
+                    updated: 1_700_000_000,
+                }],
+                agent_active: Some("s1".into()),
+                ..Default::default()
+            },
+        );
+        config.save_to(&path).unwrap();
+        let loaded = AppConfig::load_from(&path);
+        let session = loaded.session("/code/app").unwrap();
+        assert_eq!(session.agent_chats[0].title, "Fix the build");
+        assert_eq!(session.agent_active.as_deref(), Some("s1"));
     }
 
     #[test]

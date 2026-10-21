@@ -60,6 +60,7 @@ gpui_kit::assets::icon_assets!(
         Brain,
         Globe,
         Wrench,
+        MessagesSquare,
     ]
 );
 

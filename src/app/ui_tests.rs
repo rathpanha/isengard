@@ -13,6 +13,7 @@ use gpui_kit::{
 };
 
 use super::{AgentPanelEvent, IsengardApp};
+use crate::acp::testing::FakeAgent;
 use crate::acp::{FileRead, FileWrite};
 use crate::config::AppConfig;
 
@@ -237,7 +238,68 @@ impl Harness {
     }
 
     fn agent_event(&self, event: AgentPanelEvent, cx: &mut TestAppContext) {
-        self.with_app(cx, |app, window, cx| app.handle_agent_event(&event, window, cx));
+        self.with_app(cx, |app, window, cx| {
+            let panel = app.agent.clone().expect("agent panel");
+            app.handle_agent_event(&panel, &event, window, cx);
+        });
+    }
+
+    fn transcript(&self, cx: &mut TestAppContext) -> Vec<String> {
+        cx.read(|cx| {
+            let app = self.app.read(cx);
+            app.agent.as_ref().map(|a| a.read(cx).transcript(cx)).unwrap_or_default()
+        })
+    }
+
+    /// Pump GPUI until `done` holds; the fake agent answers from its own thread.
+    fn wait_for(&self, cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
+        for _ in 0..500 {
+            cx.run_until_parked();
+            if done(cx) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            cx.executor().advance_clock(std::time::Duration::from_millis(10));
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    fn wait_ready(&self, cx: &mut TestAppContext) {
+        let app = self.app.clone();
+        self.wait_for(cx, "agent ready", move |cx| {
+            cx.read(|cx| app.read(cx).agent.as_ref().is_some_and(|a| a.read(cx).is_ready()))
+        });
+    }
+
+    fn ask(&self, text: &'static str, cx: &mut TestAppContext) {
+        self.input(text, cx);
+        self.press("enter", cx);
+        let app = self.app.clone();
+        let reply = format!("agent: echo: {text}");
+        self.wait_for(cx, "agent reply", move |cx| {
+            cx.read(|cx| {
+                app.read(cx).agent.as_ref().is_some_and(|a| {
+                    let a = a.read(cx);
+                    a.is_ready() && a.transcript(cx).contains(&reply)
+                })
+            })
+        });
+    }
+
+    fn saved_chats(&self, folder: &Path, cx: &mut TestAppContext) -> (Vec<String>, Option<String>) {
+        cx.read(|cx| {
+            let session = self
+                .app
+                .read(cx)
+                .config
+                .session(&folder.to_string_lossy())
+                .cloned()
+                .unwrap_or_default();
+            (
+                session.agent_chats.into_iter().map(|c| c.id).collect(),
+                session.agent_active,
+            )
+        })
     }
 }
 
@@ -268,6 +330,7 @@ fn agent_panel_toggles_and_is_remembered_per_folder(cx: &mut TestAppContext) {
 fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("a.txt", "one\ntwo\nthree\n");
+    h.open_folder(h.dir.path(), cx);
     h.open(&path, cx);
     h.input("X", cx);
 
@@ -307,4 +370,70 @@ fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext)
         cx,
     );
     assert!(answer.try_recv().unwrap().is_err(), "relative paths are rejected");
+}
+
+#[gpui_kit::test]
+fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let a = h.folder("a");
+    let b = h.folder("b");
+
+    h.open_folder(&a, cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    h.ask("hello", cx);
+    assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
+    assert_eq!(h.saved_chats(&a, cx), (vec!["s1".into()], Some("s1".into())));
+
+    // Folder B gets its own, empty chat.
+    h.open_folder(&b, cx);
+    assert!(!h.agent_visible(cx), "B has its own (hidden) panel state");
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    assert!(h.transcript(cx).is_empty());
+    assert_eq!(h.saved_chats(&b, cx).0, Vec::<String>::new());
+
+    // Back to A: same transcript, resumed without a replay.
+    h.open_folder(&a, cx);
+    h.wait_ready(cx);
+    assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
+    let calls = agent.calls();
+    assert!(calls.contains(&"resume s1".to_string()), "{calls:?}");
+    assert!(!calls.contains(&"load s1".to_string()), "{calls:?}");
+
+    // A fresh app (restart) loads the chat and replays its history.
+    let config = cx.read(|cx| h.app.read(cx).config.clone());
+    let h2 = Harness::with_config(config, cx);
+    h2.open_folder(&a, cx);
+    h2.wait_ready(cx);
+    assert_eq!(h2.transcript(cx), ["you: hello", "agent: echo: hello"]);
+    assert!(agent.calls().contains(&"load s1".to_string()));
+}
+
+#[gpui_kit::test]
+fn switching_away_mid_turn_lets_it_finish_then_stops_the_agent(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let a = h.folder("a");
+    let b = h.folder("b");
+    h.open_folder(&a, cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    let panel_a = cx.read(|cx| h.app.read(cx).agent.clone().unwrap());
+
+    // "shout" makes the fake agent read a file first: the turn is still
+    // running when we leave. (The read fails — `/w` does not exist — and the
+    // agent ends the turn with that error, in the background.)
+    h.input("shout", cx);
+    h.press("enter", cx);
+    h.open_folder(&b, cx);
+    let suspended = panel_a.clone();
+    h.wait_for(cx, "background turn to end", move |cx| {
+        cx.read(|cx| suspended.read(cx).is_suspended())
+    });
+    let transcript = cx.read(|cx| panel_a.read(cx).transcript(cx));
+    assert_eq!(transcript.first().map(String::as_str), Some("you: shout"));
 }

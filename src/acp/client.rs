@@ -13,12 +13,12 @@ use std::path::PathBuf;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, ContentBlock,
-    FileSystemCapabilities, Implementation, InitializeRequest, NewSessionRequest,
-    PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest,
+    AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, CloseSessionRequest,
+    ContentBlock, DeleteSessionRequest, FileSystemCapabilities, Implementation,
+    InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest,
     ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
-    StopReason, TextContent, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome, SessionId,
+    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, Error, ErrorCode,
@@ -28,8 +28,29 @@ use crate::acp::registry::AgentLaunch;
 
 /// UI → agent.
 enum AgentCommand {
+    Open(SessionOpen),
     Prompt(String),
     Cancel,
+    Delete(String),
+}
+
+/// How to open a chat on a connected agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionOpen {
+    New,
+    /// `session/load`: the agent replays the chat as `Update`s first.
+    Load(String),
+    /// `session/resume`: no replay (the UI still has the transcript).
+    Resume(String),
+}
+
+/// What the agent said about itself in `initialize`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentInfo {
+    pub name: String,
+    pub can_load: bool,
+    pub can_resume: bool,
+    pub can_delete: bool,
 }
 
 /// A terminal login the agent advertised (`authMethods[].type == "terminal"`):
@@ -67,9 +88,13 @@ pub struct FileWrite {
 
 /// Agent → UI.
 pub enum AgentEvent {
-    /// Session created; prompts are accepted from now on.
-    Ready { agent_name: String },
-    Update(SessionUpdate),
+    /// `initialize` done; send [`AgentConnection::open`] next.
+    Connected(AgentInfo),
+    /// A chat is open (after any replay); prompts go to it from now on.
+    SessionOpened { id: String },
+    /// Opening a chat failed (e.g. it was deleted outside Isengard).
+    SessionOpenFailed { open: SessionOpen, message: String },
+    Update { session: String, update: SessionUpdate },
     TurnEnded(StopReason),
     TurnFailed(String),
     /// Not signed in. The connection is finished; restart it after login.
@@ -88,16 +113,17 @@ pub struct AgentConnection {
 }
 
 impl AgentConnection {
-    /// Spawn the agent process for `launch` with session cwd `cwd`.
-    pub fn spawn(launch: &AgentLaunch, cwd: PathBuf) -> Self {
+    /// Spawn the agent process for `launch`. Sessions run in `roots[0]`; the
+    /// other workspace roots are sent as additional directories.
+    pub fn spawn(launch: &AgentLaunch, roots: Vec<PathBuf>) -> Self {
         let config = AcpAgentConfig::new(launch.command.clone())
             .args(launch.args.iter().cloned())
             .envs(launch.env.iter().map(|(k, v)| (k.clone(), v.clone())));
-        Self::spawn_with(AcpAgent::new(config), cwd)
+        Self::spawn_with(AcpAgent::new(config), roots)
     }
 
     /// Run against any transport (tests use an in-memory fake agent).
-    pub fn spawn_with(transport: impl ConnectTo<Client> + 'static, cwd: PathBuf) -> Self {
+    pub fn spawn_with(transport: impl ConnectTo<Client> + 'static, roots: Vec<PathBuf>) -> Self {
         let (commands, command_rx) = flume::unbounded();
         let (event_tx, events) = flume::unbounded();
         let spawned = std::thread::Builder::new()
@@ -106,7 +132,7 @@ impl AgentConnection {
                 let event_tx = event_tx.clone();
                 move || {
                     let result =
-                        futures::executor::block_on(run(transport, cwd, command_rx, event_tx.clone()));
+                        futures::executor::block_on(run(transport, roots, command_rx, event_tx.clone()));
                     let _ = event_tx.send(AgentEvent::Closed(result.err().map(describe_error)));
                 }
             });
@@ -116,6 +142,15 @@ impl AgentConnection {
             ))));
         }
         Self { commands, events }
+    }
+
+    pub fn open(&self, open: SessionOpen) {
+        let _ = self.commands.send(AgentCommand::Open(open));
+    }
+
+    /// Delete a stored chat (only when [`AgentInfo::can_delete`]).
+    pub fn delete(&self, id: String) {
+        let _ = self.commands.send(AgentCommand::Delete(id));
     }
 
     pub fn prompt(&self, text: String) {
@@ -156,7 +191,7 @@ fn login_methods(methods: &[AuthMethod]) -> Vec<LoginMethod> {
 
 async fn run(
     transport: impl ConnectTo<Client> + 'static,
-    cwd: PathBuf,
+    roots: Vec<PathBuf>,
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
 ) -> Result<(), Error> {
@@ -169,7 +204,10 @@ async fn run(
         .name("isengard")
         .on_receive_notification(
             async move |n: SessionNotification, _cx| {
-                let _ = on_update.send(AgentEvent::Update(n.update));
+                let _ = on_update.send(AgentEvent::Update {
+                    session: n.session_id.to_string(),
+                    update: n.update,
+                });
                 Ok(())
             },
             agent_client_protocol::on_receive_notification!(),
@@ -236,17 +274,20 @@ async fn run(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async move |cx: ConnectionTo<Agent>| {
-            session(cx, cwd, commands, events).await
+            session(cx, roots, commands, events).await
         })
         .await
 }
 
 async fn session(
     cx: ConnectionTo<Agent>,
-    cwd: PathBuf,
+    roots: Vec<PathBuf>,
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
 ) -> Result<(), Error> {
+    let mut roots = roots.into_iter();
+    let cwd = roots.next().unwrap_or_else(std::env::temp_dir);
+    let extra_roots: Vec<PathBuf> = roots.collect();
     let init = cx
         .send_request(
             InitializeRequest::new(ProtocolVersion::V1)
@@ -264,27 +305,83 @@ async fn session(
         .block_task()
         .await?;
     let logins = login_methods(&init.auth_methods);
-    let agent_name = init
-        .agent_info
-        .map(|info| info.title.unwrap_or(info.name))
-        .unwrap_or_else(|| "Agent".into());
-
-    let session = match cx.send_request(NewSessionRequest::new(cwd)).block_task().await {
-        Ok(session) => session,
-        Err(err) if err.code == ErrorCode::AuthRequired => {
-            let _ = events.send(AgentEvent::AuthRequired(logins));
-            return Ok(());
-        }
-        Err(err) => return Err(err),
+    let caps = &init.agent_capabilities;
+    let info = AgentInfo {
+        name: init
+            .agent_info
+            .clone()
+            .map(|info| info.title.unwrap_or(info.name))
+            .unwrap_or_else(|| "Agent".into()),
+        can_load: caps.load_session,
+        can_resume: caps.session_capabilities.resume.is_some(),
+        can_delete: caps.session_capabilities.delete.is_some(),
     };
-    let session_id = session.session_id;
-    let _ = events.send(AgentEvent::Ready { agent_name });
+    let can_close = caps.session_capabilities.close.is_some();
+    // Multi-root workspaces: without the capability the agent only sees `cwd`.
+    let extra_roots = if caps.session_capabilities.additional_directories.is_some() {
+        extra_roots
+    } else {
+        Vec::new()
+    };
+    let _ = events.send(AgentEvent::Connected(info.clone()));
 
+    let mut current: Option<SessionId> = None;
     while let Ok(command) = commands.recv_async().await {
         match command {
+            AgentCommand::Open(open) => {
+                // One open chat per connection; let the agent free the old one.
+                if let Some(old) = current.take()
+                    && can_close
+                {
+                    let _ = cx.send_request(CloseSessionRequest::new(old)).block_task().await;
+                }
+                let opened = match &open {
+                    SessionOpen::New => cx
+                        .send_request(NewSessionRequest::new(cwd.clone())
+                            .additional_directories(extra_roots.clone()),
+                        )
+                        .block_task()
+                        .await
+                        .map(|r| r.session_id),
+                    SessionOpen::Load(id) => cx
+                        .send_request(LoadSessionRequest::new(id.clone(), cwd.clone())
+                                .additional_directories(extra_roots.clone()),
+                        )
+                        .block_task()
+                        .await
+                        .map(|_| SessionId::new(id.clone())),
+                    SessionOpen::Resume(id) => cx
+                        .send_request(ResumeSessionRequest::new(id.clone(), cwd.clone())
+                                .additional_directories(extra_roots.clone()),
+                        )
+                        .block_task()
+                        .await
+                        .map(|_| SessionId::new(id.clone())),
+                };
+                match opened {
+                    Ok(id) => {
+                        let _ = events.send(AgentEvent::SessionOpened { id: id.to_string() });
+                        current = Some(id);
+                    }
+                    Err(err) if err.code == ErrorCode::AuthRequired => {
+                        let _ = events.send(AgentEvent::AuthRequired(logins));
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        let _ = events.send(AgentEvent::SessionOpenFailed {
+                            open,
+                            message: describe_error(err),
+                        });
+                    }
+                }
+            }
             AgentCommand::Prompt(text) => {
+                let Some(session_id) = current.clone() else {
+                    let _ = events.send(AgentEvent::TurnFailed("No chat is open.".into()));
+                    continue;
+                };
                 let request = PromptRequest::new(
-                    session_id.clone(),
+                    session_id,
                     vec![ContentBlock::Text(TextContent::new(text))],
                 );
                 let turn = cx.send_request(request);
@@ -305,7 +402,21 @@ async fn session(
                 })?;
             }
             AgentCommand::Cancel => {
-                cx.send_notification(CancelNotification::new(session_id.clone()))?;
+                if let Some(session_id) = current.clone() {
+                    cx.send_notification(CancelNotification::new(session_id))?;
+                }
+            }
+            AgentCommand::Delete(id) => {
+                if info.can_delete {
+                    if current.as_ref().is_some_and(|c| c.to_string() == id) {
+                        current = None;
+                    }
+                    if let Err(err) =
+                        cx.send_request(DeleteSessionRequest::new(id)).block_task().await
+                    {
+                        log::warn!("agent: delete session failed: {}", describe_error(err));
+                    }
+                }
             }
         }
     }
@@ -315,97 +426,8 @@ async fn session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::v1::{
-        AgentCapabilities, ContentChunk, InitializeResponse, NewSessionResponse,
-        PermissionOptionKind, PromptResponse, ToolCallUpdateFields,
-    };
-    use agent_client_protocol::Channel;
+    use crate::acp::testing::FakeAgent;
     use std::time::Duration;
-
-    /// Minimal agent: on prompt it reads `notes.txt`, asks permission, writes
-    /// it back upper-cased (if allowed), streams one chunk, and ends the turn.
-    fn fake_agent(channel: Channel) {
-        std::thread::spawn(move || {
-            let _ = futures::executor::block_on(
-                Agent
-                    .builder()
-                    .on_receive_request(
-                        async |req: InitializeRequest, responder, _cx| {
-                            responder.respond(
-                                InitializeResponse::new(req.protocol_version)
-                                    .agent_capabilities(AgentCapabilities::new())
-                                    .agent_info(
-                                        Implementation::new("fake", "0").title("Fake Agent"),
-                                    ),
-                            )
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .on_receive_request(
-                        async |_req: NewSessionRequest, responder, _cx| {
-                            responder.respond(NewSessionResponse::new("s1"))
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .on_receive_request(
-                        async |req: PromptRequest, responder, cx: ConnectionTo<Client>| {
-                            let cx2 = cx.clone();
-                            cx.spawn(async move {
-                                let sid = req.session_id;
-                                let text = cx2
-                                    .send_request(ReadTextFileRequest::new(
-                                        sid.clone(),
-                                        "/w/notes.txt",
-                                    ))
-                                    .block_task()
-                                    .await?
-                                    .content;
-                                let ask = cx2
-                                    .send_request(RequestPermissionRequest::new(
-                                        sid.clone(),
-                                        ToolCallUpdate::new(
-                                            "t1",
-                                            ToolCallUpdateFields::new().title("Edit notes.txt"),
-                                        ),
-                                        vec![
-                                            PermissionOption::new(
-                                                "allow",
-                                                "Allow",
-                                                PermissionOptionKind::AllowOnce,
-                                            ),
-                                            PermissionOption::new(
-                                                "reject",
-                                                "Reject",
-                                                PermissionOptionKind::RejectOnce,
-                                            ),
-                                        ],
-                                    ))
-                                    .block_task()
-                                    .await?;
-                                if matches!(ask.outcome, RequestPermissionOutcome::Selected(_)) {
-                                    cx2.send_request(WriteTextFileRequest::new(
-                                        sid.clone(),
-                                        "/w/notes.txt",
-                                        text.to_uppercase(),
-                                    ))
-                                    .block_task()
-                                    .await?;
-                                }
-                                cx2.send_notification(SessionNotification::new(
-                                    sid,
-                                    SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                                        ContentBlock::Text(TextContent::new("done")),
-                                    )),
-                                ))?;
-                                responder.respond(PromptResponse::new(StopReason::EndTurn))
-                            })
-                        },
-                        agent_client_protocol::on_receive_request!(),
-                    )
-                    .connect_to(channel),
-            );
-        });
-    }
 
     fn next(conn: &AgentConnection) -> AgentEvent {
         conn.events
@@ -413,16 +435,47 @@ mod tests {
             .expect("agent event")
     }
 
+    fn connected(agent: &FakeAgent) -> AgentConnection {
+        let conn = AgentConnection::spawn_with(agent.connect(), vec![PathBuf::from("/w")]);
+        match next(&conn) {
+            AgentEvent::Connected(info) => {
+                assert_eq!(info.name, "Fake Agent");
+                assert!(info.can_load && info.can_resume && info.can_delete);
+            }
+            _ => panic!("expected Connected"),
+        }
+        conn
+    }
+
+    fn opened(conn: &AgentConnection) -> String {
+        match next(conn) {
+            AgentEvent::SessionOpened { id } => id,
+            _ => panic!("expected SessionOpened"),
+        }
+    }
+
+    /// `(from_user, text)` of the next message chunk.
+    fn chunk_text(conn: &AgentConnection) -> (bool, String) {
+        let AgentEvent::Update { update, .. } = next(conn) else {
+            panic!("expected an update");
+        };
+        let (user, chunk) = match update {
+            SessionUpdate::UserMessageChunk(c) => (true, c),
+            SessionUpdate::AgentMessageChunk(c) => (false, c),
+            _ => panic!("expected a message chunk"),
+        };
+        let ContentBlock::Text(text) = chunk.content else {
+            panic!("expected text");
+        };
+        (user, text.text)
+    }
+
     #[test]
     fn prompt_roundtrip_with_file_io_and_permission() {
-        let (client_end, agent_end) = Channel::duplex();
-        fake_agent(agent_end);
-        let conn = AgentConnection::spawn_with(client_end, PathBuf::from("/w"));
-
-        match next(&conn) {
-            AgentEvent::Ready { agent_name } => assert_eq!(agent_name, "Fake Agent"),
-            _ => panic!("expected Ready"),
-        }
+        let agent = FakeAgent::new();
+        let conn = connected(&agent);
+        conn.open(SessionOpen::New);
+        assert_eq!(opened(&conn), "s1");
         conn.prompt("shout".into());
 
         let AgentEvent::ReadFile(read) = next(&conn) else {
@@ -443,14 +496,77 @@ mod tests {
         assert_eq!(write.content, "HELLO");
         write.reply.send(Ok(())).unwrap();
 
-        let AgentEvent::Update(SessionUpdate::AgentMessageChunk(chunk)) = next(&conn) else {
-            panic!("expected a message chunk");
-        };
-        let ContentBlock::Text(text) = chunk.content else {
-            panic!("expected text");
-        };
-        assert_eq!(text.text, "done");
+        assert_eq!(chunk_text(&conn), (false, "done".into()));
         assert!(matches!(next(&conn), AgentEvent::TurnEnded(StopReason::EndTurn)));
+    }
+
+    #[test]
+    fn chats_survive_the_connection_and_replay_on_load() {
+        let agent = FakeAgent::new();
+        let conn = connected(&agent);
+        conn.open(SessionOpen::New);
+        let id = opened(&conn);
+        conn.prompt("hi".into());
+        assert_eq!(chunk_text(&conn), (false, "echo: hi".into()));
+        assert!(matches!(next(&conn), AgentEvent::TurnEnded(_)));
+        drop(conn);
+
+        // A new process loads the stored chat: history replays before it opens.
+        let conn = connected(&agent);
+        conn.open(SessionOpen::Load(id.clone()));
+        assert_eq!(chunk_text(&conn), (true, "hi".into()));
+        assert_eq!(chunk_text(&conn), (false, "echo: hi".into()));
+        assert_eq!(opened(&conn), id);
+
+        // Switching chats closes the old one; resume does not replay.
+        conn.open(SessionOpen::New);
+        let other = opened(&conn);
+        conn.open(SessionOpen::Resume(id.clone()));
+        assert_eq!(opened(&conn), id);
+        assert_eq!(
+            agent.calls(),
+            [
+                format!("new {id}"),
+                format!("load {id}"),
+                format!("close {id}"),
+                format!("new {other}"),
+                format!("close {other}"),
+                format!("resume {id}"),
+            ]
+        );
+    }
+
+    #[test]
+    fn loading_a_missing_chat_fails_without_closing_the_connection() {
+        let agent = FakeAgent::new();
+        let conn = connected(&agent);
+        conn.open(SessionOpen::Load("gone".into()));
+        match next(&conn) {
+            AgentEvent::SessionOpenFailed { open, .. } => {
+                assert_eq!(open, SessionOpen::Load("gone".into()))
+            }
+            _ => panic!("expected SessionOpenFailed"),
+        }
+        conn.open(SessionOpen::New);
+        let id = opened(&conn);
+        conn.delete(id.clone());
+        conn.open(SessionOpen::New);
+        opened(&conn);
+        assert!(agent.chat(&id).is_none(), "deleted on the agent side");
+    }
+
+    #[test]
+    fn other_workspace_roots_go_to_the_agent_as_additional_directories() {
+        let agent = FakeAgent::new();
+        let roots = vec![PathBuf::from("/w/graph"), PathBuf::from("/w/system")];
+        let conn = AgentConnection::spawn_with(agent.connect(), roots);
+        assert!(matches!(next(&conn), AgentEvent::Connected(_)));
+        conn.open(SessionOpen::New);
+        let id = opened(&conn);
+        assert_eq!(agent.extra_roots(), [PathBuf::from("/w/system")]);
+        conn.open(SessionOpen::Load(id));
+        opened(&conn);
+        assert_eq!(agent.extra_roots(), [PathBuf::from("/w/system")], "load passes them too");
     }
 
     #[test]
@@ -460,7 +576,7 @@ mod tests {
             args: Vec::new(),
             env: Default::default(),
         };
-        let conn = AgentConnection::spawn(&launch, std::env::temp_dir());
+        let conn = AgentConnection::spawn(&launch, vec![std::env::temp_dir()]);
         match next(&conn) {
             AgentEvent::Closed(Some(_)) => {}
             _ => panic!("expected Closed(Some(error))"),

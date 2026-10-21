@@ -100,10 +100,23 @@ tabs, highlighted editor, status bar):
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
   plan checklist, inline permission buttons, Stop (`session/cancel`), New
   Chat. Agent file reads use the open buffer (unsaved text) before disk;
-  writes go to disk and reload the open tab as saved. One session per
-  workspace in the first root; visibility + width persist per workspace;
-  workspace switch ends the session. Verified end to end against the real
-  adapter (read + shell tool turn) on Linux.
+  writes go to disk and reload the open tab as saved. Visibility + width
+  persist per workspace.
+  **Multi-root:** the agent runs in the first root and gets the other roots
+  as ACP `additionalDirectories` (new/load/resume; skipped if the agent does
+  not advertise it). Adding/removing a folder reconnects the live agent
+  (after a running turn) and resumes the chat with the new roots.
+  **Chats per folder/workspace:** each folder/workspace has its own panel and
+  chat index (`sessions.<key>.agent_chats` / `agent_active`; only chats
+  started in Isengard — not `claude` CLI chats). Header chat list
+  (`MessagesSquare`): title (first prompt line) + relative time, click to
+  open, delete with confirm. Switching workspace parks the old panel: a
+  running turn finishes in the background (approval requests toast), then its
+  agent stops; coming back resumes the chat (`session/resume`, no replay)
+  with the transcript still in memory. After a restart the active chat
+  reopens via `session/load` (history replays). Verified end to end against
+  the real adapter on Linux (read + shell tool turn; load replays and the
+  model keeps context; resume does not replay).
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard / File / Edit / View). Menu items omit by state (welcome vs
   folder/workspace vs tabs) — see design. Status bar while a workspace is
@@ -131,7 +144,9 @@ shortcuts. Check these first if something is off.
 - UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
   Save, Save All with a failing file, tab close with the unsaved dialog,
   Agent panel toggle/restore per folder, and agent file read/write against
-  open buffers; file tree and terminal flows are not covered yet.
+  open buffers, chats per folder across switch + restart (resume vs load),
+  and a turn finishing in the background after a switch; file tree and
+  terminal flows are not covered yet.
   `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
   permission).
 - No Save As; no file watching; no "Open Recent" in the native menu
@@ -166,11 +181,12 @@ shortcuts. Check these first if something is off.
   Source Control are the safety net).
 - `terminal/*` client capability (agent commands in our terminal panel).
 - @-mention files / selection as prompt context; image paste.
-- Session history across restarts (`session/load`), several chats, switching
-  agents or modes/models inside the panel.
-- Multi-root: pass the other roots as additional directories (v1 uses the
-  first root only).
+- Switching agents or modes/models inside the panel; chat rename.
+- Import `claude` CLI chats of the folder ("Import from Claude Code…").
+- Agent titles: the Claude adapter sends no `session_info_update` title, so
+  titles are the first prompt line.
 - Auto-retry after the login terminal exits (v1 needs a Retry click).
 - Interactive checks still owed: permission buttons against the real adapter
-  (its default mode did not ask), Install button, login flow, and typing in
-  the prompt box (the automated run could not inject keystrokes).
+  (its default mode did not ask), Install button, login flow, typing in the
+  prompt box, and the chat list popover / delete dialog (the automated run
+  could not inject keystrokes or clicks).

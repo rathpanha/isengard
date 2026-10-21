@@ -92,7 +92,7 @@ section here.
 | Component | Use for |
 | --- | --- |
 | `center_dialog(dialog, window)` | Wrap every `open_dialog` builder so the modal sits in the middle of the window (GPUI Kit defaults to top ~10%). Not for context menus. |
-| `notify_success` / `notify_error` | One-line toasts with icon + text vertically centred (workaround for Kit typed-notification icon layout). |
+| `notify_success` / `notify_error` / `notify_warning` | One-line toasts with icon + text vertically centred (workaround for Kit typed-notification icon layout). Warning = something waits on the user. |
 
 Add a row here whenever a new shared component is created.
 
@@ -194,7 +194,15 @@ Add a row here whenever a new shared component is created.
   `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
   status square (success ready, warning starting/working, danger failed,
   muted otherwise) + agent name, ghost `SquarePen` New Chat. Background
-  `theme.sidebar` like the other panels. Transcript in Kit
+  `theme.sidebar` like the other panels. Header also has a ghost
+  `MessagesSquare` chat list (Popover, 300px): rows are Kit `ListItem`s —
+  title (`text_sm`, truncated) over relative time (`text_xs` muted), active
+  row `.selected`, ghost `Trash` per row (confirm dialog: Cancel outline ·
+  Delete danger); rows and New Chat disabled while a turn runs. Empty list:
+  muted "No chats in this workspace yet." Loading a saved chat shows Spinner
+  + "Loading chat…" until the replay lands; reconnecting keeps the old
+  transcript on screen. A background workspace's agent asking for approval
+  raises a warning toast (`notify_warning`). Transcript in Kit
   `MessageScroller` (tail follow + jump-to-latest): user text in a
   `Secondary` `Bubble` aligned end; agent replies as streamed
   `TextView` markdown (selectable); thoughts muted `text_xs` with a left

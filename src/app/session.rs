@@ -107,6 +107,15 @@ impl IsengardApp {
             terminal_height: self.terminal_height,
             agent_visible: self.agent_visible,
             agent_width: self.agent_width,
+            agent_chats: self
+                .agent
+                .as_ref()
+                .map(|a| a.read(cx).chats().to_vec())
+                .unwrap_or_default(),
+            agent_active: self
+                .agent
+                .as_ref()
+                .and_then(|a| a.read(cx).active_chat().map(str::to_owned)),
         };
         self.config.put_session(key, session);
         self.config.save();
@@ -149,8 +158,10 @@ impl IsengardApp {
             DEFAULT_AGENT_WIDTH
         };
         self.agent_visible = session.agent_visible && !self.workspace.folders().is_empty();
-        if self.agent_visible {
-            self.agent.update(cx, |agent, cx| agent.ensure_started(cx));
+        if self.agent_visible
+            && let Some(agent) = &self.agent
+        {
+            agent.update(cx, |agent, cx| agent.ensure_started(cx));
         }
         self.file_tree.expand_paths(&session.expanded, cx);
         let git_statuses = session

@@ -137,7 +137,8 @@ src/
 │   │                    commands in / `AgentEvent`s out (+ reply senders)
 │   ├── registry.rs      `config.agent` command, else built-in Claude Agent
 │   ├── install.rs       app-local `npm install --prefix …/agents/claude`
-│   └── files.rs         `slice_lines` for `fs/read_text_file` ranges
+│   ├── files.rs         `slice_lines` for `fs/read_text_file` ranges
+│   └── testing.rs       (tests) in-memory `FakeAgent` + `install` hook
 ├── agent/
 │   └── panel.rs         `AgentPanel`: status, transcript (`MessageScroller`),
 │                        tool rows, permission buttons, composer
@@ -254,13 +255,32 @@ src/
   (`sidebar_width` / `sidebar_visible` / `terminal_height`); resizable
   element ids include the session key so Kit state does not leak across
   folders. `ToggleSidebar` / `⌘B`/`Ctrl+B`.
-- **Agent panel:** `IsengardApp::agent` is an `Entity<AgentPanel>`; shown as
-  the right child of `h_resizable("agent-split-{session key}")` around the
-  whole body (sidebar + editor + terminal) while a folder is open.
-  `agent_visible` / `agent_width` live on `WorkspaceSession`. The panel owns
-  `acp::AgentConnection` (lazy `ensure_started` on first show / restore) and
-  pumps its events with `cx.spawn` + `recv_async`; a `generation` counter
-  drops events from replaced connections. The connection runs the SDK's
+- **Agent panel:** one `Entity<AgentPanel>` per folder/workspace in
+  `IsengardApp::agents` (keyed by session key, with its subscription);
+  `IsengardApp::agent` is the current one, shown as the right child of
+  `h_resizable("agent-split-{session key}")` around the whole body (sidebar +
+  editor + terminal) while a folder is open. `apply_switch` →
+  `switch_agent_panel`: old panel `suspend()` (running turn continues; agent
+  dropped when it ends → `Status::Suspended`, transcript kept), new panel
+  reused from the map or created from that key's saved `agent_chats` /
+  `agent_active`. `agent_visible` / `agent_width` / chat index live on
+  `WorkspaceSession`; `ChatsChanged` from a background panel patches only
+  those fields of its saved session. The panel owns `acp::AgentConnection`
+  (lazy `ensure_started` on first show / restore / return) and pumps its
+  events with `cx.spawn` + `recv_async` (tests: `try_recv` + scheduler timer
+  — GPUI's test scheduler rejects cross-thread wakeups); a `generation`
+  counter drops events from replaced connections. Chats: after `Connected`
+  the panel sends `SessionOpen::Resume(id)` when `transcript_of` is still
+  that chat, else `Load(id)` (agent replays it as updates, user chunks
+  merged into one bubble), else `New`. One open chat per connection
+  (`session/close` the previous); updates are filtered by session id;
+  `opens_in_flight` ignores answers to superseded opens. Roots: the
+  connection gets every workspace folder (`roots[0]` = session cwd, rest =
+  `additional_directories` when the agent advertises the capability);
+  `add_folders` / remove folder call `sync_agent_roots` → `set_roots`
+  (reconnect + resume, deferred past a running turn). A new chat joins
+  the index on its first prompt; a chat that fails to load is dropped from
+  the index. The connection runs the SDK's
   connection future on a dedicated OS thread under
   `futures::executor::block_on` — no Tokio, and nothing blocks GPUI's
   executors. Requests that need the editor carry a flume reply sender and
@@ -272,8 +292,9 @@ src/
   `TerminalPanel::add_command_session` (one-off tabs are not persisted).
   `apply_switch` calls `reset_agent_for_workspace` (drops the agent: the SDK
   kills its process group). Tests: `AgentConnection::spawn_with` takes any
-  `ConnectTo<Client>`; `acp::client` tests use `Channel::duplex` + a fake
-  `Agent` builder.
+  `ConnectTo<Client>`; `acp::testing::FakeAgent` serves `Channel::duplex`
+  connections with shared chat state (new/load/resume/close/delete), and
+  `acp::testing::install` makes panels on the test thread use it.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close

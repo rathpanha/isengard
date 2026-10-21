@@ -49,8 +49,9 @@ impl IsengardApp {
             self.config.save();
         }
         if was_empty {
-            // The agent session runs in the first root.
-            self.reset_agent_for_workspace(cx);
+            self.switch_agent_panel(window, cx);
+        } else {
+            self.sync_agent_roots(cx);
         }
         self.persist_workspace(window, cx);
         self.workspace_changed(window, cx);
@@ -197,7 +198,7 @@ impl IsengardApp {
         self.focus_handle.focus(window, cx);
         self.workspace_changed(window, cx);
         self.restart_terminal_for_workspace(window, cx);
-        self.reset_agent_for_workspace(cx);
+        self.switch_agent_panel(window, cx);
         self.restore_session(window, cx);
     }
 
@@ -592,6 +593,7 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         if self.workspace.remove_folder(&action.0) {
+            self.sync_agent_roots(cx);
             self.persist_workspace(window, cx);
             self.workspace_changed(window, cx);
             self.persist_session(cx);

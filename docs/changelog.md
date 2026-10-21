@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent sees every root of a multi-root workspace (other
+  roots sent as ACP `additionalDirectories`; folder add/remove reconnects).
+- **2026-10-21** — Agent chats per folder/workspace: one panel per
+  workspace with its own chat index in `sessions` (Isengard-started chats
+  only), header chat list (open / delete), background turns finish after a
+  switch then the agent stops, return resumes without replay, restart
+  reloads via `session/load`. `acp::testing::FakeAgent` for tests;
+  `notify_warning` toast.
 - **2026-10-21** — Agent panel v1 (replaces the planned direct-API Claude
   panel): right-hand chat with external agents over the Agent Client
   Protocol (`agent-client-protocol` 3.4.0, own thread, no Tokio). Built-in

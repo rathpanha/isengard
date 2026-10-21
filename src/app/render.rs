@@ -976,7 +976,10 @@ impl IsengardApp {
     }
 
     fn show_agent_panel(&self) -> bool {
-        self.agent_visible && !self.show_welcome() && self.file_tree.is_open()
+        self.agent_visible
+            && self.agent.is_some()
+            && !self.show_welcome()
+            && self.file_tree.is_open()
     }
 
     /// Agent panel as the right child of `agent-split` (full height beside
@@ -998,7 +1001,13 @@ impl IsengardApp {
             .child(
                 resizable_panel()
                     .size(width)
-                    .child(div().size_full().min_w_0().overflow_hidden().child(self.agent.clone())),
+                    .child(
+                        div()
+                            .size_full()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .when_some(self.agent.clone(), |d, agent| d.child(agent)),
+                    ),
             )
             .into_any_element()
     }

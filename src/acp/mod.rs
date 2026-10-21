@@ -7,9 +7,14 @@ mod client;
 mod files;
 mod install;
 mod registry;
+#[cfg(test)]
+pub mod testing;
 
 pub use agent_client_protocol::schema::v1 as schema;
-pub use client::{AgentConnection, AgentEvent, FileRead, FileWrite, LoginMethod, PermissionAsk};
+pub use client::{
+    AgentConnection, AgentEvent, AgentInfo, FileRead, FileWrite, LoginMethod, PermissionAsk,
+    SessionOpen,
+};
 pub use files::slice_lines;
 pub use install::install_claude;
 pub use registry::{AgentLaunch, CLAUDE_AGENT_NAME, Resolved, resolve};

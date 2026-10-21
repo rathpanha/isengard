@@ -1,20 +1,28 @@
-//! Right-hand Agent panel: transcript + prompt box for one ACP agent session.
+//! Right-hand Agent panel: transcript + prompt box for one folder/workspace.
 //!
-//! The panel owns the [`AgentConnection`] and the transcript. Anything that
-//! touches editor state (file reads/writes, running a login in the terminal,
-//! hiding the panel) is emitted as an [`AgentPanelEvent`] for `IsengardApp`.
+//! One panel per folder/workspace (the app keeps them in a map). The panel
+//! owns its [`AgentConnection`], transcript and chat index. Switching away
+//! suspends it: a running turn finishes in the background, then the agent
+//! process stops; the transcript stays so coming back resumes the chat without
+//! a replay. Anything that touches editor state (file reads/writes, login in
+//! the terminal, hiding, persisting the chat index) is an [`AgentPanelEvent`].
 
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _,
     bubble::{Bubble, BubbleVariant},
     button::{Button, ButtonVariants as _},
+    dialog::DialogFooter,
     h_flex,
     input::{InputEvent, Textarea, TextareaState},
+    list::ListItem,
     message::{Message, MessageAlignment, MessageContent},
     message_scroller::{MessageScroller, MessageScrollerState},
+    popover::{Popover, PopoverState},
+    scroll::ScrollableElement as _,
     spinner::Spinner,
     text::{TextView, TextViewState},
     v_flex,
@@ -22,17 +30,18 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::acp::schema::{
-    ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind, PlanEntry,
-    PlanEntryStatus, SessionUpdate, StopReason, ToolCall, ToolCallId, ToolCallStatus,
+    ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
+    PlanEntry, PlanEntryStatus, SessionUpdate, StopReason, ToolCall, ToolCallId, ToolCallStatus,
     ToolCallUpdate, ToolKind,
 };
 use crate::acp::{
-    self, AgentConnection, AgentEvent, AgentLaunch, CLAUDE_AGENT_NAME, FileRead, FileWrite,
-    LoginMethod, PermissionAsk, Resolved,
+    self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
+    FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
 };
-use crate::config::AgentSettings;
+use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
+use crate::ui::components::center_dialog;
 
 /// Side effects the app performs for the panel.
 pub enum AgentPanelEvent {
@@ -41,16 +50,25 @@ pub enum AgentPanelEvent {
     /// Run the agent's login command in a terminal tab.
     Login { title: String, command: TerminalCommand },
     Hide,
+    /// Chat index or active chat changed — persist it for this workspace.
+    ChatsChanged,
+    /// A tool is waiting for approval (the app toasts if this panel is in
+    /// the background).
+    PermissionRequested,
 }
 
 #[derive(Clone)]
 enum Status {
-    /// No connection yet (or no folder open).
+    /// Not connected yet (or no folder open).
     Idle,
     NotInstalled,
     Installing,
     Starting,
+    /// Connected; creating / loading / resuming a chat.
+    Opening,
     Ready,
+    /// Workspace in the background and idle: agent stopped, transcript kept.
+    Suspended,
     LoginRequired(Vec<LoginMethod>),
     Failed(SharedString),
 }
@@ -80,14 +98,33 @@ enum Entry {
 
 pub struct AgentPanel {
     settings: AgentSettings,
-    cwd: Option<PathBuf>,
+    /// Workspace roots: the agent runs in the first, sees all of them.
+    roots: Vec<PathBuf>,
+    /// Roots changed during a turn: reconnect once it ends.
+    reconnect_after_turn: bool,
     status: Status,
     agent_name: SharedString,
+    info: Option<AgentInfo>,
     launch: Option<AgentLaunch>,
     connection: Option<AgentConnection>,
     /// Bumped per connection so events from a dropped one are ignored.
     generation: u64,
     turn_running: bool,
+    /// In the background with a turn running: stop the agent when it ends.
+    suspend_after_turn: bool,
+    /// Chats started here, newest first (persisted by the app).
+    chats: Vec<AgentChat>,
+    /// Chat shown in the panel (`None` = a new chat not yet prompted).
+    active: Option<String>,
+    /// Session the open connection is on; updates for others are dropped.
+    session: Option<String>,
+    /// What is being opened while `Status::Opening`.
+    opening: Option<SessionOpen>,
+    /// Opens sent but not answered. The agent answers in order, so only the
+    /// last answer counts (the user may click another chat mid-load).
+    opens_in_flight: usize,
+    /// Which chat `entries` belongs to (lets a reconnect resume, not replay).
+    transcript_of: Option<String>,
     entries: Vec<Entry>,
     scroller: Entity<MessageScrollerState>,
     input: Entity<TextareaState>,
@@ -97,8 +134,46 @@ pub struct AgentPanel {
 
 impl EventEmitter<AgentPanelEvent> for AgentPanel {}
 
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// First line of the first prompt, shortened — until the agent sends a title.
+fn chat_title(prompt: &str) -> String {
+    let line = prompt.lines().next().unwrap_or("").trim();
+    let mut title: String = line.chars().take(60).collect();
+    if line.chars().count() > 60 {
+        title.push('…');
+    }
+    if title.is_empty() {
+        "Untitled chat".into()
+    } else {
+        title
+    }
+}
+
+/// `just now` / `5m ago` / `3h ago` / `2d ago`.
+fn relative_time(then: u64, now: u64) -> String {
+    let secs = now.saturating_sub(then);
+    match secs {
+        0..60 => "just now".into(),
+        60..3600 => format!("{}m ago", secs / 60),
+        3600..86400 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86400),
+    }
+}
+
 impl AgentPanel {
-    pub fn new(settings: AgentSettings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        roots: Vec<PathBuf>,
+        settings: AgentSettings,
+        chats: Vec<AgentChat>,
+        active: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -112,14 +187,23 @@ impl AgentPanel {
             }
         });
         Self {
+            agent_name: default_name(&settings),
             settings,
-            cwd: None,
+            roots,
+            reconnect_after_turn: false,
             status: Status::Idle,
-            agent_name: default_name(&AgentSettings::default()),
+            info: None,
             launch: None,
             connection: None,
             generation: 0,
             turn_running: false,
+            suspend_after_turn: false,
+            chats,
+            active,
+            session: None,
+            opening: None,
+            opens_in_flight: 0,
+            transcript_of: None,
             entries: Vec::new(),
             scroller,
             input,
@@ -128,23 +212,74 @@ impl AgentPanel {
         }
     }
 
-    /// New workspace (or none): drop the agent and transcript. The next
-    /// [`Self::ensure_started`] connects in `cwd`.
-    pub fn reset(&mut self, cwd: Option<PathBuf>, settings: AgentSettings, cx: &mut Context<Self>) {
-        self.cwd = cwd;
-        self.agent_name = default_name(&settings);
-        self.settings = settings;
-        self.disconnect(cx);
-        self.status = Status::Idle;
-        self.clear_entries(cx);
-        cx.notify();
+    pub fn chats(&self) -> &[AgentChat] {
+        &self.chats
     }
 
-    /// Connect if nothing is running yet (first show for this workspace).
+    /// Active chat, only once it is in the index (a never-prompted new chat
+    /// is not worth reopening).
+    pub fn active_chat(&self) -> Option<&str> {
+        self.active
+            .as_deref()
+            .filter(|id| self.chats.iter().any(|c| c.id == *id))
+    }
+
+    /// Connect (or reconnect after a suspend) if nothing is running.
     pub fn ensure_started(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.status, Status::Idle) {
+        self.suspend_after_turn = false;
+        if matches!(self.status, Status::Idle | Status::Suspended) {
             self.start(cx);
         }
+    }
+
+    /// Folders were added to / removed from this workspace. A live agent
+    /// reconnects (resuming the chat) so it sees the new set of roots.
+    pub fn set_roots(&mut self, roots: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if roots == self.roots {
+            return;
+        }
+        self.roots = roots;
+        if self.turn_running {
+            self.reconnect_after_turn = true;
+        } else if self.connection.is_some() {
+            self.start(cx);
+        }
+    }
+
+    /// The workspace went to the background. A running turn keeps going; the
+    /// agent stops once idle. The transcript stays for a later resume.
+    pub fn suspend(&mut self, cx: &mut Context<Self>) {
+        if self.turn_running {
+            self.suspend_after_turn = true;
+        } else if self.connection.is_some() {
+            self.disconnect(cx);
+            self.status = Status::Suspended;
+            cx.notify();
+        }
+    }
+
+    /// `"you: …"` / `"agent: …"` lines of the transcript (tests).
+    #[cfg(test)]
+    pub fn transcript(&self, cx: &App) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::User(text) => Some(format!("you: {text}")),
+                Entry::Agent(state) => Some(format!("agent: {}", state.read(cx).rendered_text().source())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Background-idle with its agent stopped (tests).
+    #[cfg(test)]
+    pub fn is_suspended(&self) -> bool {
+        matches!(self.status, Status::Suspended) && self.connection.is_none()
+    }
+
+    #[cfg(test)]
+    pub fn is_ready(&self) -> bool {
+        matches!(self.status, Status::Ready) && !self.turn_running
     }
 
     /// Prompt box (the app focuses it when showing the panel).
@@ -158,11 +293,17 @@ impl AgentPanel {
 
     fn start(&mut self, cx: &mut Context<Self>) {
         self.disconnect(cx);
-        let Some(cwd) = self.cwd.clone() else {
+        if self.roots.is_empty() {
             self.status = Status::Idle;
             cx.notify();
             return;
-        };
+        }
+        let roots = self.roots.clone();
+        #[cfg(test)]
+        if let Some(connection) = acp::testing::connection(roots.clone()) {
+            self.attach(connection, cx);
+            return;
+        }
         let launch = match acp::resolve(&self.settings) {
             Resolved::Launch(launch) => launch,
             Resolved::ClaudeNotInstalled => {
@@ -171,15 +312,21 @@ impl AgentPanel {
                 return;
             }
         };
-        let connection = AgentConnection::spawn(&launch, cwd);
-        let events = connection.events.clone();
+        let connection = AgentConnection::spawn(&launch, roots);
         self.launch = Some(launch);
+        self.attach(connection, cx);
+    }
+
+    /// Pump `connection`'s events into this panel (tests attach fakes here).
+    pub fn attach(&mut self, connection: AgentConnection, cx: &mut Context<Self>) {
+        self.disconnect(cx);
+        let events = connection.events.clone();
         self.connection = Some(connection);
         self.status = Status::Starting;
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         cx.spawn(async move |this, cx| {
-            while let Ok(event) = events.recv_async().await {
+            while let Some(event) = next_event(&events, cx).await {
                 let alive = this
                     .update(cx, |this, cx| {
                         if this.generation == generation {
@@ -199,14 +346,142 @@ impl AgentPanel {
     /// Drop the connection (kills the agent) and cancel open prompts.
     fn disconnect(&mut self, cx: &mut Context<Self>) {
         self.connection = None;
+        self.session = None;
+        self.opening = None;
+        self.opens_in_flight = 0;
         self.generation = self.generation.wrapping_add(1);
         self.turn_running = false;
         self.cancel_pending_permissions(cx);
     }
 
-    fn restart(&mut self, cx: &mut Context<Self>) {
-        self.clear_entries(cx);
+    /// Ask the connected agent to open the active chat (or a new one).
+    fn open_active(&mut self, cx: &mut Context<Self>) {
+        let Some(info) = self.info.clone() else {
+            return;
+        };
+        if self.connection.is_none() {
+            return;
+        }
+        let open = match self.active_chat().map(str::to_owned) {
+            // Same transcript still on screen: no replay needed.
+            Some(id) if info.can_resume && self.transcript_of.as_deref() == Some(id.as_str()) => {
+                SessionOpen::Resume(id)
+            }
+            Some(id) if info.can_load => SessionOpen::Load(id),
+            _ => SessionOpen::New,
+        };
+        if !matches!(open, SessionOpen::Resume(_)) {
+            self.clear_entries(cx);
+            self.transcript_of = None;
+        }
+        // Replayed updates carry the chat's id before the open completes.
+        self.session = match &open {
+            SessionOpen::Load(id) | SessionOpen::Resume(id) => Some(id.clone()),
+            SessionOpen::New => None,
+        };
+        if let Some(connection) = &self.connection {
+            connection.open(open.clone());
+            self.opens_in_flight += 1;
+        }
+        self.opening = Some(open);
+        self.status = Status::Opening;
+        cx.notify();
+    }
+
+    /// Retry after a failure / login: reconnect, keeping the active chat.
+    fn retry(&mut self, cx: &mut Context<Self>) {
         self.start(cx);
+    }
+
+    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.turn_running {
+            return;
+        }
+        self.active = None;
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        if matches!(self.status, Status::Ready | Status::Opening) {
+            self.open_active(cx);
+        } else {
+            self.clear_entries(cx);
+            self.transcript_of = None;
+            self.start(cx);
+        }
+        self.focus_input(window, cx);
+    }
+
+    fn switch_chat(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.turn_running || self.active.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        self.active = Some(id);
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        if matches!(self.status, Status::Ready | Status::Opening) {
+            self.open_active(cx);
+        } else {
+            self.start(cx);
+        }
+        self.focus_input(window, cx);
+    }
+
+    fn confirm_delete_chat(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let title = self
+            .chats
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.title.clone())
+            .unwrap_or_default();
+        let panel = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, window, _| {
+            let panel = panel.clone();
+            let id = id.clone();
+            center_dialog(
+                dialog
+                    .title("Delete chat?")
+                    .child(format!("“{title}” will be deleted from the agent's history."))
+                    .footer(
+                        DialogFooter::new()
+                            .gap_2()
+                            .child(
+                                Button::new("dialog-cancel")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(|_, window, cx| window.close_dialog(cx)),
+                            )
+                            .child(
+                                Button::new("dialog-primary")
+                                    .cursor_pointer()
+                                    .danger()
+                                    .label("Delete")
+                                    .on_click(move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let id = id.clone();
+                                        _ = panel.update(cx, |this, cx| {
+                                            this.delete_chat(id, window, cx);
+                                        });
+                                    }),
+                            ),
+                    ),
+                window,
+            )
+        });
+    }
+
+    fn delete_chat(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.turn_running && self.active.as_deref() == Some(id.as_str()) {
+            return;
+        }
+        if let Some(connection) = &self.connection
+            && self.info.as_ref().is_some_and(|i| i.can_delete)
+        {
+            connection.delete(id.clone());
+        }
+        self.chats.retain(|c| c.id != id);
+        if self.active.as_deref() == Some(id.as_str()) {
+            self.new_chat(window, cx);
+        }
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        cx.notify();
     }
 
     fn install(&mut self, cx: &mut Context<Self>) {
@@ -258,16 +533,34 @@ impl AgentPanel {
         if text.is_empty() {
             return;
         }
-        let Some(connection) = &self.connection else {
+        let (Some(connection), Some(session)) = (&self.connection, self.session.clone()) else {
             return;
         };
         connection.prompt(text.clone());
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
         self.turn_running = true;
+        self.touch_chat(&session, Some(&text));
+        cx.emit(AgentPanelEvent::ChatsChanged);
         self.push_entry(Entry::User(text.into()), cx);
         // Show the reply even if the user had scrolled up.
         self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
         cx.notify();
+    }
+
+    /// Move `id` to the front of the index (adding it on its first prompt).
+    fn touch_chat(&mut self, id: &str, first_prompt: Option<&str>) {
+        let mut chat = match self.chats.iter().position(|c| c.id == id) {
+            Some(ix) => self.chats.remove(ix),
+            None => AgentChat {
+                id: id.to_owned(),
+                title: chat_title(first_prompt.unwrap_or("")),
+                updated: 0,
+            },
+        };
+        chat.updated = now_secs();
+        self.chats.insert(0, chat);
+        self.chats.truncate(MAX_AGENT_CHATS);
+        self.active = Some(id.to_owned());
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
@@ -308,15 +601,63 @@ impl AgentPanel {
         cx.notify();
     }
 
+    fn turn_finished(&mut self, cx: &mut Context<Self>) {
+        self.turn_running = false;
+        if std::mem::take(&mut self.reconnect_after_turn) && !self.suspend_after_turn {
+            self.start(cx);
+        } else if self.suspend_after_turn {
+            self.suspend_after_turn = false;
+            self.disconnect(cx);
+            self.status = Status::Suspended;
+        }
+    }
+
+    /// Count an open's answer; `true` if a newer open is still pending.
+    fn take_stale_open(&mut self) -> bool {
+        self.opens_in_flight = self.opens_in_flight.saturating_sub(1);
+        self.opens_in_flight > 0
+    }
+
     fn handle_event(&mut self, event: AgentEvent, cx: &mut Context<Self>) {
         match event {
-            AgentEvent::Ready { agent_name } => {
-                self.agent_name = agent_name.into();
+            AgentEvent::Connected(info) => {
+                self.agent_name = info.name.clone().into();
+                self.info = Some(info);
+                self.open_active(cx);
+            }
+            AgentEvent::SessionOpened { .. } | AgentEvent::SessionOpenFailed { .. }
+                if self.take_stale_open() => {}
+            AgentEvent::SessionOpened { id } => {
+                self.session = Some(id.clone());
+                self.transcript_of = Some(id.clone());
+                // A brand-new chat is active but stays out of the index (and
+                // so is not reopened) until its first prompt.
+                self.active = Some(id);
+                self.opening = None;
                 self.status = Status::Ready;
             }
-            AgentEvent::Update(update) => self.apply_update(update, cx),
+            AgentEvent::SessionOpenFailed { open, message } => {
+                self.opening = None;
+                match open {
+                    SessionOpen::Load(id) | SessionOpen::Resume(id) => {
+                        // Deleted outside Isengard (or never stored): forget it.
+                        log::warn!("agent: could not reopen chat {id}: {message}");
+                        self.chats.retain(|c| c.id != id);
+                        self.active = None;
+                        self.transcript_of = None;
+                        cx.emit(AgentPanelEvent::ChatsChanged);
+                        self.open_active(cx);
+                        self.push_notice("That chat is no longer available.", false, cx);
+                    }
+                    SessionOpen::New => self.status = Status::Failed(message.into()),
+                }
+            }
+            AgentEvent::Update { session, update } => {
+                if self.session.as_deref() == Some(session.as_str()) {
+                    self.apply_update(update, cx);
+                }
+            }
             AgentEvent::TurnEnded(reason) => {
-                self.turn_running = false;
                 let note = match reason {
                     StopReason::EndTurn => None,
                     StopReason::Cancelled => Some("Stopped."),
@@ -328,20 +669,24 @@ impl AgentPanel {
                 if let Some(note) = note {
                     self.push_notice(note, false, cx);
                 }
+                self.turn_finished(cx);
             }
             AgentEvent::TurnFailed(message) => {
-                self.turn_running = false;
                 self.push_notice(message, true, cx);
+                self.turn_finished(cx);
             }
             AgentEvent::AuthRequired(methods) => {
                 self.disconnect(cx);
                 self.status = Status::LoginRequired(methods);
             }
-            AgentEvent::Permission(ask) => self.ask_permission(ask, cx),
+            AgentEvent::Permission(ask) => {
+                self.ask_permission(ask, cx);
+                cx.emit(AgentPanelEvent::PermissionRequested);
+            }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
             AgentEvent::Closed(error) => {
-                if !matches!(self.status, Status::LoginRequired(_)) {
+                if !matches!(self.status, Status::LoginRequired(_) | Status::Suspended) {
                     let message = error.unwrap_or_else(|| "The agent exited.".into());
                     self.status = Status::Failed(message.into());
                 }
@@ -373,9 +718,35 @@ impl AgentPanel {
                     self.push_entry(Entry::Plan(plan.entries), cx);
                 }
             }
-            // User chunks only replay on session load (not used); the rest is
-            // metadata the v1 panel does not show.
+            // Only arrives while `session/load` replays history.
+            SessionUpdate::UserMessageChunk(chunk) => {
+                if let Some(text) = block_text(&chunk.content) {
+                    self.append_user(&text, cx);
+                }
+            }
+            SessionUpdate::SessionInfoUpdate(info) => {
+                if let (Some(title), Some(id)) = (info.title.take(), self.session.clone())
+                    && let Some(chat) = self.chats.iter_mut().find(|c| c.id == id)
+                    && chat.title != title
+                {
+                    chat.title = title;
+                    cx.emit(AgentPanelEvent::ChatsChanged);
+                }
+            }
+            // Metadata the panel does not show.
             _ => {}
+        }
+    }
+
+    /// Replayed user chunks merge into one bubble.
+    fn append_user(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.entries.len().checked_sub(1)
+            && let Entry::User(existing) = &self.entries[ix]
+        {
+            self.entries[ix] = Entry::User(format!("{existing}{text}").into());
+            self.touched(ix, cx);
+        } else {
+            self.push_entry(Entry::User(text.to_owned().into()), cx);
         }
     }
 
@@ -519,6 +890,29 @@ impl AgentPanel {
     fn clear_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
         self.scroller.update(cx, |s, cx| s.reset(0, cx));
+    }
+}
+
+/// Next agent event, or `None` once the connection is gone.
+#[cfg(not(test))]
+async fn next_event(events: &flume::Receiver<AgentEvent>, _: &mut AsyncApp) -> Option<AgentEvent> {
+    events.recv_async().await.ok()
+}
+
+/// GPUI's test scheduler rejects wakeups from other threads (the agent
+/// thread), so tests poll on the scheduler's own clock instead.
+#[cfg(test)]
+async fn next_event(events: &flume::Receiver<AgentEvent>, cx: &mut AsyncApp) -> Option<AgentEvent> {
+    loop {
+        match events.try_recv() {
+            Ok(event) => return Some(event),
+            Err(flume::TryRecvError::Disconnected) => return None,
+            Err(flume::TryRecvError::Empty) => {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(5))
+                    .await
+            }
+        }
     }
 }
 
@@ -738,7 +1132,8 @@ impl AgentPanel {
             Status::Failed(_) => theme.danger,
             _ => theme.muted_foreground,
         };
-        let can_new_chat = matches!(self.status, Status::Ready | Status::Failed(_));
+        let can_new_chat =
+            !self.turn_running && matches!(self.status, Status::Ready | Status::Failed(_));
         h_flex()
             .w_full()
             .h(px(theme::PANEL_HEADER_ROW_H))
@@ -765,11 +1160,11 @@ impl AgentPanel {
                     .tooltip("New Chat")
                     .disabled(!can_new_chat)
                     .when(can_new_chat, |b| b.cursor_pointer())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.restart(cx);
-                        this.focus_input(window, cx);
-                    })),
+                    .on_click(cx.listener(|this, _, window, cx| this.new_chat(window, cx))),
             )
+            .when(self.info.as_ref().is_none_or(|i| i.can_load), |row| {
+                row.child(self.render_history(cx))
+            })
             .child(
                 Button::new("agent-hide")
                     .ghost()
@@ -779,6 +1174,101 @@ impl AgentPanel {
                     .tooltip("Hide Agent Panel")
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(AgentPanelEvent::Hide))),
             )
+            .into_any_element()
+    }
+
+    /// Past chats of this folder/workspace (newest first).
+    fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
+        let panel = cx.entity().downgrade();
+        let chats = self.chats.clone();
+        let active = self.active.clone();
+        let busy = self.turn_running;
+        Popover::new("agent-history")
+            .anchor(Anchor::TopRight)
+            .trigger(
+                Button::new("agent-history-button")
+                    .ghost()
+                    .small()
+                    .cursor_pointer()
+                    .icon(LucideIcon::MessagesSquare)
+                    .tooltip("Chat History"),
+            )
+            .content(move |_state: &mut PopoverState, _, cx| {
+                let popover = cx.weak_entity();
+                let theme = cx.theme();
+                let now = now_secs();
+                v_flex()
+                    .w(px(300.))
+                    .max_h(px(360.))
+                    .overflow_y_scrollbar()
+                    .when(chats.is_empty(), |col| {
+                        col.child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("No chats in this workspace yet."),
+                        )
+                    })
+                    .children(chats.iter().map(|chat| {
+                        let selected = active.as_deref() == Some(chat.id.as_str());
+                        let (open_panel, delete_panel) = (panel.clone(), panel.clone());
+                        let (open_popover, delete_popover) = (popover.clone(), popover.clone());
+                        let (open_id, delete_id) = (chat.id.clone(), chat.id.clone());
+                        ListItem::new(SharedString::from(format!("agent-chat-{}", chat.id)))
+                            .selected(selected)
+                            .disabled(busy)
+                            .when(!busy, |row| row.cursor_pointer())
+                            .on_click(move |_, window, cx| {
+                                if let Some(p) = open_popover.upgrade() {
+                                    p.update(cx, |p, cx| p.dismiss(window, cx));
+                                }
+                                let id = open_id.clone();
+                                _ = open_panel.update(cx, |this, cx| this.switch_chat(id, window, cx));
+                            })
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(div().text_sm().truncate().child(chat.title.clone()))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(relative_time(chat.updated, now)),
+                                            ),
+                                    )
+                                    .child(
+                                        Button::new(SharedString::from(format!(
+                                            "agent-chat-delete-{}",
+                                            chat.id
+                                        )))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(LucideIcon::Trash)
+                                        .tooltip("Delete Chat")
+                                        .disabled(busy && selected)
+                                        .when(!(busy && selected), |b| b.cursor_pointer())
+                                        .on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(p) = delete_popover.upgrade() {
+                                                p.update(cx, |p, cx| p.dismiss(window, cx));
+                                            }
+                                            let id = delete_id.clone();
+                                            _ = delete_panel.update(cx, |this, cx| {
+                                                this.confirm_delete_chat(id, window, cx);
+                                            });
+                                        }),
+                                    ),
+                            )
+                    }))
+            })
             .into_any_element()
     }
 
@@ -797,10 +1287,18 @@ impl AgentPanel {
         let title = |text: SharedString| div().text_sm().child(text);
         let hint = |text: SharedString| div().text_xs().text_color(muted).child(text);
         match &self.status {
-            Status::Idle if self.cwd.is_none() => col
+            Status::Idle if self.roots.is_empty() => col
                 .child(hint("Open a folder to use the agent.".into()))
                 .into_any_element(),
-            Status::Idle | Status::Starting | Status::Ready => col
+            Status::Opening if matches!(self.opening, Some(SessionOpen::Load(_))) => col
+                .child(Spinner::new())
+                .child(hint("Loading chat…".into()))
+                .into_any_element(),
+            Status::Idle
+            | Status::Starting
+            | Status::Opening
+            | Status::Suspended
+            | Status::Ready => col
                 .child(Spinner::new())
                 .child(hint(format!("Starting {name}…").into()))
                 .into_any_element(),
@@ -857,7 +1355,7 @@ impl AgentPanel {
                         .cursor_pointer()
                         .icon(LucideIcon::RotateCw)
                         .label("Retry")
-                        .on_click(cx.listener(|this, _, _, cx| this.restart(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
                 )
                 .into_any_element(),
             Status::Failed(message) => col
@@ -875,7 +1373,7 @@ impl AgentPanel {
                         .cursor_pointer()
                         .icon(LucideIcon::RotateCw)
                         .label("Retry")
-                        .on_click(cx.listener(|this, _, _, cx| this.restart(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
                 )
                 .into_any_element(),
         }
@@ -959,6 +1457,13 @@ impl AgentPanel {
 impl Render for AgentPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ready = matches!(self.status, Status::Ready);
+        // Keep the transcript on screen while reconnecting / replaying into it.
+        let show_transcript = ready
+            || (!self.entries.is_empty()
+                && matches!(
+                    self.status,
+                    Status::Starting | Status::Opening | Status::Suspended
+                ));
         v_flex()
             .id("agent-panel")
             .size_full()
@@ -970,7 +1475,7 @@ impl Render for AgentPanel {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .child(if ready {
+                    .child(if show_transcript {
                         self.render_transcript(cx)
                     } else {
                         self.render_state(cx)

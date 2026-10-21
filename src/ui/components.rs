@@ -37,6 +37,11 @@ pub fn notify_error(message: impl Into<SharedString>, window: &mut Window, cx: &
     notify_with_icon(message, IconName::CircleX, |cx| cx.theme().danger, window, cx);
 }
 
+/// Attention toast (something is waiting on the user). See [`notify_success`].
+pub fn notify_warning(message: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+    notify_with_icon(message, IconName::TriangleAlert, |cx| cx.theme().warning, window, cx);
+}
+
 fn notify_with_icon(
     message: impl Into<SharedString>,
     icon: IconName,
