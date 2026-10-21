@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — `@` fuzzy search gives each workspace root its own walk
+  budget so a huge primary folder cannot hide files in secondary roots.
+- **2026-10-21** — Agent image attach re-encodes ICO/BMP/TIFF to PNG so
+  Claude can read favicons and similar (UI thumb still uses the original).
 - **2026-10-21** — `@` can attach multi-root workspace folders themselves
   (`@royal5g-system`); Harness UI test opens a two-root mock workspace.
 - **2026-10-21** — `@` mention walk is plain FS (not gitignore) so nested

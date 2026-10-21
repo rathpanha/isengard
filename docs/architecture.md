@@ -298,10 +298,12 @@ src/
   `activity_label` shows the in-progress tool title (or Thinking / Writing)
   while a turn runs.   Composer attachments (`agent::mention` + `agent::prompt`): `@` opens a
   filtered file/folder menu from workspace roots (plain FS walk + `SKIP_DIRS`,
-  not gitignore — nested dirs stay reachable; empty query lists nested dirs +
-  root files; trailing `/` browses a folder; else fuzzy, capped); pick emits
+  not gitignore; each root gets a fair fuzzy-walk budget so secondary roots
+  stay searchable; empty query lists roots + nested dirs + root files;
+  trailing `/` browses a folder; else fuzzy, capped); pick emits
   `AttachPath` (buffer-first read; raster paths →
-  `image_from_path` → ACP `image` + thumbnail). Paperclip →
+  `image_from_path` → ACP `image` + thumbnail; ICO/BMP/TIFF re-encoded to
+  PNG for the wire). Paperclip →
   `prompt_for_paths` (OS multi-file; `directories: false` — folders via `@`)
   → same attach path (each image is a separate chip). Composer mounts during
   `Starting`/`Opening` when a transcript exists (Send gated on `Ready`).

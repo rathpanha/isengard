@@ -82,7 +82,7 @@ many to list; `cargo tree` is the full graph).
 | `cc` | Build pin for tree-sitter/SQL + Windows resource embed |
 | `embed-resource` | Windows `.exe` icon (build) |
 | `objc2` / `objc2-app-kit` / `objc2-foundation` | macOS Dock icon at runtime |
-| `image` | Decode PNG for `WindowOptions::icon` (X11) |
+| `image` | Decode PNG for `WindowOptions::icon` (X11); re-encode ICO/BMP/TIFF → PNG for ACP agent image blocks |
 | `tempfile` | Tests only |
 
 Packaging metadata targets [cargo-bundle](https://github.com/burtonageo/cargo-bundle)

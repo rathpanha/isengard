@@ -110,7 +110,8 @@ tabs, highlighted editor, status bar):
   image or paths. Composer is shown while history loads / session opens
   (Send disabled until Ready) to avoid layout jump. Files embed when
   allowed; folders are resource links;
-  images go as ACP `image` when the agent allows. Agent file reads use the open buffer
+  images go as ACP `image` when the agent allows (ICO/BMP/TIFF re-encoded to
+  PNG for Claude). Agent file reads use the open buffer
   (unsaved text) before disk; writes go to disk and reload the open tab as
   saved. Visibility + width persist per workspace. Shell tools run inside
   Claude Agent (not Isengard's Terminal panel) — ACP client `terminal/*` is

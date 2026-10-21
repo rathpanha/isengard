@@ -26,7 +26,8 @@ ropey = "1"
 open = "5"
 
 # Decode `icon-1024.png` for Linux/X11 `WindowOptions::icon` (and tests).
-image = { version = "0.25", default-features = false, features = ["png"] }
+# png for window icon; ico/bmp/tiff/jpeg/gif/webp decode → PNG for ACP agent images
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
 trash = "5"
 regex = "1"
 aho-corasick = "1"

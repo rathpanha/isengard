@@ -501,6 +501,13 @@ fn agent_at_mention_matches_multi_root_folder(cx: &mut TestAppContext) {
         labels.iter().any(|l| l == "royal5g-system"),
         "filter must match workspace root, got {labels:?}"
     );
+
+    h.agent_composer("@note", cx);
+    let labels = h.agent_mention_labels(cx);
+    assert!(
+        labels.iter().any(|l| l.contains("note")),
+        "search inside non-primary root must work, got {labels:?}"
+    );
 }
 
 #[gpui_kit::test]

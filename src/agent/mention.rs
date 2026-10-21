@@ -106,7 +106,9 @@ pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<Mentio
         }
     }
 
-    // Fuzzy: workspace roots first (exact name match), then tree paths.
+    // Fuzzy: workspace roots first, then each root's tree with a fair budget
+    // so a huge primary folder cannot starve secondary roots (the user can
+    // `@` a non-primary root but never find files inside it).
     let mut hits = Vec::new();
     for root in roots {
         if !root.exists() {
@@ -125,34 +127,52 @@ pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<Mentio
             });
         }
     }
-    let mut walked = 0usize;
-    walk_workspace(roots, |root, path, is_dir, _depth| {
-        walked += 1;
-        if walked > MAX_MENTION_WALK {
-            return false;
-        }
-        let Ok(rel) = path.strip_prefix(root) else {
-            return true;
-        };
-        let label = display_label(roots, root, rel);
-        let label_lower = label.to_ascii_lowercase();
-        let matches = label_lower.contains(&query_lower)
-            || label_lower
-                .rsplit('/')
-                .next()
-                .is_some_and(|name| name.contains(&query_lower));
-        if matches {
-            hits.push(Scored {
-                rank: score(&label_lower, &query_lower),
-                hit: MentionHit {
-                    path: path.to_path_buf(),
-                    label,
-                    is_dir,
-                },
-            });
-        }
-        hits.len() < MAX_MENTION_WALK
-    });
+    let live: Vec<_> = roots.iter().filter(|r| r.exists()).collect();
+    // Typing `royal5g-system/…` scopes the walk to that root with the full budget.
+    let scoped: Vec<_> = live
+        .iter()
+        .copied()
+        .filter(|root| {
+            let name = file_name(root).to_ascii_lowercase();
+            query_lower == name || query_lower.starts_with(&format!("{name}/"))
+        })
+        .collect();
+    let search_roots: &[_] = if scoped.is_empty() { &live } else { &scoped };
+    let per_root = if scoped.len() == 1 {
+        MAX_MENTION_WALK
+    } else {
+        (MAX_MENTION_WALK / search_roots.len().max(1)).max(400)
+    };
+    for root in search_roots {
+        let mut walked = 0usize;
+        walk_one_root(root, |root, path, is_dir, _depth| {
+            walked += 1;
+            if walked > per_root {
+                return false;
+            }
+            let Ok(rel) = path.strip_prefix(root) else {
+                return true;
+            };
+            let label = display_label(roots, root, rel);
+            let label_lower = label.to_ascii_lowercase();
+            let matches = label_lower.contains(&query_lower)
+                || label_lower
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.contains(&query_lower));
+            if matches {
+                hits.push(Scored {
+                    rank: score(&label_lower, &query_lower),
+                    hit: MentionHit {
+                        path: path.to_path_buf(),
+                        label,
+                        is_dir,
+                    },
+                });
+            }
+            true
+        });
+    }
     hits.sort_by(|a, b| {
         a.rank
             .cmp(&b.rank)
@@ -274,87 +294,91 @@ fn score(label_lower: &str, query_lower: &str) -> u8 {
     }
 }
 
-/// Depth-first walk of workspace roots. Skips [`SKIP_DIRS`] by name only (no
-/// gitignore) so nested folders stay visible. `visit` returns `false` to stop.
-fn walk_workspace(
-    roots: &[PathBuf],
-    mut visit: impl FnMut(&Path, &Path, bool, usize) -> bool,
-) {
-    for root in roots {
-        if !root.exists() {
+/// Depth-first walk of one workspace root. Skips [`SKIP_DIRS`] by name only.
+/// `visit` returns `false` to stop this root early.
+fn walk_one_root(root: &Path, mut visit: impl FnMut(&Path, &Path, bool, usize) -> bool) {
+    if !root.exists() {
+        return;
+    }
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
             continue;
-        }
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(dir) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&dir) else {
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        // Dirs first so nested folders are visited early under the walk cap.
+        entries.sort_by_key(|e| {
+            (
+                !e.file_type().map(|t| t.is_dir()).unwrap_or(false),
+                e.file_name(),
+            )
+        });
+        let mut child_dirs = Vec::new();
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let path = entry.path();
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir && SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(root) else {
                 continue;
             };
-            let mut entries: Vec<_> = rd.flatten().collect();
-            // Dirs first so nested folders are visited early under the walk cap.
-            entries.sort_by_key(|e| {
-                (
-                    !e.file_type().map(|t| t.is_dir()).unwrap_or(false),
-                    e.file_name(),
-                )
-            });
-            // Push dirs in reverse so pop order is alphabetical.
-            let mut child_dirs = Vec::new();
-            for entry in entries {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                let path = entry.path();
-                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                if is_dir && SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
-                    continue;
-                }
-                let Ok(rel) = path.strip_prefix(root) else {
-                    continue;
-                };
-                let depth = rel.components().count();
-                if !visit(root, &path, is_dir, depth) {
-                    return;
-                }
-                if is_dir {
-                    child_dirs.push(path);
-                }
+            let depth = rel.components().count();
+            if !visit(root, &path, is_dir, depth) {
+                return;
             }
-            for d in child_dirs.into_iter().rev() {
-                stack.push(d);
+            if is_dir {
+                child_dirs.push(path);
             }
+        }
+        for d in child_dirs.into_iter().rev() {
+            stack.push(d);
         }
     }
 }
 
-/// Empty `@`: workspace roots, then nested folders, then root-level files.
+/// Empty `@`: workspace roots, then nested folders (fair share per root), then
+/// root-level files.
 fn list_initial_mentions(roots: &[PathBuf], limit: usize) -> Vec<MentionHit> {
-    let mut hits: Vec<_> = roots
+    let live: Vec<_> = roots.iter().filter(|r| r.exists()).cloned().collect();
+    let mut hits: Vec<_> = live
         .iter()
-        .filter(|r| r.exists())
         .map(|root| MentionHit {
             path: root.clone(),
             label: file_name(root),
             is_dir: true,
         })
         .collect();
+    let remaining = limit.saturating_sub(hits.len());
+    let per_root_dirs = (remaining / live.len().max(1)).max(1);
     let mut dirs = Vec::new();
     let mut root_files = Vec::new();
-    walk_workspace(roots, |root, path, is_dir, depth| {
-        let Ok(rel) = path.strip_prefix(root) else {
-            return true;
-        };
-        let label = display_label(roots, root, rel);
-        let hit = MentionHit {
-            path: path.to_path_buf(),
-            label,
-            is_dir,
-        };
-        if is_dir {
-            dirs.push((depth, hit));
-        } else if depth == 1 {
-            root_files.push(hit);
-        }
-        hits.len() + dirs.len() < limit
-    });
+    for root in &live {
+        let mut taken = 0usize;
+        walk_one_root(root, |root, path, is_dir, depth| {
+            let Ok(rel) = path.strip_prefix(root) else {
+                return true;
+            };
+            let label = display_label(roots, root, rel);
+            let hit = MentionHit {
+                path: path.to_path_buf(),
+                label,
+                is_dir,
+            };
+            if is_dir {
+                if taken >= per_root_dirs {
+                    return false;
+                }
+                dirs.push((depth, hit));
+                taken += 1;
+            } else if depth == 1 {
+                root_files.push(hit);
+            }
+            true
+        });
+    }
     dirs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.cmp(&b.1.label)));
     root_files.sort_by(|a, b| a.label.cmp(&b.label));
     hits.extend(dirs.into_iter().map(|(_, h)| h));
@@ -535,6 +559,31 @@ mod tests {
         assert!(
             browsed.iter().any(|h| h.label.ends_with("readme.md")),
             "trailing slash browses inside the root, got {browsed:?}"
+        );
+    }
+
+    /// A huge primary root must not starve fuzzy search in a secondary root.
+    #[test]
+    fn fuzzy_reaches_secondary_root_when_primary_is_huge() {
+        let dir = tempfile::tempdir().unwrap();
+        let primary = dir.path().join("primary");
+        let secondary = dir.path().join("secondary");
+        fs::create_dir(&primary).unwrap();
+        fs::create_dir(&secondary).unwrap();
+        for i in 0..(MAX_MENTION_WALK + 100) {
+            fs::write(primary.join(format!("pad{i}.txt")), "x").unwrap();
+        }
+        fs::write(secondary.join("needle.rs"), "fn x() {}").unwrap();
+        let roots = vec![primary, secondary];
+        let hits = list_mentions(&roots, "needle", 8);
+        assert!(
+            hits.iter().any(|h| h.label.contains("needle")),
+            "secondary-root file must match despite huge primary, got {hits:?}"
+        );
+        let scoped = list_mentions(&roots, "secondary/needle", 8);
+        assert!(
+            scoped.iter().any(|h| h.label.contains("needle")),
+            "scoped query must find secondary file, got {scoped:?}"
         );
     }
 }

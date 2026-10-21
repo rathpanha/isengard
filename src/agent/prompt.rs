@@ -85,9 +85,13 @@ pub fn line_at_offset(text: &str, offset: usize) -> u32 {
     line as u32
 }
 
+/// MIME types Claude ACP / vision models reliably accept.
+const AGENT_IMAGE_MIMES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
+
 pub fn image_from_bytes(mime: &str, bytes: &[u8], label: impl Into<String>) -> Attachment {
+    let (mime, bytes) = normalize_for_agent(mime, bytes);
     Attachment::Image {
-        mime: mime.to_owned(),
+        mime,
         data_b64: B64.encode(bytes),
         label: label.into(),
         path: None,
@@ -95,18 +99,44 @@ pub fn image_from_bytes(mime: &str, bytes: &[u8], label: impl Into<String>) -> A
 }
 
 /// Load a raster image from disk for ACP `image` blocks + UI thumbnails.
+///
+/// UI preview uses `path` (original file). Wire bytes are normalized to an
+/// agent-safe format (e.g. favicon `.ico` → PNG) so Claude can decode them.
 pub fn image_from_path(path: &Path) -> Option<Attachment> {
     let mime = crate::editor::document::image_mime(path)?;
     if !path.is_file() {
         return None;
     }
     let bytes = std::fs::read(path).ok()?;
+    let (mime, bytes) = normalize_for_agent(mime, &bytes);
     Some(Attachment::Image {
-        mime: mime.to_owned(),
+        mime,
         data_b64: B64.encode(bytes),
         label: file_label(path),
         path: Some(path.to_path_buf()),
     })
+}
+
+/// Keep PNG/JPEG/GIF/WebP as-is; re-encode ICO/BMP/TIFF (etc.) to PNG.
+fn normalize_for_agent(mime: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+    if AGENT_IMAGE_MIMES.iter().any(|m| mime.eq_ignore_ascii_case(m)) {
+        return (mime.to_owned(), bytes.to_vec());
+    }
+    match reencode_png(bytes) {
+        Some(png) => ("image/png".to_owned(), png),
+        None => (mime.to_owned(), bytes.to_vec()),
+    }
+}
+
+fn reencode_png(bytes: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let mut out = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut out),
+        image::ImageFormat::Png,
+    )
+    .ok()?;
+    Some(out)
 }
 
 /// Assemble prompt blocks: attachments first (context), then the user text.
@@ -298,6 +328,48 @@ mod tests {
         }
         assert!(image_from_path(dir.path()).is_none());
         assert!(image_from_path(&dir.path().join("a.rs")).is_none());
+    }
+
+    #[test]
+    fn favicon_ico_is_sent_as_png() {
+        let mut rgba = image::RgbaImage::new(16, 16);
+        for px in rgba.pixels_mut() {
+            *px = image::Rgba([0x20, 0x40, 0xc0, 0xff]);
+        }
+        let img = image::DynamicImage::ImageRgba8(rgba);
+        let mut ico = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut ico), image::ImageFormat::Ico)
+            .expect("encode ico");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("favicon.ico");
+        std::fs::write(&path, &ico).unwrap();
+
+        let att = image_from_path(&path).expect("ico attachment");
+        let Attachment::Image {
+            mime,
+            data_b64,
+            path: Some(p),
+            ..
+        } = att
+        else {
+            panic!("expected Image with path");
+        };
+        assert_eq!(p, path, "UI thumb still points at the .ico");
+        assert_eq!(mime, "image/png", "agent wire format must be PNG");
+        let wire = B64.decode(data_b64).unwrap();
+        assert!(
+            wire.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+            "wire bytes must be a PNG file"
+        );
+        let caps = PromptCaps {
+            image: true,
+            embedded_context: false,
+        };
+        let blocks = build_blocks("", &[image_from_path(&path).unwrap()], caps);
+        let ContentBlock::Image(img) = &blocks[0] else {
+            panic!("expected Image block");
+        };
+        assert_eq!(img.mime_type, "image/png");
     }
 
     #[test]
