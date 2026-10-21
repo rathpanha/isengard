@@ -1123,17 +1123,60 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
 }
 
 impl AgentPanel {
+    /// Live status line: what the agent is doing right now (real tool title when possible).
+    fn activity_label(&self) -> Option<SharedString> {
+        match &self.status {
+            Status::Installing => Some("Installing…".into()),
+            Status::Starting => Some("Starting…".into()),
+            Status::Opening => Some(
+                match &self.opening {
+                    Some(SessionOpen::Load(_)) => "Loading chat…",
+                    Some(SessionOpen::Resume(_)) => "Resuming…",
+                    _ => "Opening chat…",
+                }
+                .into(),
+            ),
+            Status::Ready if self.turn_running => {
+                if let Some(title) = self.entries.iter().rev().find_map(|e| match e {
+                    Entry::Tool(tool)
+                        if matches!(
+                            tool.status,
+                            ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        ) =>
+                    {
+                        Some(tool.title.clone())
+                    }
+                    _ => None,
+                }) {
+                    return Some(title);
+                }
+                match self.entries.last() {
+                    Some(Entry::Thought(_)) => Some("Thinking…".into()),
+                    Some(Entry::Agent(_)) => Some("Writing…".into()),
+                    Some(Entry::Plan(_)) => Some("Planning…".into()),
+                    _ => Some("Working…".into()),
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let color = match &self.status {
             Status::Ready if self.turn_running => theme.warning,
             Status::Ready => theme.success,
-            Status::Starting | Status::Installing => theme.warning,
+            Status::Starting | Status::Installing | Status::Opening => theme.warning,
             Status::Failed(_) => theme.danger,
             _ => theme.muted_foreground,
         };
         let can_new_chat =
             !self.turn_running && matches!(self.status, Status::Ready | Status::Failed(_));
+        let activity = self.activity_label();
+        let title: SharedString = match &activity {
+            Some(what) => format!("{} · {what}", self.agent_name).into(),
+            None => self.agent_name.clone(),
+        };
         h_flex()
             .w_full()
             .h(px(theme::PANEL_HEADER_ROW_H))
@@ -1144,13 +1187,17 @@ impl AgentPanel {
             .border_b_1()
             .border_color(theme.border)
             .child(status_mark(color))
+            .when(activity.is_some(), |row| {
+                row.child(Spinner::new().small())
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_sm()
-                    .child(self.agent_name.clone()),
+                    .when(activity.is_some(), |t| t.text_color(theme.muted_foreground))
+                    .child(title),
             )
             .child(
                 Button::new("agent-new-chat")

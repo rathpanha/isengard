@@ -159,9 +159,8 @@ src/
 │   ├── diff_highlight.rs line ranges + conflict hunks via `similar`
 │   └── panel.rs         GitPanel: stacked repos, conflict banner, list
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
-│   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, agent ACP tabs
-│   ├── pty.rs           portable-pty session + kill/wait + default shell / cwd
-│   ├── output_buffer.rs ACP terminal output tee + SharedExit
+│   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
+│   ├── pty.rs           portable-pty session + default shell / cwd
 │   ├── view.rs          TerminalView: paint, select/copy/paste, URL click
 │   ├── state.rs         alacritty_terminal Term wrapper
 │   ├── render.rs        cell → GPUI paint (selection invert)
@@ -286,21 +285,20 @@ src/
   `futures::executor::block_on` — no Tokio, and nothing blocks GPUI's
   executors. Requests that need the editor carry a flume reply sender and
   are answered from a task spawned on the SDK connection so streaming
-  continues meanwhile; the panel re-emits file and `terminal/*` requests as
+  continues meanwhile; the panel re-emits file requests as
   `AgentPanelEvent`s for `app/agent.rs` (buffer-first read, write + reload
-  tab; `TerminalPanel::create_agent_terminal` for shells). Client
-  capabilities: `fs` read/write, `terminal: true`, `auth.terminal`. Auth
-  `authRequired` (-32000) → login buttons run `<agent command> <method args>`
-  via `TerminalPanel::add_command_session` (one-off tabs are not persisted).
-  Agent command tabs tee stdout into an `OutputBuffer` for `terminal/output`,
-  watch child exit for `wait_for_exit`, and are not session-restored.
-  Header `activity_label` shows the in-progress tool title (or Thinking /
-  Writing) while a turn runs. `apply_switch` calls
-  `reset_agent_for_workspace` (drops the agent: the SDK kills its process
-  group). Tests: `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
+  tab). Auth: we advertise `auth.terminal`; `authRequired` (-32000) → login
+  buttons run `<agent command> <method args>` via
+  `TerminalPanel::add_command_session` (one-off tabs are not persisted).
+  We do **not** advertise ACP client `terminal/*` — Claude Agent 0.94.0
+  runs Bash in-process and never calls those methods. Header
+  `activity_label` shows the in-progress tool title (or Thinking / Writing)
+  while a turn runs. `apply_switch` calls `reset_agent_for_workspace` (drops
+  the agent: the SDK kills its process group). Tests:
+  `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
   `acp::testing::FakeAgent` serves `Channel::duplex` connections with shared
-  chat state (new/load/resume/close/delete + `term` prompt for terminal
-  methods), and `acp::testing::install` makes panels on the test thread use it.
+  chat state (new/load/resume/close/delete), and `acp::testing::install`
+  makes panels on the test thread use it.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close

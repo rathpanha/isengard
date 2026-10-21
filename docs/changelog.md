@@ -3,9 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
-- **2026-10-21** — ACP `terminal/*` in the bottom Terminal panel (advertise
-  `clientCapabilities.terminal`; create/output/wait/kill/release with teed
-  output). Agent header shows live activity text (tool title / Thinking…).
+- **2026-10-21** — Dropped unused ACP client `terminal/*` (Claude Agent
+  0.94.0 never calls it). Kept agent header live activity text (tool title /
+  Thinking…).
 - **2026-10-21** — Agent sees every root of a multi-root workspace (other
   roots sent as ACP `additionalDirectories`; folder add/remove reconnects).
 - **2026-10-21** — Agent chats per folder/workspace: one panel per
