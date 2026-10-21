@@ -1042,6 +1042,30 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
         });
     });
     h.wait_ready(cx);
+    // Picks are saved per folder (and globally) and re-applied to the new chat.
+    h.wait_for(cx, "new chat keeps mode/model/fast", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_mode_id().as_deref() == Some("code")
+                    && a.current_model_id().as_deref() == Some("opus-5[1m]")
+                    && a.fast_mode_on() == Some(true)
+            })
+        })
+    });
+    let (saved, global, live) = cx.read(|cx| {
+        let app = h.app.read(cx);
+        (
+            app.config
+                .session(&folder.to_string_lossy())
+                .map(|s| s.agent_prefs.clone()),
+            app.config.agent_prefs.clone(),
+            app.agent.as_ref().unwrap().read(cx).prefs().clone(),
+        )
+    });
+    assert_eq!(live.mode.as_deref(), Some("code"));
+    assert_eq!(saved.as_ref(), Some(&live));
+    assert_eq!(global, live);
     h.ask("other", cx);
     assert_ne!(
         cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_id()),

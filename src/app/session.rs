@@ -116,6 +116,11 @@ impl IsengardApp {
                 .agent
                 .as_ref()
                 .and_then(|a| a.read(cx).active_chat().map(str::to_owned)),
+            agent_prefs: self
+                .agent
+                .as_ref()
+                .map(|a| a.read(cx).prefs().clone())
+                .unwrap_or_default(),
         };
         self.config.put_session(key, session);
         self.config.save();

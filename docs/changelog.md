@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent composer Mode / Model / Version / Context / Fast /
+  Effort picks persist across restarts and new chats: saved per
+  folder/workspace (`sessions.<key>.agent_prefs`) plus a global last-used
+  fallback, re-applied on every session open (unknown values skipped).
+
 - **2026-10-21** — Agent transcript tightens space between consecutive tool
   rows (shell execute…): scroller `pb_2`, tool/file-change entry padding
   reduced (was section-sized `pb_8` gaps).

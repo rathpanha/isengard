@@ -48,7 +48,7 @@ use crate::agent::prompt::{
 };
 use crate::editor::document;
 use crate::file_tree::tree_icon;
-use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
+use crate::config::{AgentChat, AgentPrefValue, AgentPrefs, AgentSettings, MAX_AGENT_CHATS};
 use crate::git::{line_change_counts, snapshot_dirty_contents, worktree_deltas_since_turn};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
@@ -71,6 +71,8 @@ pub enum AgentPanelEvent {
     Hide,
     /// Chat index or active chat changed — persist it for this workspace.
     ChatsChanged,
+    /// User picked a Mode / Model / … — persist [`AgentPanel::prefs`].
+    PrefsChanged,
     /// A tool is waiting for approval (the app toasts if this panel is in
     /// the background).
     PermissionRequested,
@@ -323,6 +325,8 @@ pub struct AgentPanel {
     modes: Option<SessionModeState>,
     /// ACP session config options (model selector, …).
     config_options: Option<Vec<SessionConfigOption>>,
+    /// Last composer choices, re-applied whenever a chat opens.
+    prefs: AgentPrefs,
     /// Live context-window usage for the open session (`usage_update`).
     usage: Option<ContextUsage>,
     /// Last known usage per chat id (this process only — not persisted).
@@ -490,6 +494,7 @@ impl AgentPanel {
         settings: AgentSettings,
         chats: Vec<AgentChat>,
         active: Option<String>,
+        prefs: AgentPrefs,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -597,6 +602,7 @@ impl AgentPanel {
             silent: None,
             modes: None,
             config_options: None,
+            prefs,
             usage: None,
             usage_by_chat: HashMap::new(),
             compacting: false,
@@ -965,6 +971,10 @@ impl AgentPanel {
 
     pub fn chats(&self) -> &[AgentChat] {
         &self.chats
+    }
+
+    pub fn prefs(&self) -> &AgentPrefs {
+        &self.prefs
     }
 
     /// Active chat, only once it is in the index (a never-prompted new chat
@@ -1646,7 +1656,81 @@ impl AgentPanel {
         }
         modes.current_mode_id = mode_id.clone().into();
         if let Some(connection) = &self.connection {
-            connection.set_mode(mode_id);
+            connection.set_mode(mode_id.clone());
+        }
+        self.remember_pref(None, Some(mode_id), cx);
+        cx.notify();
+    }
+
+    /// Record a user pick (config option or legacy mode) for future chats.
+    fn remember_pref(
+        &mut self,
+        config: Option<(String, AgentPrefValue)>,
+        mode: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let before = self.prefs.clone();
+        if let Some((id, value)) = config {
+            self.prefs.config.insert(id, value);
+        }
+        if mode.is_some() {
+            self.prefs.mode = mode;
+        }
+        if self.prefs != before {
+            cx.emit(AgentPanelEvent::PrefsChanged);
+        }
+    }
+
+    /// Push remembered choices into the chat that just opened, model first
+    /// (it can change which efforts / modes exist). Skips values the agent
+    /// no longer offers; the agent's reply stays the source of truth.
+    fn apply_prefs(&mut self, cx: &mut Context<Self>) {
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        if let Some(options) = &mut self.config_options {
+            let mut order: Vec<usize> = (0..options.len()).collect();
+            order.sort_by_key(|&i| options[i].category != Some(SessionConfigOptionCategory::Model));
+            for i in order {
+                let opt = &mut options[i];
+                let id = opt.id.to_string();
+                let Some(want) = self.prefs.config.get(&id) else {
+                    continue;
+                };
+                match (&mut opt.kind, want) {
+                    (SessionConfigKind::Boolean(b), AgentPrefValue::Bool(on)) => {
+                        if b.current_value != *on {
+                            b.current_value = *on;
+                            connection.set_config_bool(id, *on);
+                        }
+                    }
+                    (SessionConfigKind::Select(_), AgentPrefValue::Value(value)) => {
+                        let valid = select_from_option(opt).is_some_and(|s| {
+                            s.current != *value && s.choices.iter().any(|(v, _)| v == value)
+                        });
+                        let is_mode = opt.category == Some(SessionConfigOptionCategory::Mode);
+                        if valid && let SessionConfigKind::Select(select) = &mut opt.kind {
+                            select.current_value = value.clone().into();
+                            connection.set_config(id, value.clone());
+                            // Keep legacy mode state in sync, as the picker does.
+                            if is_mode && let Some(modes) = &mut self.modes {
+                                modes.current_mode_id = value.clone().into();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let (Some(modes), Some(want)) = (&mut self.modes, &self.prefs.mode)
+            && modes.current_mode_id.0.as_ref() != want
+            && modes
+                .available_modes
+                .iter()
+                .any(|m| m.id.0.as_ref() == want)
+        {
+            modes.current_mode_id = want.clone().into();
+            connection.set_mode(want.clone());
         }
         cx.notify();
     }
@@ -1660,8 +1744,9 @@ impl AgentPanel {
             select.current_value = value.clone().into();
         }
         if let Some(connection) = &self.connection {
-            connection.set_config(config_id, value);
+            connection.set_config(config_id.clone(), value.clone());
         }
+        self.remember_pref(Some((config_id, AgentPrefValue::Value(value))), None, cx);
         cx.notify();
     }
 
@@ -1673,8 +1758,9 @@ impl AgentPanel {
             b.current_value = value;
         }
         if let Some(connection) = &self.connection {
-            connection.set_config_bool(config_id, value);
+            connection.set_config_bool(config_id.clone(), value);
         }
+        self.remember_pref(Some((config_id, AgentPrefValue::Bool(value))), None, cx);
         cx.notify();
     }
 
@@ -2192,6 +2278,7 @@ impl AgentPanel {
                 if let Some(opts) = config_options {
                     self.config_options = Some(opts);
                 }
+                self.apply_prefs(cx);
                 self.usage = self.usage_by_chat.get(&id).copied();
                 // Claude only sends usage_update mid-turn — seed size so the
                 // header is not blank on open / switch.

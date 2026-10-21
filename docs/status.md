@@ -145,7 +145,9 @@ tabs, highlighted editor, status bar):
   accept-edits — Auto omitted for Claude models older than 4.6; Model `Cpu` /
   Version/Context; Fast Switch; Effort/agent/…)
   sits in a fixed-height band above Attach / Queue+Stop (horizontal
-  scroll; kept across open/switch; disabled until Ready).
+  scroll; disabled until Ready). Picks are remembered per folder/workspace
+  (`sessions.<key>.agent_prefs`, seeded from global last-used `agent_prefs`)
+  and re-applied to every chat opened — new, loaded, or after a restart.
   Follow-ups while a turn runs go into an outbound FIFO queue (strip
   under the composer with remove; drained when the turn ends).
   (`session/set_config_option`). Process-level agent still comes from

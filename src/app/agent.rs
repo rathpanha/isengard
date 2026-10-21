@@ -65,12 +65,19 @@ impl IsengardApp {
         }
         let roots = self.workspace.folders().to_vec();
         let settings = self.config.agent.clone();
-        let (chats, active) = self
+        let (chats, active, prefs) = self
             .config
             .session(&key)
-            .map(|s| (s.agent_chats.clone(), s.agent_active.clone()))
+            .map(|s| (s.agent_chats.clone(), s.agent_active.clone(), s.agent_prefs.clone()))
             .unwrap_or_default();
-        let panel = cx.new(|cx| AgentPanel::new(roots, settings, chats, active, window, cx));
+        // A folder with no picks yet starts from the last ones used anywhere.
+        let prefs = if prefs.is_empty() {
+            self.config.agent_prefs.clone()
+        } else {
+            prefs
+        };
+        let panel =
+            cx.new(|cx| AgentPanel::new(roots, settings, chats, active, prefs, window, cx));
         let subscription =
             cx.subscribe_in(&panel, window, |this, panel, event: &AgentPanelEvent, window, cx| {
                 this.handle_agent_event(panel, event, window, cx);
@@ -150,6 +157,14 @@ impl IsengardApp {
             }
             AgentPanelEvent::ChatsChanged if is_current => self.persist_session(cx),
             AgentPanelEvent::ChatsChanged => self.persist_background_chats(panel, cx),
+            AgentPanelEvent::PrefsChanged => {
+                self.config.agent_prefs = panel.read(cx).prefs().clone();
+                if is_current {
+                    self.persist_session(cx);
+                } else {
+                    self.persist_background_chats(panel, cx);
+                }
+            }
             AgentPanelEvent::PermissionRequested if !is_current => {
                 let name = self
                     .agent_key(panel)
@@ -182,6 +197,7 @@ impl IsengardApp {
         let agent = panel.read(cx);
         session.agent_chats = agent.chats().to_vec();
         session.agent_active = agent.active_chat().map(str::to_owned);
+        session.agent_prefs = agent.prefs().clone();
         self.config.put_session(key, session);
         self.config.save();
     }

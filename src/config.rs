@@ -109,6 +109,36 @@ pub struct WorkspaceSession {
     /// Chat reopened when the panel connects.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_active: Option<String>,
+    /// Composer Mode / Model / Effort / … last picked in this folder/workspace.
+    #[serde(skip_serializing_if = "AgentPrefs::is_empty")]
+    pub agent_prefs: AgentPrefs,
+}
+
+/// Agent composer choices re-applied to every chat the panel opens (new,
+/// loaded, resumed). Keyed by ACP config option id; values the agent no longer
+/// offers are skipped.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentPrefs {
+    /// Legacy ACP `modes` id, for agents without a Mode config option.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub config: BTreeMap<String, AgentPrefValue>,
+}
+
+impl AgentPrefs {
+    pub fn is_empty(&self) -> bool {
+        self.mode.is_none() && self.config.is_empty()
+    }
+}
+
+/// Select value id or boolean toggle (ACP `session/set_config_option`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AgentPrefValue {
+    Bool(bool),
+    Value(String),
 }
 
 /// Cap for remembered agent chats per folder/workspace.
@@ -145,6 +175,7 @@ impl Default for WorkspaceSession {
             agent_width: DEFAULT_AGENT_WIDTH,
             agent_chats: Vec::new(),
             agent_active: None,
+            agent_prefs: AgentPrefs::default(),
         }
     }
 }
@@ -224,6 +255,10 @@ pub struct AppConfig {
     /// Agent panel launch command — see [`AgentSettings`].
     #[serde(default)]
     pub agent: AgentSettings,
+    /// Last Agent composer choices anywhere; seeds folders/workspaces that
+    /// have none of their own yet.
+    #[serde(default, skip_serializing_if = "AgentPrefs::is_empty")]
+    pub agent_prefs: AgentPrefs,
     /// Language Server Protocol (IntelliSense) — see [`LspSettings`].
     #[serde(default)]
     pub lsp: LspSettings,
@@ -253,6 +288,7 @@ impl Default for AppConfig {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
             agent: AgentSettings::default(),
+            agent_prefs: AgentPrefs::default(),
             lsp: LspSettings::default(),
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,
@@ -549,6 +585,34 @@ mod tests {
         let legacy = AppConfig::load_from(&path);
         assert_eq!(legacy.font_size, 16.0);
         assert_eq!(legacy.agent, AgentSettings::default());
+    }
+
+    #[test]
+    fn agent_prefs_roundtrip_global_and_per_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut prefs = AgentPrefs::default();
+        prefs.mode = Some("plan".into());
+        prefs
+            .config
+            .insert("model".into(), AgentPrefValue::Value("opus".into()));
+        prefs
+            .config
+            .insert("fast".into(), AgentPrefValue::Bool(true));
+        let mut config = AppConfig::default();
+        config.agent_prefs = prefs.clone();
+        let session = WorkspaceSession {
+            agent_prefs: prefs.clone(),
+            ..Default::default()
+        };
+        config.put_session("/tmp/a".into(), session);
+        config.save_to(&path).unwrap();
+        let loaded = AppConfig::load_from(&path);
+        assert_eq!(loaded.agent_prefs, prefs);
+        assert_eq!(loaded.session("/tmp/a").unwrap().agent_prefs, prefs);
+        // Empty prefs are omitted from the file.
+        let json = serde_json::to_string(&WorkspaceSession::default()).unwrap();
+        assert!(!json.contains("agent_prefs"));
     }
 
     #[test]
