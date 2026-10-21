@@ -3,6 +3,13 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — `@` can attach multi-root workspace folders themselves
+  (`@royal5g-system`); Harness UI test opens a two-root mock workspace.
+- **2026-10-21** — `@` mention walk is plain FS (not gitignore) so nested
+  folders always match; Harness UI test covers empty `@` + filter on a
+  mock nested workspace.
+- **2026-10-21** — Empty `@` lists nested workspace folders (not only
+  top-level); browse-into-folder requires a trailing `/` (→/Tab).
 - **2026-10-21** — Attachment remove (`CircleX`) sits on the top-right
   corner of each chip/thumb.
 - **2026-10-21** — Attachment chips bottom-align with image thumbs; `@`

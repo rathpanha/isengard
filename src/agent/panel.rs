@@ -433,6 +433,23 @@ impl AgentPanel {
             .unwrap_or_default()
     }
 
+    /// Set composer text and refresh `@` mentions (tests — `set_value` alone
+    /// does not emit `InputEvent::Change`).
+    #[cfg(test)]
+    pub fn set_composer_text_for_test(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let caret = text.len();
+        self.input.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.set_selected_range(caret..caret, cx);
+        });
+        self.refresh_mention(cx);
+    }
+
     pub fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.attachments.len() {
             self.attachments.remove(index);

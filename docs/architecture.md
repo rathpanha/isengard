@@ -297,8 +297,10 @@ src/
   runs Bash in-process and never calls those methods. Header
   `activity_label` shows the in-progress tool title (or Thinking / Writing)
   while a turn runs.   Composer attachments (`agent::mention` + `agent::prompt`): `@` opens a
-  filtered file/folder menu from workspace roots (`ignore` walk, capped);
-  pick emits `AttachPath` (buffer-first read; raster paths →
+  filtered file/folder menu from workspace roots (plain FS walk + `SKIP_DIRS`,
+  not gitignore — nested dirs stay reachable; empty query lists nested dirs +
+  root files; trailing `/` browses a folder; else fuzzy, capped); pick emits
+  `AttachPath` (buffer-first read; raster paths →
   `image_from_path` → ACP `image` + thumbnail). Paperclip →
   `prompt_for_paths` (OS multi-file; `directories: false` — folders via `@`)
   → same attach path (each image is a separate chip). Composer mounts during

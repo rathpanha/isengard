@@ -2,8 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use ignore::WalkBuilder;
-
 /// Soft caps so `@` in a huge repo stays snappy.
 pub const MAX_MENTION_WALK: usize = 2_000;
 /// Cap for fuzzy search only — root / browse listings show every child
@@ -77,64 +75,73 @@ pub fn strip_mention(text: &str, at: usize, cursor: usize) -> (String, usize) {
 }
 
 /// Workspace files/folders matching `query` (case-insensitive substring on the
-/// relative path). Empty query → **all** top-level entries under each root
-/// (except [`SKIP_DIRS`]). A query that names an existing directory lists that
-/// directory's children. Otherwise fuzzy-search, capped at `limit`.
+/// relative path).
+///
+/// - Empty query → **workspace roots** + nested folders + root-level files
+///   (except [`SKIP_DIRS`]).
+/// - Query ending in `/` that names a directory (including a workspace root)
+///   → browse that directory's children (→/Tab dive inserts the trailing slash).
+/// - Otherwise fuzzy-search roots + tree, capped at `limit`.
+///
+/// Uses a plain FS walk (not `gitignore`) so nested folders the user can see
+/// in the tree are always reachable via `@` — noisy build dirs stay in
+/// [`SKIP_DIRS`]. Workspace roots themselves are mentionable (multi-root
+/// folders like `royal5g-system` are not children of any walk).
 pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<MentionHit> {
     let limit = limit.max(1).min(MAX_MENTION_HITS);
+    let browse = query.ends_with('/');
     let query = query.trim_matches('/');
     let query_lower = query.to_ascii_lowercase();
 
     if query.is_empty() {
-        // No 8-hit trim here — root browse must show every folder/file.
-        return list_root_children(roots, MAX_DIR_LISTING);
+        // No 8-hit trim — initial `@` must show roots + nested folders.
+        return list_initial_mentions(roots, MAX_DIR_LISTING);
     }
 
-    if let Some((root, dir)) = resolve_dir(roots, query) {
-        return list_dir_children(&root, &dir, MAX_DIR_LISTING);
+    // Trailing `/` means "list this folder" (dive). Bare `@src` stays fuzzy so
+    // nested `src/agent` etc. remain reachable without browsing.
+    if browse {
+        if let Some((root, dir)) = resolve_dir(roots, query) {
+            return list_dir_children(roots, &root, &dir, MAX_DIR_LISTING);
+        }
     }
 
-    // Fuzzy contains on relative paths (capped).
+    // Fuzzy: workspace roots first (exact name match), then tree paths.
     let mut hits = Vec::new();
-    let mut walked = 0usize;
     for root in roots {
         if !root.exists() {
             continue;
         }
-        let walker = WalkBuilder::new(root)
-            .hidden(false)
-            .git_ignore(true)
-            .git_global(false)
-            .git_exclude(true)
-            .filter_entry(|entry| {
-                let name = entry.file_name().to_string_lossy();
-                !(entry.file_type().is_some_and(|t| t.is_dir())
-                    && SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)))
-            })
-            .build();
-        for entry in walker.flatten() {
-            walked += 1;
-            if walked > MAX_MENTION_WALK || hits.len() >= MAX_MENTION_WALK {
-                break;
-            }
-            let path = entry.path();
-            if path == root {
-                continue;
-            }
-            let Ok(rel) = path.strip_prefix(root) else {
-                continue;
-            };
-            let label = display_label(roots, root, rel);
-            let label_lower = label.to_ascii_lowercase();
-            let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
-            let matches = label_lower.contains(&query_lower)
-                || label_lower
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.contains(&query_lower));
-            if !matches {
-                continue;
-            }
+        let label = file_name(root);
+        let label_lower = label.to_ascii_lowercase();
+        if label_lower.contains(&query_lower) {
+            hits.push(Scored {
+                rank: score(&label_lower, &query_lower),
+                hit: MentionHit {
+                    path: root.clone(),
+                    label,
+                    is_dir: true,
+                },
+            });
+        }
+    }
+    let mut walked = 0usize;
+    walk_workspace(roots, |root, path, is_dir, _depth| {
+        walked += 1;
+        if walked > MAX_MENTION_WALK {
+            return false;
+        }
+        let Ok(rel) = path.strip_prefix(root) else {
+            return true;
+        };
+        let label = display_label(roots, root, rel);
+        let label_lower = label.to_ascii_lowercase();
+        let matches = label_lower.contains(&query_lower)
+            || label_lower
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.contains(&query_lower));
+        if matches {
             hits.push(Scored {
                 rank: score(&label_lower, &query_lower),
                 hit: MentionHit {
@@ -144,8 +151,14 @@ pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<Mentio
                 },
             });
         }
-    }
-    hits.sort_by(|a, b| a.rank.cmp(&b.rank).then_with(|| a.hit.label.cmp(&b.hit.label)));
+        hits.len() < MAX_MENTION_WALK
+    });
+    hits.sort_by(|a, b| {
+        a.rank
+            .cmp(&b.rank)
+            .then_with(|| b.hit.is_dir.cmp(&a.hit.is_dir))
+            .then_with(|| a.hit.label.cmp(&b.hit.label))
+    });
     hits.into_iter()
         .take(limit)
         .map(|s| s.hit)
@@ -165,10 +178,18 @@ pub fn mention_rel_label(roots: &[PathBuf], path: &Path) -> String {
 fn resolve_dir(roots: &[PathBuf], query: &str) -> Option<(PathBuf, PathBuf)> {
     let query = query.trim_matches('/');
     for root in roots {
+        // `@royal5g-system/` → the workspace root itself.
+        if file_name(root).eq_ignore_ascii_case(query) {
+            return Some((root.clone(), root.clone()));
+        }
         // Multi-root labels are `rootName/rel`; strip that prefix when present.
         let rel = if roots.len() > 1 {
             let prefix = format!("{}/", file_name(root));
-            query.strip_prefix(&prefix).unwrap_or(query)
+            match query.strip_prefix(&prefix) {
+                Some("") => return Some((root.clone(), root.clone())),
+                Some(rest) => rest,
+                None => query,
+            }
         } else {
             query
         };
@@ -180,7 +201,12 @@ fn resolve_dir(roots: &[PathBuf], query: &str) -> Option<(PathBuf, PathBuf)> {
     None
 }
 
-fn list_dir_children(root: &Path, dir: &Path, limit: usize) -> Vec<MentionHit> {
+fn list_dir_children(
+    roots: &[PathBuf],
+    root: &Path,
+    dir: &Path,
+    limit: usize,
+) -> Vec<MentionHit> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -191,7 +217,6 @@ fn list_dir_children(root: &Path, dir: &Path, limit: usize) -> Vec<MentionHit> {
             e.file_name(),
         )
     });
-    let roots = [root.to_path_buf()];
     let mut hits = Vec::new();
     for entry in entries {
         if hits.len() >= limit {
@@ -207,7 +232,7 @@ fn list_dir_children(root: &Path, dir: &Path, limit: usize) -> Vec<MentionHit> {
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
-        let label = display_label(&roots, root, rel);
+        let label = display_label(roots, root, rel);
         hits.push(MentionHit {
             path,
             label,
@@ -219,6 +244,9 @@ fn list_dir_children(root: &Path, dir: &Path, limit: usize) -> Vec<MentionHit> {
 
 fn display_label(roots: &[PathBuf], root: &Path, rel: &Path) -> String {
     let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel.is_empty() {
+        return file_name(root);
+    }
     if roots.len() > 1 {
         format!("{}/{}", file_name(root), rel)
     } else {
@@ -246,41 +274,92 @@ fn score(label_lower: &str, query_lower: &str) -> u8 {
     }
 }
 
-fn list_root_children(roots: &[PathBuf], limit: usize) -> Vec<MentionHit> {
-    let mut hits = Vec::new();
+/// Depth-first walk of workspace roots. Skips [`SKIP_DIRS`] by name only (no
+/// gitignore) so nested folders stay visible. `visit` returns `false` to stop.
+fn walk_workspace(
+    roots: &[PathBuf],
+    mut visit: impl FnMut(&Path, &Path, bool, usize) -> bool,
+) {
     for root in roots {
-        let Ok(rd) = std::fs::read_dir(root) else {
+        if !root.exists() {
             continue;
-        };
-        let mut entries: Vec<_> = rd.flatten().collect();
-        entries.sort_by_key(|e| {
-            (
-                !e.file_type().map(|t| t.is_dir()).unwrap_or(false),
-                e.file_name(),
-            )
-        });
-        for entry in entries {
-            if hits.len() >= limit {
-                return hits;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
-                continue;
-            }
-            let path = entry.path();
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let Ok(rel) = path.strip_prefix(root) else {
+        }
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
                 continue;
             };
-            let label = display_label(roots, root, rel);
-            hits.push(MentionHit {
-                path,
-                label,
-                is_dir,
+            let mut entries: Vec<_> = rd.flatten().collect();
+            // Dirs first so nested folders are visited early under the walk cap.
+            entries.sort_by_key(|e| {
+                (
+                    !e.file_type().map(|t| t.is_dir()).unwrap_or(false),
+                    e.file_name(),
+                )
             });
+            // Push dirs in reverse so pop order is alphabetical.
+            let mut child_dirs = Vec::new();
+            for entry in entries {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let path = entry.path();
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                if is_dir && SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+                    continue;
+                }
+                let Ok(rel) = path.strip_prefix(root) else {
+                    continue;
+                };
+                let depth = rel.components().count();
+                if !visit(root, &path, is_dir, depth) {
+                    return;
+                }
+                if is_dir {
+                    child_dirs.push(path);
+                }
+            }
+            for d in child_dirs.into_iter().rev() {
+                stack.push(d);
+            }
         }
     }
+}
+
+/// Empty `@`: workspace roots, then nested folders, then root-level files.
+fn list_initial_mentions(roots: &[PathBuf], limit: usize) -> Vec<MentionHit> {
+    let mut hits: Vec<_> = roots
+        .iter()
+        .filter(|r| r.exists())
+        .map(|root| MentionHit {
+            path: root.clone(),
+            label: file_name(root),
+            is_dir: true,
+        })
+        .collect();
+    let mut dirs = Vec::new();
+    let mut root_files = Vec::new();
+    walk_workspace(roots, |root, path, is_dir, depth| {
+        let Ok(rel) = path.strip_prefix(root) else {
+            return true;
+        };
+        let label = display_label(roots, root, rel);
+        let hit = MentionHit {
+            path: path.to_path_buf(),
+            label,
+            is_dir,
+        };
+        if is_dir {
+            dirs.push((depth, hit));
+        } else if depth == 1 {
+            root_files.push(hit);
+        }
+        hits.len() + dirs.len() < limit
+    });
+    dirs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.cmp(&b.1.label)));
+    root_files.sort_by(|a, b| a.label.cmp(&b.label));
+    hits.extend(dirs.into_iter().map(|(_, h)| h));
+    hits.extend(root_files);
+    hits.truncate(limit);
     hits
 }
 
@@ -324,6 +403,20 @@ mod tests {
     }
 
     #[test]
+    fn list_empty_query_includes_nested_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::create_dir(dir.path().join("src").join("agent")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "").unwrap();
+        let hits = list_mentions(&[dir.path().to_path_buf()], "", 50);
+        let labels: Vec<_> = hits.iter().map(|h| h.label.as_str()).collect();
+        assert!(labels.contains(&"src"), "{labels:?}");
+        assert!(labels.contains(&"src/agent"), "{labels:?}");
+        // Nested files stay out of the empty list (browse or type to find them).
+        assert!(!labels.iter().any(|l| l.ends_with("main.rs")), "{labels:?}");
+    }
+
+    #[test]
     fn list_empty_query_is_not_clipped_to_search_cap() {
         let dir = tempfile::tempdir().unwrap();
         for i in 0..12 {
@@ -352,13 +445,96 @@ mod tests {
     }
 
     #[test]
-    fn list_dir_query_browses_children() {
+    fn list_dir_query_browses_children_with_trailing_slash() {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("src")).unwrap();
         fs::write(dir.path().join("src").join("lib.rs"), "").unwrap();
         fs::write(dir.path().join("top.txt"), "").unwrap();
-        let hits = list_mentions(&[dir.path().to_path_buf()], "src", 10);
+        let hits = list_mentions(&[dir.path().to_path_buf()], "src/", 10);
         assert!(hits.iter().any(|h| h.label == "src/lib.rs"), "{hits:?}");
         assert!(!hits.iter().any(|h| h.label == "top.txt"), "{hits:?}");
+    }
+
+    #[test]
+    fn bare_dir_query_fuzzy_matches_folder_not_only_children() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::create_dir(dir.path().join("src").join("agent")).unwrap();
+        let hits = list_mentions(&[dir.path().to_path_buf()], "agent", 10);
+        assert!(
+            hits.iter().any(|h| h.label == "src/agent" && h.is_dir),
+            "{hits:?}"
+        );
+    }
+
+    #[test]
+    fn nested_folder_query_matches_in_this_repo() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let hits = list_mentions(&[root.clone()], "mention", MAX_MENTION_HITS);
+        assert!(
+            hits.iter().any(|h| {
+                let l = h.label.replace('\\', "/");
+                l.contains("agent/mention") || (h.is_dir && l.ends_with("agent"))
+            }),
+            "expected nested agent/mention hit, got {hits:?}"
+        );
+        let empty = list_mentions(&[root], "", MAX_DIR_LISTING);
+        assert!(
+            empty.iter().any(|h| h.is_dir && h.label.contains('/')),
+            "empty @ should list nested dirs, got {:?}",
+            empty.iter().map(|h| &h.label).collect::<Vec<_>>()
+        );
+    }
+
+    /// gitignore must not hide nested folders from `@` (plain FS walk).
+    #[test]
+    fn nested_folder_visible_even_when_gitignored() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::create_dir(dir.path().join("src").join("secret")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "src/\n").unwrap();
+        let hits = list_mentions(&[dir.path().to_path_buf()], "secret", 10);
+        assert!(
+            hits.iter().any(|h| h.label == "src/secret" && h.is_dir),
+            "gitignored nested dir must still match, got {hits:?}"
+        );
+        let empty = list_mentions(&[dir.path().to_path_buf()], "", 50);
+        assert!(
+            empty.iter().any(|h| h.label == "src/secret"),
+            "empty @ must list gitignored nested dir, got {:?}",
+            empty.iter().map(|h| &h.label).collect::<Vec<_>>()
+        );
+    }
+
+    /// Multi-root workspace folders are roots — not walk children — and must
+    /// match when the user types `@royal5g-system`.
+    #[test]
+    fn multi_root_folder_name_is_mentionable() {
+        let dir = tempfile::tempdir().unwrap();
+        let graph = dir.path().join("royal5g-graph");
+        let system = dir.path().join("royal5g-system");
+        fs::create_dir(&graph).unwrap();
+        fs::create_dir(&system).unwrap();
+        fs::write(system.join("readme.md"), "x").unwrap();
+        let roots = vec![graph.clone(), system.clone()];
+
+        let empty = list_mentions(&roots, "", 50);
+        assert!(
+            empty.iter().any(|h| h.label == "royal5g-system" && h.path == system),
+            "empty @ must list workspace roots, got {:?}",
+            empty.iter().map(|h| &h.label).collect::<Vec<_>>()
+        );
+
+        let hits = list_mentions(&roots, "royal5g-system", 8);
+        assert!(
+            hits.iter().any(|h| h.label == "royal5g-system" && h.is_dir && h.path == system),
+            "filter must hit the workspace root itself, got {hits:?}"
+        );
+
+        let browsed = list_mentions(&roots, "royal5g-system/", 8);
+        assert!(
+            browsed.iter().any(|h| h.label.ends_with("readme.md")),
+            "trailing slash browses inside the root, got {browsed:?}"
+        );
     }
 }

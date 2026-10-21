@@ -220,7 +220,9 @@ Add a row here whenever a new shared component is created.
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);
   ↑↓ move (scrolls selection into view); click/Enter attaches file or
-  folder; →/Tab dives into a folder; Esc closes; then auto-growing
+  folder; →/Tab dives (query gets a trailing `/` and lists that folder);
+  empty `@` lists nested folders (not only top-level) plus root files;
+  Esc closes; then auto-growing
   `Textarea` (Enter sends when the menu is closed, Shift+Enter newline;
   paste image / file paths become chips); then a row of ghost `.small()`
   Attach from disk (`Paperclip` — OS multi-file picker; folders via `@`) +

@@ -103,7 +103,8 @@ tabs, highlighted editor, status bar):
   (spinner + real tool title, or Thinking/Writing/…). Mentions show as
   icon + name chips in the user bubble (images are 40px thumbnails, one per
   file). Composer attachments: type `@` for a slim file/folder picker (filter;
-  click/Enter attaches file or folder, →/Tab dives); chip row bottom-aligned
+  click/Enter attaches file or folder, →/Tab dives; empty `@` / filters see
+  workspace roots + nested folders via a plain FS walk); chip row bottom-aligned
   (raster paths and pastes show thumbnails); Paperclip opens the OS
   multi-file picker (folders via `@`; each image is its own preview); paste
   image or paths. Composer is shown while history loads / session opens

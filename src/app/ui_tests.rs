@@ -63,8 +63,34 @@ impl Harness {
 
     fn file(&self, name: &str, text: &str) -> PathBuf {
         let path = self.dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent dirs");
+        }
         std::fs::write(&path, text).expect("write fixture");
         path
+    }
+
+    /// Set the agent composer text and refresh `@` mentions (does not rely on
+    /// keyboard focus — `TextareaState::set_value` skips `InputEvent::Change`).
+    fn agent_composer(&self, text: &str, cx: &mut TestAppContext) {
+        self.with_app(cx, |app, window, cx| {
+            let panel = app.agent.clone().expect("agent panel");
+            panel.update(cx, |panel, cx| {
+                panel.set_composer_text_for_test(text, window, cx);
+            });
+        });
+    }
+
+    fn agent_mention_labels(&self, cx: &mut TestAppContext) -> Vec<String> {
+        cx.read(|cx| {
+            self.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .mention_labels()
+        })
     }
 
     /// Opens `path` as a pinned tab (focuses its editor, like a double-click).
@@ -383,16 +409,8 @@ fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
     h.press("secondary-alt-b", cx);
     h.wait_ready(cx);
 
-    h.input("@", cx);
-    let labels = cx.read(|cx| {
-        h.app
-            .read(cx)
-            .agent
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .mention_labels()
-    });
+    h.agent_composer("@", cx);
+    let labels = h.agent_mention_labels(cx);
     assert!(
         !labels.is_empty(),
         "mention menu populated on @: {labels:?}"
@@ -403,16 +421,8 @@ fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
     );
     assert!(h.has("agent-mention-menu", cx) || h.has("agent-mention-0", cx), "menu in tree");
 
-    h.input("alp", cx);
-    let labels = cx.read(|cx| {
-        h.app
-            .read(cx)
-            .agent
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .mention_labels()
-    });
+    h.agent_composer("@alp", cx);
+    let labels = h.agent_mention_labels(cx);
     assert!(
         labels.iter().any(|l| l.contains("alpha")),
         "filtered: {labels:?}"
@@ -420,6 +430,76 @@ fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
     assert!(
         !labels.iter().any(|l| l.contains("beta")),
         "filtered out beta: {labels:?}"
+    );
+}
+
+/// Nested folders must appear on empty `@` and when filtering by the nested name.
+#[gpui_kit::test]
+fn agent_at_mention_finds_nested_folders(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.folder("src/agent");
+    h.file("src/agent/mod.rs", "// agent\n");
+    h.file("README.md", "hi\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    h.agent_composer("@", cx);
+    let labels = h.agent_mention_labels(cx);
+    assert!(
+        labels.iter().any(|l| l == "src" || l.ends_with("/src")),
+        "root folder src: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "src/agent" || l.ends_with("/src/agent")),
+        "nested folder src/agent on empty @: {labels:?}"
+    );
+
+    h.agent_composer("@agent", cx);
+    let labels = h.agent_mention_labels(cx);
+    assert!(
+        labels.iter().any(|l| l.contains("src/agent") || l.ends_with("agent")),
+        "filter 'agent' must hit nested folder, got {labels:?}"
+    );
+
+    h.agent_composer("@src/agent", cx);
+    let labels = h.agent_mention_labels(cx);
+    assert!(
+        labels.iter().any(|l| l.contains("src/agent")),
+        "filter 'src/agent' must hit nested folder, got {labels:?}"
+    );
+}
+
+/// Multi-root workspace: `@royal5g-system` must hit that root (not "No matches").
+#[gpui_kit::test]
+fn agent_at_mention_matches_multi_root_folder(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let graph = h.folder("royal5g-graph");
+    let system = h.folder("royal5g-system");
+    std::fs::write(system.join("note.md"), "x\n").unwrap();
+    h.open_folder(&graph, cx);
+    h.with_app(cx, |app, window, cx| {
+        app.add_folders(&[system.clone()], window, cx);
+    });
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    h.agent_composer("@", cx);
+    let labels = h.agent_mention_labels(cx);
+    assert!(
+        labels.iter().any(|l| l == "royal5g-system"),
+        "empty @ lists workspace roots: {labels:?}"
+    );
+
+    h.agent_composer("@royal5g-system", cx);
+    let labels = h.agent_mention_labels(cx);
+    assert!(
+        labels.iter().any(|l| l == "royal5g-system"),
+        "filter must match workspace root, got {labels:?}"
     );
 }
 
