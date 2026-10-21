@@ -101,10 +101,15 @@ tabs, highlighted editor, status bar):
   plan checklist, inline permission buttons, Stop (`.danger()`,
   `session/cancel`), New Chat. Header shows a live activity line while busy
   (spinner + real tool title, or Thinking/Writing/…). Mentions show as
-  icon + name chips in the user bubble. Composer attachments: type `@` for a slim file/folder picker (filter;
-  Enter/click attaches file or folder, →/Tab dives into a folder); chip
-  row; Paperclip opens the OS file/folder picker (multi-select); paste
-  image or paths. Files embed when allowed; folders are resource links. Agent file reads use the open buffer
+  icon + name chips in the user bubble (images are 40px thumbnails, one per
+  file). Composer attachments: type `@` for a slim file/folder picker (filter;
+  click/Enter attaches file or folder, →/Tab dives); chip row bottom-aligned
+  (raster paths and pastes show thumbnails); Paperclip opens the OS
+  multi-file picker (folders via `@`; each image is its own preview); paste
+  image or paths. Composer is shown while history loads / session opens
+  (Send disabled until Ready) to avoid layout jump. Files embed when
+  allowed; folders are resource links;
+  images go as ACP `image` when the agent allows. Agent file reads use the open buffer
   (unsaved text) before disk; writes go to disk and reload the open tab as
   saved. Visibility + width persist per workspace. Shell tools run inside
   Claude Agent (not Isengard's Terminal panel) — ACP client `terminal/*` is

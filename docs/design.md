@@ -214,23 +214,30 @@ Add a row here whenever a new shared component is created.
   updates keep streaming): one button per agent option, `.small()`,
   allow-once `.primary()`, allow-always `.outline()`, reject
   `.danger().outline()`.   Composer: optional wrap-row of attachment chips
-  (`@file`, `@file:n-m`, `@paste.png`) with ghost `CircleX` remove; `@` in
+  (`@file`, `@file:n-m`, or 40×40 image thumbnails for raster attaches)
+  with ghost `CircleX` remove; `@` in
   the textarea opens a slim bordered mention menu (`text_xs`, scrollable
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);
-  ↑↓ move (scrolls selection into view), Enter/click attaches file or folder,
-  →/Tab dives into a folder,
-  Esc closes; then auto-growing `Textarea` (Enter sends when the menu is
-  closed, Shift+Enter newline; paste image / file paths become chips);
-  then a row of ghost `.small()` Attach from disk (`Paperclip` — OS multi
-  file/folder picker) + muted hint + primary Send (`ArrowUp`) that becomes
-  `.danger()` Stop (solid square block, not Lucide stroke `Square`) while a
-  turn runs. User bubbles show attachment refs as compact chips
-  (Folder/File/Image icon + basename), not `@name` dumped into the message
-  text. Non-ready states are one centred column: Spinner + "Starting…";
-  not installed → primary Install (`Download`, loading while npm runs) +
-  danger error line; login → one button per agent login method (first
-  primary, others outline) + outline Retry; failed → danger message +
+  ↑↓ move (scrolls selection into view); click/Enter attaches file or
+  folder; →/Tab dives into a folder; Esc closes; then auto-growing
+  `Textarea` (Enter sends when the menu is closed, Shift+Enter newline;
+  paste image / file paths become chips); then a row of ghost `.small()`
+  Attach from disk (`Paperclip` — OS multi-file picker; folders via `@`) +
+  muted hint + primary Send (`ArrowUp`) that becomes `.danger()` Stop
+  (solid square block, not Lucide stroke `Square`) while a turn runs.
+  Attachment chips bottom-align in the wrap row (file/folder chips share a
+  baseline with taller image thumbs); ghost `CircleX` remove sits on the
+  upper trailing corner of each chip/thumb (not inline in the flex row).
+  Composer stays mounted while a
+  transcript is shown / session is opening (Send disabled until Ready) so
+  history does not jump when the agent finishes connecting. User bubbles
+  show attachment refs as compact chips (Folder/File icon + basename, or
+  the same 40px image thumbnails — one per image), not `@name` dumped into
+  the message text. Non-ready states are one centred column: Spinner +
+  "Starting…"; not installed → primary Install (`Download`, loading while
+  npm runs) + danger error line; login → one button per agent login method
+  (first primary, others outline) + outline Retry; failed → danger message +
   primary Retry.
 - **Sidebar toggle:** file tree can be hidden while the workspace stays open.
   Width + visibility remembered per workspace in `sessions` (default 260px /

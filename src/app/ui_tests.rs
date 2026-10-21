@@ -448,6 +448,40 @@ fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn agent_attach_image_path_is_image_chip_not_file(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let png: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let a = h.dir.path().join("a.png");
+    let b = h.dir.path().join("b.png");
+    std::fs::write(&a, png).unwrap();
+    std::fs::write(&b, png).unwrap();
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    h.agent_event(AgentPanelEvent::AttachPath(a), cx);
+    h.agent_event(AgentPanelEvent::AttachPath(b), cx);
+    let labels = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .attachment_labels()
+    });
+    assert_eq!(labels, ["@a.png", "@b.png"]);
+}
+
+#[gpui_kit::test]
 fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

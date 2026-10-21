@@ -298,12 +298,15 @@ src/
   `activity_label` shows the in-progress tool title (or Thinking / Writing)
   while a turn runs.   Composer attachments (`agent::mention` + `agent::prompt`): `@` opens a
   filtered file/folder menu from workspace roots (`ignore` walk, capped);
-  pick emits `AttachPath` (buffer-first read). Paperclip →
-  `prompt_for_paths` (OS multi file+folder) → same attach path. Paste
-  image/paths also become chips. `session/prompt` sends `Vec<ContentBlock>`
-  (`resource` when `embeddedContext`, else `<context>` text, else
-  `resource_link`; images when `image`). Caps from `AgentInfo` after
-  `initialize`. `apply_switch` calls
+  pick emits `AttachPath` (buffer-first read; raster paths →
+  `image_from_path` → ACP `image` + thumbnail). Paperclip →
+  `prompt_for_paths` (OS multi-file; `directories: false` — folders via `@`)
+  → same attach path (each image is a separate chip). Composer mounts during
+  `Starting`/`Opening` when a transcript exists (Send gated on `Ready`).
+  Paste image/paths also become chips. `session/prompt`
+  sends `Vec<ContentBlock>` (`resource` when `embeddedContext`, else
+  `<context>` text, else `resource_link`; images when `image`). Caps from
+  `AgentInfo` after `initialize`. `apply_switch` calls
   `reset_agent_for_workspace` (drops the agent: the SDK kills its process
   group). Tests: `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
   `acp::testing::FakeAgent` serves `Channel::duplex` connections with shared

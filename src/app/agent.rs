@@ -218,6 +218,11 @@ impl IsengardApp {
         if document::is_untitled(&path) {
             return notify_error("Save the file before attaching it", window, cx);
         }
+        // Raster images → ACP image blocks + thumbnail chips (not file/folder).
+        if let Some(image) = crate::agent::image_from_path(&path) {
+            panel.update(cx, |panel, cx| panel.attach_context(image, cx));
+            return;
+        }
         let text = if path.is_file() {
             self.agent_read_file(&path, cx).ok()
         } else if path.is_dir() {
@@ -245,9 +250,12 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Files only: with `directories: true`, Linux file choosers often treat
+        // Open as "use this folder" (e.g. ~/Pictures) and break double-click on
+        // files. Attach folders via `@` in the composer instead.
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
-            directories: true,
+            directories: false,
             multiple: true,
             prompt: Some("Attach to agent".into()),
         });

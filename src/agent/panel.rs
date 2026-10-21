@@ -41,7 +41,9 @@ use crate::acp::{
 use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
 use crate::agent::prompt::{
     self, Attachment, PromptCaps, MAX_ATTACHMENTS, display_user_message, image_from_bytes,
+    image_from_path,
 };
+use crate::editor::document;
 use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
@@ -95,13 +97,21 @@ struct ToolEntry {
     permission: Option<PendingPermission>,
 }
 
+/// Thumbnail source for an attached image (path preferred; paste is in-memory).
+#[derive(Clone)]
+enum ImageThumb {
+    Path(PathBuf),
+    Memory(std::sync::Arc<Image>),
+}
+
 /// File/folder/image chip shown inside a user bubble (not the `@name` text dump).
 #[derive(Clone)]
 struct UserRef {
     /// Basename (folders keep a trailing `/`).
     name: SharedString,
     is_dir: bool,
-    is_image: bool,
+    /// When set, render a small preview instead of a file/folder icon.
+    thumb: Option<ImageThumb>,
 }
 
 enum Entry {
@@ -116,32 +126,88 @@ enum Entry {
     Notice { text: SharedString, error: bool },
 }
 
-fn user_refs_from(attachments: &[Attachment]) -> Vec<UserRef> {
+fn user_refs_from(
+    attachments: &[Attachment],
+    thumbs: &[Option<ImageThumb>],
+) -> Vec<UserRef> {
     attachments
         .iter()
-        .map(|a| match a {
-            Attachment::File { path, .. } => {
-                let is_dir = path.is_dir();
-                let mut name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.display().to_string());
-                if is_dir && !name.ends_with('/') {
-                    name.push('/');
+        .enumerate()
+        .map(|(ix, a)| {
+            let thumb = thumbs.get(ix).and_then(|t| t.clone());
+            match a {
+                Attachment::File { path, .. } => {
+                    let is_dir = path.is_dir();
+                    let mut name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    if is_dir && !name.ends_with('/') {
+                        name.push('/');
+                    }
+                    UserRef {
+                        name: name.into(),
+                        is_dir,
+                        thumb,
+                    }
                 }
-                UserRef {
-                    name: name.into(),
-                    is_dir,
-                    is_image: false,
-                }
+                Attachment::Image { label, .. } => UserRef {
+                    name: label.clone().into(),
+                    is_dir: false,
+                    thumb,
+                },
             }
-            Attachment::Image { label, .. } => UserRef {
-                name: label.clone().into(),
-                is_dir: false,
-                is_image: true,
-            },
         })
         .collect()
+}
+
+fn thumb_for_attachment(attachment: &Attachment) -> Option<ImageThumb> {
+    match attachment {
+        Attachment::Image {
+            path: Some(path), ..
+        } => Some(ImageThumb::Path(path.clone())),
+        Attachment::Image {
+            mime, data_b64, ..
+        } => {
+            let format = ImageFormat::from_mime_type(mime)?;
+            let bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                data_b64,
+            )
+            .ok()?;
+            Some(ImageThumb::Memory(std::sync::Arc::new(Image::from_bytes(
+                format, bytes,
+            ))))
+        }
+        Attachment::File { path, .. } if document::is_image(path) => {
+            Some(ImageThumb::Path(path.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Small square preview for an attached image (composer chips + user bubble).
+fn render_image_thumb(thumb: &ImageThumb, id: SharedString, border: Hsla) -> AnyElement {
+    let img_el = match thumb {
+        ImageThumb::Path(path) => img(path.clone()),
+        ImageThumb::Memory(image) => img(image.clone()),
+    };
+    div()
+        .w(px(40.))
+        .h(px(40.))
+        .min_w(px(40.))
+        .min_h(px(40.))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .border_1()
+        .border_color(border)
+        .child(
+            img_el
+                .id(id)
+                .object_fit(ObjectFit::Cover)
+                .size_full(),
+        )
+        .into_any_element()
 }
 
 pub struct AgentPanel {
@@ -176,6 +242,8 @@ pub struct AgentPanel {
     entries: Vec<Entry>,
     /// Context chips for the next prompt (@file / selection / image).
     attachments: Vec<Attachment>,
+    /// Parallel to `attachments`: image thumbnails (path or decoded paste).
+    attachment_thumbs: Vec<Option<ImageThumb>>,
     /// Open `@` file/folder picker above the composer, if any.
     mention: Option<MentionMenu>,
     scroller: Entity<MessageScrollerState>,
@@ -310,6 +378,7 @@ impl AgentPanel {
             transcript_of: None,
             entries: Vec::new(),
             attachments: Vec::new(),
+            attachment_thumbs: Vec::new(),
             mention: None,
             scroller,
             input,
@@ -343,7 +412,9 @@ impl AgentPanel {
             self.push_notice("This agent does not accept images.", true, cx);
             return;
         }
+        let thumb = thumb_for_attachment(&attachment);
         self.attachments.push(attachment);
+        self.attachment_thumbs.push(thumb);
         cx.notify();
     }
 
@@ -365,6 +436,9 @@ impl AgentPanel {
     pub fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.attachments.len() {
             self.attachments.remove(index);
+            if index < self.attachment_thumbs.len() {
+                self.attachment_thumbs.remove(index);
+            }
             cx.notify();
         }
     }
@@ -472,6 +546,7 @@ impl AgentPanel {
         if let Some(menu) = self.mention.as_mut() {
             menu.selected = index;
         }
+        // Same as Enter: attach file or folder. Dive with →/Tab only.
         self.confirm_mention(window, cx);
     }
 
@@ -809,11 +884,13 @@ impl AgentPanel {
             return;
         };
         let attachments = std::mem::take(&mut self.attachments);
+        let thumbs = std::mem::take(&mut self.attachment_thumbs);
         self.mention = None;
         let caps = self.prompt_caps();
         let blocks = prompt::build_blocks(&text, &attachments, caps);
         if blocks.is_empty() {
             self.attachments = attachments;
+            self.attachment_thumbs = thumbs;
             return;
         }
         let title = if text.is_empty() {
@@ -821,7 +898,7 @@ impl AgentPanel {
         } else {
             text.clone()
         };
-        let refs = user_refs_from(&attachments);
+        let refs = user_refs_from(&attachments, &thumbs);
         connection.prompt(blocks);
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
         self.turn_running = true;
@@ -856,12 +933,25 @@ impl AgentPanel {
                 }
                 gpui_kit::ClipboardEntry::ExternalPaths(paths) => {
                     for path in paths.paths() {
-                        if path.is_file() {
+                        if let Some(image) = image_from_path(path) {
+                            self.attach_context(image, cx);
+                            consumed = true;
+                        } else if path.is_file() {
                             let text = std::fs::read_to_string(path).ok();
                             self.attach_context(
                                 Attachment::File {
                                     path: path.to_path_buf(),
                                     text,
+                                    selection: None,
+                                },
+                                cx,
+                            );
+                            consumed = true;
+                        } else if path.is_dir() {
+                            self.attach_context(
+                                Attachment::File {
+                                    path: path.to_path_buf(),
+                                    text: None,
                                     selection: None,
                                 },
                                 cx,
@@ -1325,11 +1415,18 @@ fn render_entry(
                                     .when(!refs.is_empty(), |col| {
                                         col.child(
                                             h_flex().gap_1().flex_wrap().children(
-                                                refs.iter().map(|r| {
+                                                refs.iter().enumerate().map(|(rix, r)| {
+                                                    if let Some(thumb) = &r.thumb {
+                                                        return render_image_thumb(
+                                                            thumb,
+                                                            SharedString::from(format!(
+                                                                "agent-ref-img-{ix}-{rix}"
+                                                            )),
+                                                            theme.border,
+                                                        );
+                                                    }
                                                     let icon = if r.is_dir {
                                                         LucideIcon::Folder
-                                                    } else if r.is_image {
-                                                        LucideIcon::Image
                                                     } else {
                                                         LucideIcon::File
                                                     };
@@ -1353,6 +1450,7 @@ fn render_entry(
                                                                 .truncate()
                                                                 .child(r.name.clone()),
                                                         )
+                                                        .into_any_element()
                                                 }),
                                             ),
                                         )
@@ -1840,9 +1938,10 @@ impl AgentPanel {
         .into_any_element()
     }
 
-    fn render_composer(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let busy = self.turn_running;
+        let can_send = ready && !busy;
         let action = if busy {
             // Lucide `Square` is stroke-only (hollow); stop needs a solid block.
             Button::new("agent-stop")
@@ -1861,10 +1960,13 @@ impl AgentPanel {
             Button::new("agent-send")
                 .primary()
                 .small()
-                .cursor_pointer()
                 .icon(LucideIcon::ArrowUp)
                 .label("Send")
-                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                .disabled(!can_send)
+                .when(can_send, |b| {
+                    b.cursor_pointer()
+                        .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                })
         };
         let panel = cx.entity().downgrade();
         let muted = theme.muted_foreground;
@@ -1903,7 +2005,7 @@ impl AgentPanel {
                                     .ghost()
                                     .small()
                                     .icon(LucideIcon::Paperclip)
-                                    .tooltip("Attach files from disk…")
+                                    .tooltip("Attach files from disk… (@ for folders)")
                                     .disabled(busy)
                                     .when(!busy, |b| b.cursor_pointer())
                                     .on_click(cx.listener(|_, _, _, cx| {
@@ -1995,33 +2097,51 @@ impl AgentPanel {
 
     fn render_attachment_chips(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
+        // Bottom-align so short file/folder chips sit on the same baseline as
+        // taller image thumbs (not floating at the top of the row).
         h_flex()
             .w_full()
-            .gap_1()
+            .gap_2()
             .flex_wrap()
+            .items_end()
             .children(self.attachments.iter().enumerate().map(|(ix, attachment)| {
-                let label = attachment.label();
-                h_flex()
-                    .id(SharedString::from(format!("agent-attach-{ix}")))
-                    .items_center()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    .bg(theme.muted.opacity(0.35))
-                    .border_1()
-                    .border_color(theme.border)
-                    .text_xs()
-                    .child(div().min_w_0().truncate().child(label))
-                    .child(
-                        Button::new(SharedString::from(format!("agent-attach-x-{ix}")))
-                            .ghost()
-                            .small()
-                            .icon(LucideIcon::CircleX)
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.remove_attachment(ix, cx);
-                            })),
+                let remove = Button::new(SharedString::from(format!("agent-attach-x-{ix}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(LucideIcon::CircleX)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.remove_attachment(ix, cx);
+                    }));
+                let body: AnyElement = if let Some(Some(thumb)) = self.attachment_thumbs.get(ix) {
+                    render_image_thumb(
+                        thumb,
+                        SharedString::from(format!("agent-attach-img-{ix}")),
+                        theme.border,
                     )
+                } else {
+                    let label = attachment.label();
+                    h_flex()
+                        .items_center()
+                        .px_2()
+                        .py_1()
+                        .bg(theme.muted.opacity(0.35))
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_xs()
+                        .child(div().min_w_0().truncate().child(label))
+                        .into_any_element()
+                };
+                // Kit Attachment pattern: × rides the upper trailing corner.
+                div()
+                    .id(SharedString::from(format!("agent-attach-{ix}")))
+                    .relative()
+                    .flex_none()
+                    .pt(px(6.))
+                    .pr(px(6.))
+                    .child(body)
+                    .child(div().absolute().top_0().right_0().child(remove))
+                    .into_any_element()
             }))
             .into_any_element()
     }
@@ -2037,6 +2157,13 @@ impl Render for AgentPanel {
                     self.status,
                     Status::Starting | Status::Opening | Status::Suspended
                 ));
+        // Mount the composer with the transcript so Ready doesn't shove history
+        // up when Send appears (Send stays disabled until the session is ready).
+        let show_composer = show_transcript
+            || matches!(
+                self.status,
+                Status::Ready | Status::Starting | Status::Opening | Status::Suspended
+            );
         v_flex()
             .id("agent-panel")
             .size_full()
@@ -2054,6 +2181,6 @@ impl Render for AgentPanel {
                         self.render_state(cx)
                     }),
             )
-            .when(ready, |col| col.child(self.render_composer(cx)))
+            .when(show_composer, |col| col.child(self.render_composer(ready, cx)))
     }
 }

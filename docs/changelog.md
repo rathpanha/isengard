@@ -3,6 +3,16 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Attachment remove (`CircleX`) sits on the top-right
+  corner of each chip/thumb.
+- **2026-10-21** — Attachment chips bottom-align with image thumbs; `@`
+  click attaches folders again (→/Tab still dives).
+- **2026-10-21** — Paperclip picks files only (no accidental `@Pictures/`
+  folder); composer stays mounted while the session opens so chat history
+  does not jump when Send appears.
+- **2026-10-21** — Agent image attaches (disk / paste / multi-select) show
+  40px thumbnails in the composer and user bubble (no longer file/folder
+  chips); each selected image is its own preview.
 - **2026-10-21** — `@` mention ↑↓ scrolls the selected row into view.
 - **2026-10-21** — `@` root listing no longer clipped to 8 rows (fuzzy
   search still capped; build dirs still skipped).

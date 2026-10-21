@@ -41,6 +41,8 @@ pub enum Attachment {
         mime: String,
         data_b64: String,
         label: String,
+        /// Disk path when attached from a file (thumbnail via `img(path)`).
+        path: Option<PathBuf>,
     },
 }
 
@@ -88,7 +90,23 @@ pub fn image_from_bytes(mime: &str, bytes: &[u8], label: impl Into<String>) -> A
         mime: mime.to_owned(),
         data_b64: B64.encode(bytes),
         label: label.into(),
+        path: None,
     }
+}
+
+/// Load a raster image from disk for ACP `image` blocks + UI thumbnails.
+pub fn image_from_path(path: &Path) -> Option<Attachment> {
+    let mime = crate::editor::document::image_mime(path)?;
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    Some(Attachment::Image {
+        mime: mime.to_owned(),
+        data_b64: B64.encode(bytes),
+        label: file_label(path),
+        path: Some(path.to_path_buf()),
+    })
 }
 
 /// Assemble prompt blocks: attachments first (context), then the user text.
@@ -142,7 +160,8 @@ fn attachment_block(attachment: &Attachment, caps: PromptCaps) -> Option<Content
         Attachment::Image {
             mime,
             data_b64,
-            ..
+            path: _,
+            label: _,
         } => {
             if !caps.image {
                 return None;
@@ -248,6 +267,37 @@ mod tests {
             },
         );
         assert!(matches!(blocks[0], ContentBlock::Image(_)));
+    }
+
+    #[test]
+    fn image_from_path_reads_raster() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        // Minimal 1×1 PNG.
+        let png: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE,
+            0x02, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        std::fs::write(&path, png).unwrap();
+        let att = image_from_path(&path).expect("png attachment");
+        match att {
+            Attachment::Image {
+                mime,
+                label,
+                path: Some(p),
+                ..
+            } => {
+                assert_eq!(mime, "image/png");
+                assert_eq!(label, "shot.png");
+                assert_eq!(p, path);
+            }
+            other => panic!("expected Image, got {other:?}"),
+        }
+        assert!(image_from_path(dir.path()).is_none());
+        assert!(image_from_path(&dir.path().join("a.rs")).is_none());
     }
 
     #[test]

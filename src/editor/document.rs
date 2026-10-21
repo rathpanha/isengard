@@ -17,12 +17,24 @@ const CONFLICT_PREFIX: &str = "isengard-conflict:";
 
 /// True when `path` should open as an image preview instead of a text editor.
 pub fn is_image(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| {
-            IMAGE_EXTENSIONS
-                .iter()
-                .any(|known| ext.eq_ignore_ascii_case(known))
+    image_mime(path).is_some()
+}
+
+/// MIME type for a raster image path GPUI can preview, if the extension matches.
+pub fn image_mime(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?;
+    IMAGE_EXTENSIONS
+        .iter()
+        .find(|known| ext.eq_ignore_ascii_case(known))
+        .map(|ext| match *ext {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "ico" => "image/ico",
+            "tif" | "tiff" => "image/tiff",
+            _ => "application/octet-stream",
         })
 }
 
