@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -86,6 +86,10 @@ pub struct FileTreePanel {
     gitignores: GitIgnoreIndex,
     /// Parent dir + is_folder while an inline New File/Folder row is open.
     creating: Option<(PathBuf, bool)>,
+    /// Git dirty file paths → porcelain letter (`M` / `?` / `D` / …).
+    git_file_status: HashMap<PathBuf, char>,
+    /// Ancestor folders with a rolled-up dirty letter for label tint.
+    git_folder_status: HashMap<PathBuf, char>,
 }
 
 impl FileTreePanel {
@@ -95,7 +99,32 @@ impl FileTreePanel {
             state: cx.new(|cx| TreeState::new(cx)),
             gitignores: GitIgnoreIndex::default(),
             creating: None,
+            git_file_status: HashMap::new(),
+            git_folder_status: HashMap::new(),
         }
+    }
+
+    /// Tint explorer labels from Source Control porcelain (files + parent folders).
+    pub fn set_git_dirty(&mut self, changes: Vec<(PathBuf, char)>, cx: &mut App) {
+        self.git_file_status.clear();
+        self.git_folder_status.clear();
+        let roots: Vec<PathBuf> = self.roots.iter().map(|r| r.path().to_path_buf()).collect();
+        let mut folder_letters: HashMap<PathBuf, Vec<char>> = HashMap::new();
+        for (path, status) in changes {
+            self.git_file_status.insert(path.clone(), status);
+            for ancestor in git_ancestors_in_roots(&path, &roots) {
+                folder_letters
+                    .entry(ancestor)
+                    .or_default()
+                    .push(status);
+            }
+        }
+        for (folder, letters) in folder_letters {
+            if let Some(rollup) = rollup_git_status(&letters) {
+                self.git_folder_status.insert(folder, rollup);
+            }
+        }
+        self.state.update(cx, |_, cx| cx.notify());
     }
 
     pub fn state(&self) -> &Entity<TreeState> {
@@ -313,6 +342,8 @@ impl FileTreePanel {
             }
             set
         });
+        let git_files = Rc::new(self.git_file_status.clone());
+        let git_folders = Rc::new(self.git_folder_status.clone());
 
         let blank_menu_blocked_row = blank_menu_blocked.clone();
         let tree_el = tree(&self.state, move |ix, entry, _selected, _window, cx| {
@@ -327,6 +358,15 @@ impl FileTreePanel {
                     let git_ignored = !is_placeholder
                         && !is_creating
                         && ignored_paths.contains(&path);
+                    let git_letter = (!is_placeholder && !is_creating)
+                        .then(|| {
+                            if is_dir {
+                                git_folders.get(&path).copied()
+                            } else {
+                                git_files.get(&path).copied()
+                            }
+                        })
+                        .flatten();
                     let icon = (!is_placeholder).then(|| {
                         let icon_path = if is_creating {
                             PathBuf::from(if edit_folder_icon {
@@ -423,6 +463,12 @@ impl FileTreePanel {
                                                 .when(!is_editing, |this| this.truncate())
                                                 .when(is_placeholder, |this| {
                                                     this.text_color(muted)
+                                                })
+                                                .when_some(git_letter, |this, letter| {
+                                                    this.text_color(git_status_label_color(
+                                                        letter,
+                                                        cx.theme(),
+                                                    ))
                                                 })
                                                 .map(|this| match row_input {
                                                     Some(input) => this.child(
@@ -661,3 +707,46 @@ fn inject_creating_row(children: &mut Vec<TreeItem>, parent: &Path, is_folder: b
 fn placeholder(parent_id: &str, label: &str) -> TreeItem {
     TreeItem::new(format!("{parent_id}{PLACEHOLDER_SUFFIX}"), label.to_owned()).disabled(true)
 }
+
+/// Parents of `path` that lie under a workspace root (root included).
+fn git_ancestors_in_roots(path: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut cur = path.parent();
+    while let Some(p) = cur {
+        let in_workspace = roots.iter().any(|r| p == r.as_path() || p.starts_with(r));
+        if !in_workspace {
+            break;
+        }
+        out.push(p.to_path_buf());
+        if roots.iter().any(|r| r == p) {
+            break;
+        }
+        cur = p.parent();
+    }
+    out
+}
+
+/// Folder tint: conflict > modify/delete/rename > untracked.
+fn rollup_git_status(letters: &[char]) -> Option<char> {
+    if letters.iter().any(|&s| s == 'U') {
+        Some('U')
+    } else if letters
+        .iter()
+        .any(|&s| matches!(s, 'M' | 'A' | 'D' | 'R' | 'C'))
+    {
+        Some('M')
+    } else if letters.iter().any(|&s| s == '?') {
+        Some('?')
+    } else {
+        None
+    }
+}
+
+fn git_status_label_color(status: char, theme: &gpui_kit::component::Theme) -> Hsla {
+    match status {
+        'A' | '?' => theme.success,
+        'D' | 'U' => theme.danger,
+        _ => theme.warning,
+    }
+}
+

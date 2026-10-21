@@ -1,6 +1,6 @@
 //! Thin CLI wrapper around system `git` (no libgit).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -790,6 +790,102 @@ fn unquote_path(s: &str) -> String {
     }
 }
 
+/// Dirty / untracked worktree texts at turn start (`None` = missing on disk).
+///
+/// Used so agent shell edits (not just ACP write/Edit tools) can feed the
+/// transcript **N Files** card.
+pub fn snapshot_dirty_contents(folders: &[PathBuf]) -> HashMap<PathBuf, Option<String>> {
+    let mut out = HashMap::new();
+    for status in load_workspace_status(folders) {
+        if status.error.is_some() {
+            continue;
+        }
+        for change in status.changes {
+            let content = if change.status == 'D' || !change.path.is_file() {
+                None
+            } else {
+                Some(std::fs::read_to_string(&change.path).unwrap_or_default())
+            };
+            out.insert(change.path, content);
+        }
+    }
+    out
+}
+
+/// One path whose worktree text changed after a turn-start dirty snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnFileDelta {
+    pub path: PathBuf,
+    pub before: String,
+    pub after: String,
+}
+
+/// Diff worktree vs [`snapshot_dirty_contents`] — create / edit / delete this turn.
+pub fn worktree_deltas_since_turn(
+    folders: &[PathBuf],
+    baseline: &HashMap<PathBuf, Option<String>>,
+) -> Vec<TurnFileDelta> {
+    let mut deltas = Vec::new();
+    let mut seen = HashSet::new();
+
+    for status in load_workspace_status(folders) {
+        if status.error.is_some() {
+            continue;
+        }
+        for change in &status.changes {
+            seen.insert(change.path.clone());
+            let after = if change.status == 'D' || !change.path.is_file() {
+                String::new()
+            } else {
+                std::fs::read_to_string(&change.path).unwrap_or_default()
+            };
+            let before = match baseline.get(&change.path) {
+                Some(Some(text)) => text.clone(),
+                Some(None) => String::new(),
+                None => file_sides(
+                    &status.root,
+                    &change.rel_path,
+                    change.status,
+                    change.old_rel_path.as_deref(),
+                )
+                .map(|(old, _)| old)
+                .unwrap_or_default(),
+            };
+            if before == after {
+                continue;
+            }
+            deltas.push(TurnFileDelta {
+                path: change.path.clone(),
+                before,
+                after,
+            });
+        }
+    }
+
+    for (path, start) in baseline {
+        if seen.contains(path) {
+            continue;
+        }
+        let before = start.clone().unwrap_or_default();
+        let after = if path.is_file() {
+            std::fs::read_to_string(path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if before == after {
+            continue;
+        }
+        deltas.push(TurnFileDelta {
+            path: path.clone(),
+            before,
+            after,
+        });
+    }
+
+    deltas.sort_by(|a, b| a.path.cmp(&b.path));
+    deltas
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1566,5 +1662,71 @@ DD both_deleted.rs\n";
         );
         let msg = push(&root).unwrap();
         assert_eq!(msg.trim(), "Everything up-to-date");
+    }
+
+    #[test]
+    fn worktree_deltas_since_turn_sees_create_edit_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&root)
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&root)
+            .status();
+        fs::write(root.join("keep.txt"), "keep\n").unwrap();
+        fs::write(root.join("gone.txt"), "gone\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let folders = vec![root.clone()];
+        let baseline = snapshot_dirty_contents(&folders);
+        assert!(baseline.is_empty(), "clean tree: {baseline:?}");
+
+        fs::write(root.join("new.txt"), "created\n").unwrap();
+        fs::write(root.join("keep.txt"), "keep\nedited\n").unwrap();
+        fs::remove_file(root.join("gone.txt")).unwrap();
+
+        let deltas = worktree_deltas_since_turn(&folders, &baseline);
+        let by_name: HashMap<_, _> = deltas
+            .into_iter()
+            .map(|d| {
+                (
+                    d.path.file_name().unwrap().to_string_lossy().into_owned(),
+                    d,
+                )
+            })
+            .collect();
+        assert_eq!(by_name["new.txt"].before, "");
+        assert_eq!(by_name["new.txt"].after, "created\n");
+        assert_eq!(by_name["keep.txt"].before, "keep\n");
+        assert_eq!(by_name["keep.txt"].after, "keep\nedited\n");
+        assert_eq!(by_name["gone.txt"].before, "gone\n");
+        assert_eq!(by_name["gone.txt"].after, "");
     }
 }

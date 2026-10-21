@@ -336,6 +336,11 @@ impl IsengardApp {
                     GitPanelEvent::ToastSuccess(msg) => {
                         notify_success(msg.clone(), window, cx);
                     }
+                    GitPanelEvent::StatusUpdated => {
+                        let dirty = this.git.read(cx).dirty_paths();
+                        this.file_tree.set_git_dirty(dirty, cx);
+                        cx.notify();
+                    }
                 }
             });
 

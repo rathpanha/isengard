@@ -64,6 +64,8 @@ pub enum GitPanelEvent {
     },
     ToastError(String),
     ToastSuccess(String),
+    /// Porcelain reload finished — file tree can tint dirty paths.
+    StatusUpdated,
 }
 
 struct RepoSection {
@@ -237,7 +239,21 @@ impl GitPanel {
                 });
             }
         }
+        cx.emit(GitPanelEvent::StatusUpdated);
         cx.notify();
+    }
+
+    /// Absolute worktree paths + status letter for explorer tinting.
+    pub fn dirty_paths(&self) -> Vec<(PathBuf, char)> {
+        self.sections
+            .iter()
+            .flat_map(|s| {
+                s.status
+                    .changes
+                    .iter()
+                    .map(|c| (c.path.clone(), c.status))
+            })
+            .collect()
     }
 
     fn section_mut(&mut self, root: &Path) -> Option<&mut RepoSection> {

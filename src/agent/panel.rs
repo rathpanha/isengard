@@ -49,6 +49,7 @@ use crate::agent::prompt::{
 use crate::editor::document;
 use crate::file_tree::tree_icon;
 use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
+use crate::git::{line_change_counts, snapshot_dirty_contents, worktree_deltas_since_turn};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
 use crate::ui::components::center_dialog;
@@ -63,6 +64,10 @@ pub enum AgentPanelEvent {
     AttachFromDisk,
     /// Attach a path from the `@` mention picker (buffer text preferred).
     AttachPath(PathBuf),
+    /// Open these paths in editor tabs (file-change summary row click).
+    OpenPaths(Vec<PathBuf>),
+    /// Agent changed the worktree (write / edit / delete / shell) — refresh Git.
+    WorkspaceTouched,
     Hide,
     /// Chat index or active chat changed — persist it for this workspace.
     ChatsChanged,
@@ -105,6 +110,40 @@ struct ToolEntry {
     permission: Option<PendingPermission>,
 }
 
+/// One file touched this turn (writes + deletes), shown in the summary card.
+struct PendingFileChange {
+    path: PathBuf,
+    /// Content before the first touch this turn.
+    baseline: String,
+    latest: String,
+    deleted: bool,
+}
+
+/// Row in the end-of-turn file-change summary.
+#[derive(Clone)]
+struct FileChangeRow {
+    path: PathBuf,
+    added: u32,
+    removed: u32,
+    deleted: bool,
+}
+
+impl PendingFileChange {
+    fn row(&self) -> FileChangeRow {
+        let (added, removed) = if self.deleted {
+            (0, line_change_counts(&self.baseline, "").1)
+        } else {
+            line_change_counts(&self.baseline, &self.latest)
+        };
+        FileChangeRow {
+            path: self.path.clone(),
+            added,
+            removed,
+            deleted: self.deleted,
+        }
+    }
+}
+
 /// Thumbnail source for an attached image (path preferred; paste is in-memory).
 #[derive(Clone)]
 enum ImageThumb {
@@ -133,6 +172,11 @@ enum Entry {
     Thought(Entity<TextViewState>),
     Tool(ToolEntry),
     Plan(Vec<PlanEntry>),
+    /// Collapsible end-of-turn summary of files the agent wrote/deleted.
+    FileChanges {
+        files: Vec<FileChangeRow>,
+        expanded: bool,
+    },
     Notice { text: SharedString, error: bool },
 }
 
@@ -285,6 +329,10 @@ pub struct AgentPanel {
     usage_by_chat: HashMap<String, ContextUsage>,
     /// Agent is mid-compaction (`CompactionUpdate` InProgress).
     compacting: bool,
+    /// Files written/deleted during the current turn (flushed to a summary card).
+    turn_file_changes: HashMap<PathBuf, PendingFileChange>,
+    /// Dirty/untracked contents at turn start — catches shell create/edit/delete.
+    turn_git_baseline: Option<HashMap<PathBuf, Option<String>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -552,6 +600,8 @@ impl AgentPanel {
             usage: None,
             usage_by_chat: HashMap::new(),
             compacting: false,
+            turn_file_changes: HashMap::new(),
+            turn_git_baseline: None,
             _subscriptions: vec![enter, keys],
         }
     }
@@ -981,6 +1031,51 @@ impl AgentPanel {
             .collect()
     }
 
+    /// Flush pending write/delete rows into a summary card (tests).
+    #[cfg(test)]
+    pub fn flush_file_changes_for_test(&mut self, cx: &mut Context<Self>) {
+        self.flush_turn_file_changes(cx);
+    }
+
+    /// Snapshot dirty worktree like a real user turn start (tests).
+    #[cfg(test)]
+    pub fn begin_turn_file_tracking_for_test(&mut self) {
+        self.begin_turn_file_tracking();
+    }
+
+    /// Simulate Edit tool pending → disk change → completed (tests).
+    #[cfg(test)]
+    pub fn note_edit_tool_for_test(
+        &mut self,
+        path: &Path,
+        status: ToolCallStatus,
+        cx: &mut Context<Self>,
+    ) {
+        self.track_tool_file_change(ToolKind::Edit, status, Some(path), cx);
+    }
+
+    /// Last file-change summary rows: `(basename, added, removed, deleted)`.
+    #[cfg(test)]
+    pub fn file_change_summaries_for_test(&self) -> Vec<(String, u32, u32, bool)> {
+        self.entries.iter().rev().find_map(|entry| match entry {
+            Entry::FileChanges { files, .. } => Some(
+                files
+                    .iter()
+                    .map(|f| {
+                        let name = f
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| f.path.display().to_string());
+                        (name, f.added, f.removed, f.deleted)
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
+    }
+
     /// Background-idle with its agent stopped (tests).
     #[cfg(test)]
     pub fn is_suspended(&self) -> bool {
@@ -1016,6 +1111,9 @@ impl AgentPanel {
         };
         connection.prompt(vec![ContentBlock::Text(TextContent::new(prompt))]);
         self.turn_running = true;
+        // Silent turns never show a file card.
+        self.turn_file_changes.clear();
+        self.turn_git_baseline = None;
         self.silent = Some(kind);
         cx.notify();
         true
@@ -1705,6 +1803,7 @@ impl AgentPanel {
         };
         connection.prompt(blocks);
         self.turn_running = true;
+        self.begin_turn_file_tracking();
         self.touch_chat(&session, Some(&title));
         cx.emit(AgentPanelEvent::ChatsChanged);
         self.push_entry(
@@ -1765,6 +1864,7 @@ impl AgentPanel {
         };
         connection.prompt(item.blocks);
         self.turn_running = true;
+        self.begin_turn_file_tracking();
         self.touch_chat(&session, Some(&item.title));
         cx.emit(AgentPanelEvent::ChatsChanged);
         self.push_entry(
@@ -1887,6 +1987,8 @@ impl AgentPanel {
         // Resolve before reconnect/suspend so Git still gets a Suggest result.
         if self.silent.is_some() {
             self.finish_silent(suggest_ok, cx);
+        } else {
+            self.flush_turn_file_changes(cx);
         }
         if std::mem::take(&mut self.reconnect_after_turn) && !self.suspend_after_turn {
             // Reconnect drops the connection (and the outbound queue).
@@ -1898,6 +2000,160 @@ impl AgentPanel {
         } else {
             self.cache_active_transcript(cx);
             self.drain_outbound_queue(cx);
+        }
+    }
+
+    /// Clear prior turn file state; snapshot git dirties for shell-edit detection.
+    fn begin_turn_file_tracking(&mut self) {
+        self.turn_file_changes.clear();
+        self.turn_git_baseline = Some(snapshot_dirty_contents(&self.roots));
+    }
+
+    /// Record a successful `fs/write_text_file` for the turn summary card.
+    pub fn note_file_write(
+        &mut self,
+        path: PathBuf,
+        before: String,
+        after: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.silent.is_some() {
+            return;
+        }
+        match self.turn_file_changes.get_mut(&path) {
+            Some(pending) => {
+                pending.latest = after;
+                pending.deleted = false;
+            }
+            None => {
+                self.turn_file_changes.insert(
+                    path.clone(),
+                    PendingFileChange {
+                        path,
+                        baseline: before,
+                        latest: after,
+                        deleted: false,
+                    },
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// Snapshot baseline early so a completed delete still has line counts.
+    fn ensure_turn_file_baseline(&mut self, path: &Path) {
+        if self.silent.is_some() || self.turn_file_changes.contains_key(path) {
+            return;
+        }
+        let baseline = std::fs::read_to_string(path).unwrap_or_default();
+        self.turn_file_changes.insert(
+            path.to_path_buf(),
+            PendingFileChange {
+                path: path.to_path_buf(),
+                baseline: baseline.clone(),
+                latest: baseline,
+                deleted: false,
+            },
+        );
+    }
+
+    fn note_file_delete(&mut self, path: PathBuf) {
+        if self.silent.is_some() {
+            return;
+        }
+        self.ensure_turn_file_baseline(&path);
+        if let Some(pending) = self.turn_file_changes.get_mut(&path) {
+            pending.deleted = true;
+            pending.latest.clear();
+        }
+    }
+
+    fn track_tool_file_change(
+        &mut self,
+        kind: ToolKind,
+        status: ToolCallStatus,
+        location: Option<&Path>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = location else {
+            return;
+        };
+        match kind {
+            // Claude often edits on disk and only notifies via ToolCall (no
+            // `fs/write_text_file`) — snapshot early, re-read on Completed.
+            ToolKind::Edit | ToolKind::Move => {
+                self.ensure_turn_file_baseline(path);
+                if matches!(status, ToolCallStatus::Completed) {
+                    self.refresh_turn_file_latest(path);
+                    cx.emit(AgentPanelEvent::WorkspaceTouched);
+                }
+            }
+            ToolKind::Delete => {
+                self.ensure_turn_file_baseline(path);
+                if matches!(status, ToolCallStatus::Completed) {
+                    self.note_file_delete(path.to_path_buf());
+                    cx.emit(AgentPanelEvent::WorkspaceTouched);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// After an Edit/Move tool finishes, pull the on-disk text for +/- counts.
+    fn refresh_turn_file_latest(&mut self, path: &Path) {
+        if self.silent.is_some() {
+            return;
+        }
+        let latest = std::fs::read_to_string(path).unwrap_or_default();
+        if let Some(pending) = self.turn_file_changes.get_mut(path) {
+            pending.latest = latest;
+            pending.deleted = false;
+        }
+    }
+
+    fn flush_turn_file_changes(&mut self, cx: &mut Context<Self>) {
+        // Shell create/edit/delete never sends WriteFile / Edit — merge git delta.
+        if let Some(baseline) = self.turn_git_baseline.take() {
+            for delta in worktree_deltas_since_turn(&self.roots, &baseline) {
+                let deleted = delta.after.is_empty() && !delta.before.is_empty();
+                self.turn_file_changes.insert(
+                    delta.path.clone(),
+                    PendingFileChange {
+                        path: delta.path,
+                        baseline: delta.before,
+                        latest: delta.after,
+                        deleted,
+                    },
+                );
+            }
+        }
+        let pending = std::mem::take(&mut self.turn_file_changes);
+        if pending.is_empty() {
+            return;
+        }
+        let mut files: Vec<FileChangeRow> = pending.into_values().map(|p| p.row()).collect();
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        // Drop no-ops (write same content, or delete already-empty).
+        files.retain(|f| f.added > 0 || f.removed > 0 || f.deleted);
+        if files.is_empty() {
+            return;
+        }
+        self.push_entry(
+            Entry::FileChanges {
+                files,
+                expanded: false,
+            },
+            cx,
+        );
+        // Shell edits never went through WriteFile — refresh Source Control.
+        cx.emit(AgentPanelEvent::WorkspaceTouched);
+    }
+
+    fn toggle_file_changes(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(Entry::FileChanges { expanded, .. }) = self.entries.get_mut(ix) {
+            *expanded = !*expanded;
+            self.touched(ix, cx);
+            cx.notify();
         }
     }
 
@@ -2183,49 +2439,53 @@ impl AgentPanel {
     fn upsert_tool_call(&mut self, call: ToolCall, cx: &mut Context<Self>) {
         let location = call.locations.first().map(|l| l.path.clone());
         if let Some(ix) = self.tool_index(&call.tool_call_id) {
-            if let Entry::Tool(tool) = &mut self.entries[ix] {
+            let tracked = if let Entry::Tool(tool) = &mut self.entries[ix] {
                 tool.title = call.title.into();
                 tool.kind = call.kind;
                 tool.status = call.status;
                 tool.location = location.or(tool.location.take());
+                Some((tool.kind, tool.status, tool.location.clone()))
+            } else {
+                None
+            };
+            if let Some((kind, status, loc)) = tracked {
+                self.track_tool_file_change(kind, status, loc.as_deref(), cx);
             }
             self.touched(ix, cx);
             return;
         }
-        self.push_entry(
-            Entry::Tool(ToolEntry {
-                id: call.tool_call_id,
-                title: call.title.into(),
-                kind: call.kind,
-                status: call.status,
-                location,
-                permission: None,
-            }),
-            cx,
-        );
+        let tool = ToolEntry {
+            id: call.tool_call_id,
+            title: call.title.into(),
+            kind: call.kind,
+            status: call.status,
+            location,
+            permission: None,
+        };
+        self.track_tool_file_change(tool.kind, tool.status, tool.location.as_deref(), cx);
+        self.push_entry(Entry::Tool(tool), cx);
     }
 
     fn update_tool_call(&mut self, update: ToolCallUpdate, cx: &mut Context<Self>) {
         let Some(ix) = self.tool_index(&update.tool_call_id) else {
             // Updates for unseen calls still deserve a row.
             let fields = update.fields;
-            self.push_entry(
-                Entry::Tool(ToolEntry {
-                    id: update.tool_call_id,
-                    title: fields.title.unwrap_or_else(|| "Tool call".into()).into(),
-                    kind: fields.kind.unwrap_or(ToolKind::Other),
-                    status: fields.status.unwrap_or(ToolCallStatus::Pending),
-                    location: fields
-                        .locations
-                        .and_then(|l| l.into_iter().next())
-                        .map(|l| l.path),
-                    permission: None,
-                }),
-                cx,
-            );
+            let tool = ToolEntry {
+                id: update.tool_call_id,
+                title: fields.title.unwrap_or_else(|| "Tool call".into()).into(),
+                kind: fields.kind.unwrap_or(ToolKind::Other),
+                status: fields.status.unwrap_or(ToolCallStatus::Pending),
+                location: fields
+                    .locations
+                    .and_then(|l| l.into_iter().next())
+                    .map(|l| l.path),
+                permission: None,
+            };
+            self.track_tool_file_change(tool.kind, tool.status, tool.location.as_deref(), cx);
+            self.push_entry(Entry::Tool(tool), cx);
             return;
         };
-        if let Entry::Tool(tool) = &mut self.entries[ix] {
+        let tracked = if let Entry::Tool(tool) = &mut self.entries[ix] {
             let fields = update.fields;
             if let Some(title) = fields.title {
                 tool.title = title.into();
@@ -2239,6 +2499,12 @@ impl AgentPanel {
             if let Some(location) = fields.locations.and_then(|l| l.into_iter().next()) {
                 tool.location = Some(location.path);
             }
+            Some((tool.kind, tool.status, tool.location.clone()))
+        } else {
+            None
+        };
+        if let Some((kind, status, loc)) = tracked {
+            self.track_tool_file_change(kind, status, loc.as_deref(), cx);
         }
         self.touched(ix, cx);
     }
@@ -3002,6 +3268,9 @@ fn render_entry(
                     )
             }))
             .into_any_element(),
+        Entry::FileChanges { files, expanded } => {
+            render_file_changes(panel, ix, files, *expanded, cx)
+        }
         Entry::Notice { text, error } => div()
             .text_xs()
             .text_color(if *error {
@@ -3018,6 +3287,129 @@ fn render_entry(
         .px_3()
         .py_1()
         .child(body)
+        .into_any_element()
+}
+
+fn file_change_basename(path: &Path) -> SharedString {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+        .into()
+}
+
+fn render_file_changes(
+    panel: &WeakEntity<AgentPanel>,
+    ix: usize,
+    files: &[FileChangeRow],
+    expanded: bool,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let n = files.len();
+    let label: SharedString = if n == 1 {
+        "1 File".into()
+    } else {
+        format!("{n} Files").into()
+    };
+    let chevron = if expanded {
+        LucideIcon::ChevronDown
+    } else {
+        LucideIcon::ChevronRight
+    };
+    v_flex()
+        .id(("agent-file-changes", ix))
+        .w_full()
+        .min_w_0()
+        .gap_1()
+        .px_2()
+        .py_1p5()
+        .border_1()
+        .border_color(theme.border)
+        .rounded_md()
+        .child(
+            h_flex()
+                .id(("agent-file-changes-toggle", ix))
+                .w_full()
+                .items_center()
+                .gap_1()
+                .min_w_0()
+                .cursor_pointer()
+                .on_click({
+                    let panel = panel.clone();
+                    move |_, _, cx| {
+                        let _ = panel.update(cx, |p, cx| p.toggle_file_changes(ix, cx));
+                    }
+                })
+                .child(Icon::new(chevron).small().text_color(theme.muted_foreground))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(label),
+                ),
+        )
+        .when(expanded, |col| {
+            col.children(files.iter().enumerate().map(|(fix, file)| {
+                let path = file.path.clone();
+                let name = file_change_basename(&file.path);
+                let added = file.added;
+                let removed = file.removed;
+                h_flex()
+                    .id(SharedString::from(format!("agent-file-change-{ix}-{fix}")))
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .gap_2()
+                    .px_1()
+                    .py_0p5()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.muted.opacity(0.35)))
+                    .on_click({
+                        let panel = panel.clone();
+                        let path = path.clone();
+                        move |_, _, cx| {
+                            let _ = panel.update(cx, |_, cx| {
+                                cx.emit(AgentPanelEvent::OpenPaths(vec![path.clone()]));
+                            });
+                        }
+                    })
+                    .child(material_path_icon(&path, false, false, cx))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_sm()
+                            .child(name),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .text_xs()
+                            .when(added > 0, |row| {
+                                row.child(
+                                    div()
+                                        .text_color(theme.success)
+                                        .child(format!("+{added}")),
+                                )
+                            })
+                            .when(removed > 0, |row| {
+                                row.child(
+                                    div()
+                                        .text_color(theme.danger)
+                                        .child(format!("-{removed}")),
+                                )
+                            })
+                            .when(added == 0 && removed == 0 && file.deleted, |row| {
+                                row.child(
+                                    div()
+                                        .text_color(theme.danger)
+                                        .child("deleted"),
+                                )
+                            }),
+                    )
+            }))
+        })
         .into_any_element()
 }
 

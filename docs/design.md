@@ -220,8 +220,13 @@ Add a row here whenever a new shared component is created.
   `TextView` markdown (selectable); thoughts muted `text_xs` with a left
   `border_l_2` rule; tool calls as bordered rows (Lucide kind icon, title,
   muted path, right status: Kit `Spinner` while running, `Check` success,
-  `CircleX` danger); plan as 7×7 status squares + text (done = muted +
-  line-through); notices `text_xs` muted or danger. **Permission prompts
+  `CircleX` danger);   after a turn that changed files (git dirty delta since turn start —
+  including shell create/edit/delete — and/or ACP write / Edit/Move/
+  Delete tools), a bordered **N Files** summary under the reply (starts
+  collapsed; chevron expands; Material path icon + basename, green `+N` /
+  red `-M`; row click opens one); plan as 7×7 status
+  squares + text (done = muted + line-through);
+  notices `text_xs` muted or danger. **Permission prompts
   are inline** on the tool row (not a modal — several can be open while
   updates keep streaming): one button per agent option, `.small()`,
   allow-once `.primary()`, allow-always `.outline()`, reject
@@ -326,7 +331,9 @@ Add a row here whenever a new shared component is created.
   panes; locked scroll; opens scrolled to the first change; deleted
   lines danger-fill / inserted success-fill; overview ruler ticks; not
   editable). System `git` on PATH; errors toast.
-  Refresh on view open / workspace change / after actions / Refresh.
+  Refresh on view open / workspace change / after actions / Refresh /
+  agent worktree touches (`fs/write_text_file`, Edit/Delete tool done,
+  end-of-turn shell file delta).
   **Conflicts:** detect in-progress merge / rebase / cherry-pick
   (`MERGE_HEAD` / rebase dirs / `CHERRY_PICK_HEAD`). Persistent status
   line under Pull·Push, e.g. `Merge in progress — 2 conflicts`
@@ -380,6 +387,10 @@ Add a row here whenever a new shared component is created.
     Saved on close and debounced while resizing.
   - Multi-root tree: each root is a top-level item; a root missing on disk is
     shown disabled as `<name> (missing)` with a folder icon.
+  - Git dirty tint (same palette as Source Control badges): file label
+    `warning` for modify/rename/copy, `success` for untracked/added,
+    `danger` for delete/conflict; folders use a roll-up (conflict >
+    modify family > untracked). Updated whenever Git status reloads.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`):
     files — Rename, Delete; folders — New File…, New Folder…, Rename,
     Delete; multi-root roots also get "Remove Folder from Workspace".

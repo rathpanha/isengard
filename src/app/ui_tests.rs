@@ -399,6 +399,110 @@ fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn agent_writes_show_file_change_summary(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("notes.txt", "alpha\nbeta\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+
+    let (reply, answer) = flume::bounded(1);
+    h.agent_event(
+        AgentPanelEvent::WriteFile(FileWrite {
+            path: path.clone(),
+            content: "alpha\nBETA\ngamma\n".into(),
+            reply,
+        }),
+        cx,
+    );
+    assert_eq!(answer.try_recv().unwrap(), Ok(()));
+
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    panel.update(cx, |panel, cx| panel.flush_file_changes_for_test(cx));
+    let summary = cx.read(|cx| panel.read(cx).file_change_summaries_for_test());
+    assert_eq!(summary, vec![("notes.txt".into(), 2, 1, false)]);
+}
+
+#[gpui_kit::test]
+fn agent_edit_tool_without_write_rpc_shows_file_summary(cx: &mut TestAppContext) {
+    use agent_client_protocol::schema::v1::ToolCallStatus;
+
+    let h = Harness::new(cx);
+    let path = h.file("readme.md", "hello\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    // Pending snapshots baseline before the agent writes on disk.
+    panel.update(cx, |panel, cx| {
+        panel.note_edit_tool_for_test(&path, ToolCallStatus::Pending, cx);
+    });
+    std::fs::write(&path, "hello\n(test)\n").unwrap();
+    panel.update(cx, |panel, cx| {
+        panel.note_edit_tool_for_test(&path, ToolCallStatus::Completed, cx);
+        panel.flush_file_changes_for_test(cx);
+    });
+    let summary = cx.read(|cx| panel.read(cx).file_change_summaries_for_test());
+    assert_eq!(summary, vec![("readme.md".into(), 1, 0, false)]);
+}
+
+#[gpui_kit::test]
+fn agent_shell_style_git_edits_show_file_summary(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let root = h.dir.path().to_path_buf();
+    h.file("tracked.txt", "old\n");
+    h.file("doomed.txt", "x\n");
+    // Shell-style agent edits only show up via git worktree delta.
+    assert!(
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&root)
+        .status();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&root)
+        .status();
+    assert!(
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    h.open_folder(&root, cx);
+    h.press("secondary-alt-b", cx);
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    panel.update(cx, |panel, _cx| panel.begin_turn_file_tracking_for_test());
+
+    std::fs::write(root.join("tmp-test.txt"), "tmp\n").unwrap();
+    std::fs::write(root.join("tracked.txt"), "old\nnew\n").unwrap();
+    std::fs::remove_file(root.join("doomed.txt")).unwrap();
+
+    panel.update(cx, |panel, cx| panel.flush_file_changes_for_test(cx));
+    let summary = cx.read(|cx| panel.read(cx).file_change_summaries_for_test());
+    let names: Vec<_> = summary.iter().map(|(n, _, _, _)| n.as_str()).collect();
+    assert!(names.contains(&"tmp-test.txt"), "{summary:?}");
+    assert!(names.contains(&"tracked.txt"), "{summary:?}");
+    assert!(names.contains(&"doomed.txt"), "{summary:?}");
+}
+
+#[gpui_kit::test]
 fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

@@ -110,8 +110,30 @@ impl IsengardApp {
                 let _ = read.reply.send(result);
             }
             AgentPanelEvent::WriteFile(write) => {
-                let result = self.agent_write_file(&write.path, &write.content, window, cx);
+                let path = write.path.clone();
+                let content = write.content.clone();
+                let before = if path.exists() || self.open_text_buffer(&path).is_some() {
+                    self.agent_read_file(&path, cx).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let result = self.agent_write_file(&path, &content, window, cx);
+                if result.is_ok() {
+                    panel.update(cx, |agent, cx| {
+                        agent.note_file_write(path, before, content, cx);
+                    });
+                }
                 let _ = write.reply.send(result);
+            }
+            AgentPanelEvent::OpenPaths(paths) => {
+                for path in paths {
+                    if path.is_file() {
+                        self.open_file(path, true, window, cx);
+                    }
+                }
+            }
+            AgentPanelEvent::WorkspaceTouched => {
+                self.git.update(cx, |git, cx| git.refresh(window, cx));
             }
             // Attach to the panel that asked — don't require `is_current`.
             AgentPanelEvent::AttachFromDisk => {
@@ -203,6 +225,8 @@ impl IsengardApp {
         {
             self.file_tree.refresh_dir(&parent, cx);
         }
+        // Same as manual Save / Refresh — agent writes must show in Source Control.
+        self.git.update(cx, |git, cx| git.refresh(window, cx));
         cx.notify();
         Ok(())
     }

@@ -20,7 +20,9 @@ tabs, highlighted editor, status bar):
   rules. Save cancelled mid-close/quit toasts instead of failing silently.
 - **File tree:** Kit `Tree` while a workspace is open; lazy load; dirs first,
   case-insensitive; hides `.git` / `.DS_Store`; full Material Icon Theme;
-  gitignored rows shown muted; indent guides (design owns the pixel rules).
+  gitignored rows shown muted; dirty git paths tint the label (modified/
+  rename → warning, new/untracked → success, deleted/conflict → danger;
+  parent folders roll up); indent guides (design owns the pixel rules).
   Context menu: files Rename / Delete; folders New File / New Folder /
   Rename / Delete (multi-root roots also Remove Folder from Workspace).
   Right-click empty space in the tree panel → New File / New Folder at
@@ -78,7 +80,8 @@ tabs, highlighted editor, status bar):
   Commit from selection; Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
-  dirty). Merge/rebase/cherry-pick surfaced as a status line + `U` rows
+  dirty); refreshes when the agent touches the worktree (no manual
+  Refresh). Merge/rebase/cherry-pick surfaced as a status line + `U` rows
   first (red while conflicts remain, yellow when cleared); conflict opens
   Current | Incoming tab (locked scroll; Accept chip on each hunk +
   whole-file Accept); Commit refuses leftover markers
@@ -99,8 +102,13 @@ tabs, highlighted editor, status bar):
   run the agent's own `--cli auth login …` in a terminal tab, then Retry.
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
-  plan checklist, inline permission buttons, Stop (`.danger()`,
-  `session/cancel`), New Chat. Header shows a live activity line while busy
+  end-of-turn **N Files** change summary (collapsed by default; `+/-`
+  from git worktree delta since turn start — covers shell
+  create/edit/delete — plus Write/Edit/Delete tool paths; expand then
+  row-click to open; **not** restored after editor restart — in-memory
+  UI only; chat text/tools may replay from the agent), plan checklist, inline
+  permission buttons, Stop (`.danger()`, `session/cancel`), New Chat.
+  Header shows a live activity line while busy
   (spinner + real tool title, or Thinking/Writing/…).   Mentions show as Material icon + name chips in the user bubble (images are
   40px thumbnails, one per file). While a turn runs, Spinner + activity also
   appear at the bottom of the transcript (not only in the header). Composer

@@ -3,6 +3,19 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Explorer tints dirty git paths (and parent folders):
+  modified warning, new/untracked success, delete/conflict danger.
+- **2026-10-21** — Agent **N Files** card starts collapsed; Review button
+  removed (expand + row click to open).
+- **2026-10-21** — Source Control auto-refreshes when the agent writes,
+  finishes Edit/Delete tools, or ends a turn with shell file changes.
+- **2026-10-21** — Agent **N Files** card also diffs the git worktree since
+  turn start (shell `echo`/`rm`/…), not only Write/Edit tool RPCs.
+- **2026-10-21** — Agent **N Files** summary also tracks Edit/Move tool
+  completions (Claude often skips `fs/write_text_file` and only sends the
+  tool row) — card appears under the turn’s reply.
+- **2026-10-21** — Agent transcript shows an end-of-turn **N Files**
+  summary (line `+/-`) for writes/deletes.
 - **2026-10-21** — Status-bar toggles (sidebar, terminal, agent) show an
   info-blue icon when active instead of the gray `selected` background.
 - **2026-10-21** — Agent Mode/Model band is a fixed 36px row (scroll, no

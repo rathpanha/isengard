@@ -196,6 +196,22 @@ fn count_lines_in_change(s: &str) -> usize {
     if s.ends_with('\n') { n } else { n + 1 }
 }
 
+/// Inserted / deleted line counts for a unified text change (agent file summary).
+pub fn line_change_counts(old: &str, new: &str) -> (u32, u32) {
+    let diff = TextDiff::from_lines(old, new);
+    let mut added = 0u32;
+    let mut removed = 0u32;
+    for change in diff.iter_all_changes() {
+        let n = count_lines_in_change(change.value()) as u32;
+        match change.tag() {
+            ChangeTag::Insert => added = added.saturating_add(n),
+            ChangeTag::Delete => removed = removed.saturating_add(n),
+            ChangeTag::Equal => {}
+        }
+    }
+    (added, removed)
+}
+
 /// UTF-8 byte ranges to fill on the old / new sides (deleted / inserted lines).
 pub fn line_highlight_ranges(old: &str, new: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
     let diff = TextDiff::from_lines(old, new);
@@ -317,6 +333,13 @@ mod tests {
         let (o, n) = line_highlight_ranges(old, new);
         assert_eq!(o, vec![(2, 4)]); // "b\n"
         assert_eq!(n, vec![(2, 4)]); // "B\n"
+        assert_eq!(line_change_counts(old, new), (1, 1));
+    }
+
+    #[test]
+    fn line_change_counts_create_and_delete() {
+        assert_eq!(line_change_counts("", "x\ny\n"), (2, 0));
+        assert_eq!(line_change_counts("x\ny\nz\n", ""), (0, 3));
     }
 
     #[test]
