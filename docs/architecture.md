@@ -108,11 +108,13 @@ src/
 │   ├── lsp.rs           LSP attach, install/remove UI, event pump
 │   ├── search.rs        project search/replace + selection soft-highlight
 │   ├── git.rs           Source Control diff/conflict tabs
+│   ├── watch.rs         watcher pump: reload clean tabs, refresh tree + Git
 │   ├── terminal.rs      bottom PTY panel show/create/cwd
 │   ├── terminal_cwd.rs  multi-root “Open Terminal in…” picker
 │   ├── chrome.rs        sidebar toggle, About, config, quit
 │   ├── render.rs        title/sidebar/editor/status-bar paint + `Render`
 │   └── welcome.rs       welcome screen (start actions + recent folders)
+├── watch.rs             `FsWatcher`: `notify` recursive watch → flume of `FsChange`
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
@@ -323,6 +325,17 @@ src/
   chat state (new/load/resume/close/delete), and `acp::testing::install`
   makes panels on the test thread use it; `agent::prompt` unit-tests block
   assembly.
+- **File watching:** `workspace_changed` → `restart_fs_watch` (new
+  `watch::FsWatcher` over `workspace.folders()`, `fs_watch_gen` bump so an old
+  pump stops; skipped under `cfg!(test)`). The pump task `recv_async`s, sleeps
+  300 ms, drains the channel, then `apply_fs_changes`: per open text tab,
+  compare disk text with the tab's `saved` rope — equal → nothing (own save),
+  clean → `reload_open_file_from_disk`, dirty → one warning toast tracked in
+  `disk_conflicts`. Parents of create/remove/rename paths go to
+  `FileTreePanel::refresh_loaded_dirs` (`FsNode::refresh_children`: loaded dirs
+  only, subdirectory state kept — never use `refresh_dir` here, it expands).
+  Then `GitPanel::refresh`. `.git` is not watched, so Git's own index writes
+  cannot loop back.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close
@@ -402,7 +415,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 `aho-corasick = "1"`, existing `ignore = "0.4"` (parallel `WalkBuilder`,
 `require_git(false)`, `max_filesize`). Source Control shells out to system
 `git` on PATH (no `git2`/`gix`). LSP: `lsp-types = "0.97"` (same as Kit) +
-`url = "2"` for `file://` URIs; servers are external (app-local download dir
+`url = "2"` for `file://` URIs; file watching: `notify = "8"`; servers are external (app-local download dir
 and/or PATH — not inside the app binary). Download deps: `ureq`, `flate2`,
 `tar`, `zip`, `xz2`. `AppConfig.lsp` holds the master switch and `languages`
 map. Agent panel: `agent-client-protocol = "=3.4.0"` (feature `process`;

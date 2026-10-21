@@ -721,10 +721,7 @@ pub fn parse_porcelain(output: &str, root: &Path) -> Vec<GitChange> {
         let rest = &line[3..];
         let (rel, old_rel, status) = if rest.contains(" -> ") {
             // Rename / copy: `old -> new`
-            let (old, new) = rest
-                .rsplit_once(" -> ")
-                .map(|(o, n)| (o, n))
-                .unwrap_or(("", rest));
+            let (old, new) = rest.rsplit_once(" -> ").unwrap_or(("", rest));
             let st = if is_unmerged(x, y) {
                 'U'
             } else if x == 'R' || y == 'R' {

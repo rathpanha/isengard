@@ -36,6 +36,7 @@ mod terminal_cwd;
 mod tree;
 #[cfg(test)]
 mod ui_tests;
+mod watch;
 mod welcome;
 mod workspace;
 
@@ -226,6 +227,12 @@ pub struct IsengardApp {
     tree_edit: Option<TreeInlineEdit>,
     /// Language servers for the current workspace (rust-analyzer MVP).
     lsp: LspHost,
+    /// OS watcher over the workspace roots (`app/watch.rs`).
+    fs_watch: Option<crate::watch::FsWatcher>,
+    /// Bumps on every restart so a replaced watcher's pump stops applying.
+    fs_watch_gen: u64,
+    /// Open dirty files whose disk text diverged (warned once each).
+    disk_conflicts: std::collections::HashSet<PathBuf>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -401,6 +408,9 @@ impl IsengardApp {
             window_geometry_generation: 0,
             tree_edit: None,
             lsp: LspHost::default(),
+            fs_watch: None,
+            fs_watch_gen: 0,
+            disk_conflicts: std::collections::HashSet::new(),
             _subscriptions: vec![
                 tree_subscription,
                 search_subscription,

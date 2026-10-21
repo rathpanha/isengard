@@ -69,6 +69,7 @@ impl IsengardApp {
     pub(super) fn workspace_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.file_tree.set_folders(self.workspace.folders(), cx);
         self.refresh_git_panel(window, cx);
+        self.restart_fs_watch(window, cx);
         window.set_window_title(&self.window_title());
         self.refresh_menus(cx);
         cx.notify();

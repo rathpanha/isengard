@@ -150,7 +150,7 @@ impl IsengardApp {
                 self.agent_attach_path(panel, path.clone(), window, cx);
             }
             AgentPanelEvent::Login { title, command } if is_current => {
-                self.run_agent_login(title.clone(), command, window, cx);
+                self.run_agent_login(panel, title.clone(), command, window, cx);
             }
             AgentPanelEvent::Hide if is_current && self.agent_visible => {
                 self.on_toggle_agent_panel(&ToggleAgentPanel, window, cx);
@@ -257,16 +257,29 @@ impl IsengardApp {
             })
     }
 
+    /// Run the agent's login in a terminal tab; when it exits, reconnect the
+    /// panel that asked (no manual Retry).
     fn run_agent_login(
         &mut self,
+        panel: &Entity<AgentPanel>,
         title: String,
         command: &TerminalCommand,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let cwd = crate::terminal::pty::default_cwd(self.workspace.folders());
+        let panel = panel.downgrade();
         let result = self.terminal.update(cx, |term, cx| {
-            term.add_command_session(cwd, title, command, window, cx)
+            term.add_command_session(
+                cwd,
+                title,
+                command,
+                move |_, cx| {
+                    let _ = panel.update(cx, |panel, cx| panel.retry_after_login(cx));
+                },
+                window,
+                cx,
+            )
         });
         if let Err(err) = result {
             return notify_error(err, window, cx);

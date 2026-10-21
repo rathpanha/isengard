@@ -73,6 +73,7 @@ pub struct CatalogServer {
 
 /// Result of opening a document for LSP.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum AttachOutcome {
     Done,
     /// Spawn the server off the UI thread, then [`LspHost::finish_start`].

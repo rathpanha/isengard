@@ -164,6 +164,37 @@ impl FsNode {
         }
     }
 
+    /// Re-reads an already-loaded directory without losing the loaded/expanded
+    /// state of subdirectories that still exist. No-op while unloaded (nothing
+    /// shows it yet) — used by the file watcher, which must never expand or
+    /// collapse anything.
+    pub fn refresh_children(&mut self) {
+        let FsNode::Dir { path, children, .. } = self else {
+            return;
+        };
+        let Some(old) = children.take() else {
+            return;
+        };
+        let mut old_dirs: std::collections::HashMap<PathBuf, FsNode> = old
+            .into_iter()
+            .filter(FsNode::is_dir)
+            .map(|node| (node.path().to_path_buf(), node))
+            .collect();
+        let fresh = Self::load_one_level(path).unwrap_or_else(|err| {
+            log::warn!("failed to read {}: {err}", path.display());
+            Vec::new()
+        });
+        *children = Some(
+            fresh
+                .into_iter()
+                .map(|node| match old_dirs.remove(node.path()) {
+                    Some(kept) if node.is_dir() => kept,
+                    _ => node,
+                })
+                .collect(),
+        );
+    }
+
     /// Finds the node for `path` among this node and its loaded descendants.
     pub fn find_mut(&mut self, path: &Path) -> Option<&mut FsNode> {
         if self.path() == path {
@@ -256,6 +287,36 @@ mod tests {
 
         root.set_expanded(false);
         assert!(!root.is_expanded());
+    }
+
+    #[test]
+    fn refresh_children_keeps_subdir_state_and_picks_up_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src/ui")).unwrap();
+        std::fs::write(tmp.path().join("a.js"), "").unwrap();
+
+        let mut root = FsNode::from_path(tmp.path());
+        root.expand_toward(&tmp.path().join("src/ui"));
+
+        std::fs::remove_file(tmp.path().join("a.js")).unwrap();
+        std::fs::write(tmp.path().join("b.js"), "").unwrap();
+        root.refresh_children();
+
+        let names: Vec<_> = root
+            .children()
+            .unwrap()
+            .iter()
+            .map(|n| n.name().to_owned())
+            .collect();
+        assert_eq!(names, ["src", "b.js"]);
+        let mut expanded = Vec::new();
+        root.collect_expanded(&mut expanded);
+        assert!(expanded.contains(&tmp.path().join("src/ui")), "{expanded:?}");
+
+        // Unloaded dirs stay unloaded.
+        let mut fresh = FsNode::from_path(tmp.path());
+        fresh.refresh_children();
+        assert!(fresh.children().is_none());
     }
 
     #[test]

@@ -88,7 +88,7 @@ pub fn strip_mention(text: &str, at: usize, cursor: usize) -> (String, usize) {
 /// [`SKIP_DIRS`]. Workspace roots themselves are mentionable (multi-root
 /// folders like `royal5g-system` are not children of any walk).
 pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<MentionHit> {
-    let limit = limit.max(1).min(MAX_MENTION_HITS);
+    let limit = limit.clamp(1, MAX_MENTION_HITS);
     let browse = query.ends_with('/');
     let query = query.trim_matches('/');
     let query_lower = query.to_ascii_lowercase();
@@ -100,10 +100,8 @@ pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<Mentio
 
     // Trailing `/` means "list this folder" (dive). Bare `@src` stays fuzzy so
     // nested `src/agent` etc. remain reachable without browsing.
-    if browse {
-        if let Some((root, dir)) = resolve_dir(roots, query) {
-            return list_dir_children(roots, &root, &dir, MAX_DIR_LISTING);
-        }
+    if browse && let Some((root, dir)) = resolve_dir(roots, query) {
+        return list_dir_children(roots, &root, &dir, MAX_DIR_LISTING);
     }
 
     // Fuzzy: workspace roots first, then each root's tree with a fair budget
@@ -494,7 +492,7 @@ mod tests {
     #[test]
     fn nested_folder_query_matches_in_this_repo() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let hits = list_mentions(&[root.clone()], "mention", MAX_MENTION_HITS);
+        let hits = list_mentions(std::slice::from_ref(&root), "mention", MAX_MENTION_HITS);
         assert!(
             hits.iter().any(|h| {
                 let l = h.label.replace('\\', "/");

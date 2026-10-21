@@ -587,7 +587,7 @@ fn agent_at_mention_matches_multi_root_folder(cx: &mut TestAppContext) {
     std::fs::write(system.join("note.md"), "x\n").unwrap();
     h.open_folder(&graph, cx);
     h.with_app(cx, |app, window, cx| {
-        app.add_folders(&[system.clone()], window, cx);
+        app.add_folders(std::slice::from_ref(&system), window, cx);
     });
     h.press("secondary-alt-b", cx);
     h.wait_ready(cx);

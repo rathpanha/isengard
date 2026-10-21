@@ -273,20 +273,19 @@ fn replace_start_offset(text: &Rope, cursor: usize, prefix: &str) -> usize {
     let start = cursor.saturating_sub(prefix.len());
     if text.is_char_boundary(start)
         && text.is_char_boundary(cursor)
-        && text.slice(start..cursor).to_string() == prefix
+        && text.slice(start..cursor) == prefix
     {
         return start;
     }
     // Fallback: walk back over identifier chars.
     let before = text.slice(0..cursor).to_string();
-    let ident_start = before
+    before
         .char_indices()
         .rev()
         .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
         .map(|(i, _)| i)
         .last()
-        .unwrap_or(cursor);
-    ident_start
+        .unwrap_or(cursor)
 }
 
 fn position_before(a: LspPosition, b: LspPosition) -> bool {
@@ -411,7 +410,7 @@ fn accept_completion_with_imports(
         .unwrap_or(cursor);
     let mut additional = item.additional_text_edits.clone().unwrap_or_default();
     // Apply bottom-up so earlier ranges stay valid.
-    additional.sort_by(|a, b| b.range.start.cmp(&a.range.start));
+    additional.sort_by_key(|e| std::cmp::Reverse(e.range.start));
     state.insert_completion(item, start..cursor, window, cx);
     if !additional.is_empty() {
         state.apply_lsp_edits(&additional, window, cx);

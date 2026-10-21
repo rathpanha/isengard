@@ -212,8 +212,11 @@ pub fn line_change_counts(old: &str, new: &str) -> (u32, u32) {
     (added, removed)
 }
 
+/// UTF-8 byte ranges (start, end) to fill on one side of a diff.
+pub type ByteRanges = Vec<(usize, usize)>;
+
 /// UTF-8 byte ranges to fill on the old / new sides (deleted / inserted lines).
-pub fn line_highlight_ranges(old: &str, new: &str) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+pub fn line_highlight_ranges(old: &str, new: &str) -> (ByteRanges, ByteRanges) {
     let diff = TextDiff::from_lines(old, new);
     let mut old_ranges = Vec::new();
     let mut new_ranges = Vec::new();

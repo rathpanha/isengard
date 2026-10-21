@@ -127,6 +127,7 @@ impl IsengardApp {
     }
 
     /// Read-only side-by-side diff preview tab for a Source Control change.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn open_git_diff(
         &mut self,
         repo: PathBuf,
@@ -190,6 +191,7 @@ impl IsengardApp {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn open_side_by_side_diff(
         &mut self,
         virtual_path: PathBuf,

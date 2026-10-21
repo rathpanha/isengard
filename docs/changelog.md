@@ -12,6 +12,18 @@ status, architecture, or design. See [README.md](README.md).
   folder/workspace (`sessions.<key>.agent_prefs`) plus a global last-used
   fallback, re-applied on every session open (unknown values skipped).
 
+- **2026-10-22** — Fix every `cargo clippy --all-targets` warning (let-chains,
+  `clamp`, `contains`, type alias for diff ranges, `allow`s on the few
+  wide-signature render helpers) so clippy is warning-free again.
+
+- **2026-10-22** — Agent login reconnects by itself when the login terminal
+  program exits (`add_command_session` takes an exit hook); Retry stays as a
+  fallback. Roadmap drops auto-retry and "Import from Claude Code…".
+
+- **2026-10-22** — File watching (`notify`): outside edits reload clean tabs,
+  re-list loaded tree folders without losing expand state, and refresh Source
+  Control; dirty tabs keep their edits and warn once.
+
 - **2026-10-21** — Agent transcript tightens space between consecutive tool
   rows (shell execute…): scroller `pb_2`, tool/file-change entry padding
   reduced (was section-sized `pb_8` gaps).

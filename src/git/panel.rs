@@ -189,10 +189,9 @@ impl GitPanel {
             let mut draft = old_messages.remove(&status.root).unwrap_or_default();
             if draft.trim().is_empty()
                 && matches!(status.op, Some(RepoOp::Merge) | Some(RepoOp::CherryPick))
+                && let Some(msg) = read_merge_msg(&status.root)
             {
-                if let Some(msg) = read_merge_msg(&status.root) {
-                    draft = msg;
-                }
+                draft = msg;
             }
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
             let selected =
@@ -222,8 +221,9 @@ impl GitPanel {
         self.sections = sections;
         self.loading = false;
         // ponytail: QA/demo — open first conflict compare (`ISENGARD_OPEN_CONFLICT=1`).
-        if first_paint && std::env::var_os("ISENGARD_OPEN_CONFLICT").is_some() {
-            if let Some((repo, path, rel_path)) = self.sections.iter().find_map(|section| {
+        if first_paint
+            && std::env::var_os("ISENGARD_OPEN_CONFLICT").is_some()
+            && let Some((repo, path, rel_path)) = self.sections.iter().find_map(|section| {
                 section.status.changes.iter().find(|c| c.status == 'U').map(|c| {
                     (
                         section.status.root.clone(),
@@ -231,13 +231,13 @@ impl GitPanel {
                         c.rel_path.clone(),
                     )
                 })
-            }) {
-                cx.emit(GitPanelEvent::OpenConflict {
-                    repo,
-                    path,
-                    rel_path,
-                });
-            }
+            })
+        {
+            cx.emit(GitPanelEvent::OpenConflict {
+                repo,
+                path,
+                rel_path,
+            });
         }
         cx.emit(GitPanelEvent::StatusUpdated);
         cx.notify();
@@ -1090,6 +1090,7 @@ fn merge_selection(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_change_row(
     si: usize,
     ci: usize,

@@ -17,6 +17,9 @@ use crate::terminal::view::{TerminalConfig, TerminalView};
 use crate::theme;
 use crate::ui::tab_drag::{TabDragPreview, TerminalTabDrag};
 
+/// Runs when a one-off command tab's program exits.
+type ExitHook = Box<dyn Fn(&mut Window, &mut App)>;
+
 struct TerminalTab {
     id: usize,
     title: String,
@@ -139,15 +142,17 @@ impl TerminalPanel {
     }
 
     /// Run `command` in a new tab titled `title` (not restored with the session).
+    /// `on_exit` runs when the program exits (the tab stays open).
     pub fn add_command_session(
         &mut self,
         cwd: PathBuf,
         title: String,
         command: &TerminalCommand,
+        on_exit: impl Fn(&mut Window, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let mut tab = self.spawn_tab(cwd, Some(command), cx)?;
+        let mut tab = self.spawn_tab(cwd, Some((command, Box::new(on_exit))), cx)?;
         tab.title = title;
         self.push_active(tab, window, cx);
         Ok(())
@@ -247,11 +252,16 @@ impl TerminalPanel {
     fn spawn_tab(
         &mut self,
         cwd: PathBuf,
-        command: Option<&TerminalCommand>,
+        command: Option<(&TerminalCommand, ExitHook)>,
         cx: &mut Context<Self>,
     ) -> Result<TerminalTab, String> {
         let cols = 80u16;
         let rows = 24u16;
+        let persist = command.is_none();
+        let (command, on_exit) = match command {
+            Some((command, hook)) => (Some(command), Some(hook)),
+            None => (None, None),
+        };
         let (session, writer, reader) = match PtySession::spawn(&cwd, command, cols, rows) {
             Ok(parts) => parts,
             Err(err) => {
@@ -273,14 +283,19 @@ impl TerminalPanel {
         };
 
         let view = cx.new(|cx| {
-            TerminalView::new(writer, reader, config, cx).with_resize_callback(move |c, r| {
-                let _ = master.lock().resize(portable_pty::PtySize {
-                    cols: c as u16,
-                    rows: r as u16,
-                    pixel_width: 0,
-                    pixel_height: 0,
+            let view =
+                TerminalView::new(writer, reader, config, cx).with_resize_callback(move |c, r| {
+                    let _ = master.lock().resize(portable_pty::PtySize {
+                        cols: c as u16,
+                        rows: r as u16,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
                 });
-            })
+            match on_exit {
+                Some(hook) => view.with_exit_callback(move |window, cx| hook(window, cx)),
+                None => view,
+            }
         });
 
         let id = self.next_id;
@@ -290,7 +305,7 @@ impl TerminalPanel {
             id,
             title,
             cwd,
-            persist: command.is_none(),
+            persist,
             view,
             _session: session,
         })

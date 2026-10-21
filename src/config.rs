@@ -591,16 +591,20 @@ mod tests {
     fn agent_prefs_roundtrip_global_and_per_session() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("config.json");
-        let mut prefs = AgentPrefs::default();
-        prefs.mode = Some("plan".into());
+        let mut prefs = AgentPrefs {
+            mode: Some("plan".into()),
+            ..Default::default()
+        };
         prefs
             .config
             .insert("model".into(), AgentPrefValue::Value("opus".into()));
         prefs
             .config
             .insert("fast".into(), AgentPrefValue::Bool(true));
-        let mut config = AppConfig::default();
-        config.agent_prefs = prefs.clone();
+        let mut config = AppConfig {
+            agent_prefs: prefs.clone(),
+            ..Default::default()
+        };
         let session = WorkspaceSession {
             agent_prefs: prefs.clone(),
             ..Default::default()

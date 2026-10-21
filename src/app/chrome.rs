@@ -44,10 +44,10 @@ impl IsengardApp {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if !path.exists() {
-            if let Err(err) = self.config.save_to(&path) {
-                return notify_error(format!("Could not create config: {err:#}"), window, cx);
-            }
+        if !path.exists()
+            && let Err(err) = self.config.save_to(&path)
+        {
+            return notify_error(format!("Could not create config: {err:#}"), window, cx);
         }
         self.open_file(&path, true, window, cx);
     }

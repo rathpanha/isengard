@@ -288,6 +288,11 @@ Add a row here whenever a new shared component is created.
   primary Install (`Download`, loading while npm runs) + danger error line;
   login → one button per agent login method (first primary, others outline)
   + outline Retry; failed → danger message + primary Retry.
+- **External file changes:** a clean open tab silently reloads when its file
+  changes on disk; a tab with unsaved edits keeps them and shows one
+  `notify_warning` ("<name> changed on disk — kept your unsaved edits"). The
+  tree keeps every folder's expand state when it re-lists after a
+  create/remove/rename. No dialogs, no auto-save.
 - **Sidebar toggle:** file tree can be hidden while the workspace stays open.
   Width + visibility remembered per workspace in `sessions` (default 260px /
   visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /

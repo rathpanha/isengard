@@ -87,6 +87,12 @@ tabs, highlighted editor, status bar):
   whole-file Accept); Commit refuses leftover markers
   (rebase/cherry-pick → terminal). No persistent staging, branch UI, or
   Accept Both.
+- **File watching:** every workspace root is watched; edits made outside
+  Isengard (agent shell tools, `git checkout`, formatters, other editors) —
+  debounced 300 ms — reload **clean** open tabs, refresh loaded tree
+  directories on create/remove/rename (expand state kept), and refresh Source
+  Control. A tab with unsaved edits is never overwritten: one warning toast
+  per divergence, and Save still writes the buffer.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root). Linux in-window close × confirms unsaved changes. Save All
@@ -99,7 +105,8 @@ tabs, highlighted editor, status bar):
   **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
   Node.js; never global), else `claude-agent-acp` on `PATH`. Uses the user's
   Claude Code login — no API key in Isengard. Not signed in → login buttons
-  run the agent's own `--cli auth login …` in a terminal tab, then Retry.
+  run the agent's own `--cli auth login …` in a terminal tab; when that
+  program exits the panel reconnects by itself (Retry stays as a fallback).
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
   end-of-turn **N Files** change summary (collapsed by default; `+/-`
@@ -196,7 +203,13 @@ shortcuts. Check these first if something is off.
   terminal flows are not covered yet.
   `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
   permission).
-- No Save As; no file watching; no "Open Recent" in the native menu
+- File watching (`notify`, recursive on every root; skips `.git` /
+  `node_modules` / `target`): on Linux inotify watches every directory, so a
+  huge tree can hit the watch limit (logged, watching degrades). A reload of
+  a clean tab resets its cursor/scroll/undo (same as the agent-write reload).
+  Deleted files keep their open buffer. Changes made while the app is closed
+  are not noticed.
+- No Save As; no "Open Recent" in the native menu
   (welcome screen only). Tree New File creates on disk after the inline
   name (distinct from menu New File / `⌘N`, which stays untitled until
   Save). Tree Delete always goes to Trash. Gitignore rules refresh on
@@ -226,10 +239,8 @@ shortcuts. Check these first if something is off.
 
 - Process-level agent switch in the panel (today: `config.json` /
   Open Config File… only). Mode/model pickers + chat rename shipped.
-- Import `claude` CLI chats of the folder ("Import from Claude Code…").
 - Agent titles: the Claude adapter sends no `session_info_update` title, so
   titles are the first prompt line (rename overrides locally).
-- Auto-retry after the login terminal exits (v1 needs a Retry click).
 - Interactive checks still owed: permission buttons against the real adapter
   (its default mode did not ask), Install button, login flow, typing in the
   prompt box, and the chat list popover / rename / delete dialog (the

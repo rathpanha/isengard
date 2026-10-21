@@ -241,6 +241,29 @@ impl FileTreePanel {
         self.sync(cx);
     }
 
+    /// Re-reads every already-loaded directory in `dirs` (file watcher). Never
+    /// expands or collapses anything; one sync for the whole batch.
+    pub fn refresh_loaded_dirs<'a>(
+        &mut self,
+        dirs: impl IntoIterator<Item = &'a Path>,
+        cx: &mut App,
+    ) {
+        let mut changed = false;
+        for dir in dirs {
+            let node = self.roots.iter_mut().find_map(|root| root.find_mut(dir));
+            if let Some(node) = node
+                && node.children().is_some()
+            {
+                node.refresh_children();
+                changed = true;
+            }
+        }
+        if changed {
+            self.refresh_gitignores();
+            self.sync(cx);
+        }
+    }
+
     /// Shows or clears the temporary New File / New Folder row under `parent`.
     pub fn set_creating(&mut self, creating: Option<(PathBuf, bool)>, cx: &mut App) {
         self.creating = creating;
@@ -728,14 +751,14 @@ fn git_ancestors_in_roots(path: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
 
 /// Folder tint: conflict > modify/delete/rename > untracked.
 fn rollup_git_status(letters: &[char]) -> Option<char> {
-    if letters.iter().any(|&s| s == 'U') {
+    if letters.contains(&'U') {
         Some('U')
     } else if letters
         .iter()
         .any(|&s| matches!(s, 'M' | 'A' | 'D' | 'R' | 'C'))
     {
         Some('M')
-    } else if letters.iter().any(|&s| s == '?') {
+    } else if letters.contains(&'?') {
         Some('?')
     } else {
         None

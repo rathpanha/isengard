@@ -501,6 +501,7 @@ impl IsengardApp {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_diff_pane(
         title: &'static str,
         state: &Entity<EditorState>,

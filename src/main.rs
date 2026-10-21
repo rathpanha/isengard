@@ -13,6 +13,7 @@ mod search;
 mod terminal;
 mod theme;
 mod ui;
+mod watch;
 mod workspace;
 
 use std::borrow::Cow;

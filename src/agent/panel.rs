@@ -503,9 +503,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Plan limits come from Claude's own login; skip for custom agents.
-        #[cfg(not(test))]
-        if settings.command.is_none() {
+        // Plan limits come from Claude's own login; skip for custom agents
+        // and in tests (no network).
+        if !cfg!(test) && settings.command.is_none() {
             cx.spawn(async move |this, cx| {
                 loop {
                     let fetched = cx.background_spawn(async { limits::fetch() }).await;
@@ -741,13 +741,13 @@ impl AgentPanel {
     /// Whether Fast mode is on (tests).
     #[cfg(test)]
     pub fn fast_mode_on(&self) -> Option<bool> {
-        find_fast_option(&self.config_options).map(|o| fast_is_on(o))
+        find_fast_option(&self.config_options).map(fast_is_on)
     }
 
     /// Live context usage label for the open session (tests), e.g. `20K / 200K`.
     #[cfg(test)]
     pub fn context_usage_label(&self) -> Option<String> {
-        self.usage.map(|u| format_context_usage(u))
+        self.usage.map(format_context_usage)
     }
 
     /// Whether Mode/Model/… row is populated (tests).
@@ -915,7 +915,7 @@ impl AgentPanel {
             .as_ref()
             .filter(|m| m.query.query == query.query)
             .map(|m| m.scroll.clone())
-            .unwrap_or_else(ScrollHandle::new);
+            .unwrap_or_default();
         self.mention = Some(MentionMenu {
             query,
             cursor,
@@ -1501,6 +1501,13 @@ impl AgentPanel {
     /// Retry after a failure / login: reconnect, keeping the active chat.
     fn retry(&mut self, cx: &mut Context<Self>) {
         self.start(cx);
+    }
+
+    /// The login terminal exited: reconnect if we are still waiting on it.
+    pub(crate) fn retry_after_login(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.status, Status::LoginRequired(_)) {
+            self.retry(cx);
+        }
     }
 
     /// Header Plus / `⌘N`·`Ctrl+N` in the Agent key context.
@@ -3133,33 +3140,6 @@ fn filter_mode_choices(
         .collect()
 }
 
-#[cfg(test)]
-mod mode_filter_tests {
-    // Avoid `use super::*` — it pulls gpui_kit's `#[test]` macro into scope.
-    use super::filter_mode_choices;
-
-    #[test]
-    fn hides_auto_below_claude_4_6() {
-        let choices = vec![
-            ("ask".into(), "Ask".into()),
-            ("auto".into(), "Auto".into()),
-            ("plan".into(), "Plan".into()),
-        ];
-        let ids = |model: &str| {
-            filter_mode_choices(&choices, Some(model))
-                .into_iter()
-                .map(|(id, _)| id)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(ids("sonnet-4-5"), vec!["ask", "plan"]);
-        assert_eq!(ids("claude-haiku-4-5-20251001"), vec!["ask", "plan"]);
-        assert_eq!(ids("sonnet-4-6"), vec!["ask", "auto", "plan"]);
-        assert_eq!(ids("opus-5"), vec!["ask", "auto", "plan"]);
-        // Non-Claude agents keep Auto.
-        assert_eq!(ids("gpt-4o"), vec!["ask", "auto", "plan"]);
-    }
-}
-
 /// Icon for the current session mode (Ask / Auto / Plan / accept edits / …).
 fn mode_icon(id: &str, name: &str) -> LucideIcon {
     let blob = format!("{id} {name}").to_ascii_lowercase();
@@ -4158,6 +4138,7 @@ impl AgentPanel {
     }
 
     /// Composer-row Popover select (opens upward).
+    #[allow(clippy::too_many_arguments)]
     fn render_bottom_select(
         &self,
         popover_id: impl Into<SharedString>,
@@ -4909,5 +4890,32 @@ impl Render for AgentPanel {
                     }),
             )
             .when(show_composer, |col| col.child(self.render_composer(ready, cx)))
+    }
+}
+
+#[cfg(test)]
+mod mode_filter_tests {
+    // Avoid `use super::*` — it pulls gpui_kit's `#[test]` macro into scope.
+    use super::filter_mode_choices;
+
+    #[test]
+    fn hides_auto_below_claude_4_6() {
+        let choices = vec![
+            ("ask".into(), "Ask".into()),
+            ("auto".into(), "Auto".into()),
+            ("plan".into(), "Plan".into()),
+        ];
+        let ids = |model: &str| {
+            filter_mode_choices(&choices, Some(model))
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids("sonnet-4-5"), vec!["ask", "plan"]);
+        assert_eq!(ids("claude-haiku-4-5-20251001"), vec!["ask", "plan"]);
+        assert_eq!(ids("sonnet-4-6"), vec!["ask", "auto", "plan"]);
+        assert_eq!(ids("opus-5"), vec!["ask", "auto", "plan"]);
+        // Non-Claude agents keep Auto.
+        assert_eq!(ids("gpt-4o"), vec!["ask", "auto", "plan"]);
     }
 }
