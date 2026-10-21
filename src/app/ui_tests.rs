@@ -531,7 +531,7 @@ fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext)
             .read(cx)
             .attachment_labels()
     });
-    assert_eq!(labels, ["@note.rs"]);
+    assert_eq!(labels, ["note.rs"]);
 }
 
 #[gpui_kit::test]
@@ -565,7 +565,7 @@ fn agent_attach_image_path_is_image_chip_not_file(cx: &mut TestAppContext) {
             .read(cx)
             .attachment_labels()
     });
-    assert_eq!(labels, ["@a.png", "@b.png"]);
+    assert_eq!(labels, ["a.png", "b.png"]);
 }
 
 #[gpui_kit::test]

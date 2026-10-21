@@ -100,9 +100,10 @@ tabs, highlighted editor, status bar):
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
   plan checklist, inline permission buttons, Stop (`.danger()`,
   `session/cancel`), New Chat. Header shows a live activity line while busy
-  (spinner + real tool title, or Thinking/Writing/…). Mentions show as
-  icon + name chips in the user bubble (images are 40px thumbnails, one per
-  file). Composer attachments: type `@` for a slim file/folder picker (filter;
+  (spinner + real tool title, or Thinking/Writing/…).   Mentions show as Material icon + name chips in the user bubble (images are
+  40px thumbnails, one per file). While a turn runs, Spinner + activity also
+  appear at the bottom of the transcript (not only in the header). Composer
+  attachments: type `@` for a slim file/folder picker (filter;
   click/Enter attaches file or folder, →/Tab dives; empty `@` / filters see
   workspace roots + nested folders via a plain FS walk); chip row bottom-aligned
   (raster paths and pastes show thumbnails); Paperclip opens the OS

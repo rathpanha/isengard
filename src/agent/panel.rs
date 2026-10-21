@@ -7,7 +7,7 @@
 //! a replay. Anything that touches editor state (file reads/writes, login in
 //! the terminal, hiding, persisting the chat index) is an [`AgentPanelEvent`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::assets::IconName as LucideIcon;
@@ -44,6 +44,7 @@ use crate::agent::prompt::{
     image_from_path,
 };
 use crate::editor::document;
+use crate::file_tree::tree_icon;
 use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
@@ -109,6 +110,8 @@ enum ImageThumb {
 struct UserRef {
     /// Basename (folders keep a trailing `/`).
     name: SharedString,
+    /// Full path for Material icons (`tree_icon`); empty when paste-only image.
+    path: PathBuf,
     is_dir: bool,
     /// When set, render a small preview instead of a file/folder icon.
     thumb: Option<ImageThumb>,
@@ -147,18 +150,25 @@ fn user_refs_from(
                     }
                     UserRef {
                         name: name.into(),
+                        path: path.clone(),
                         is_dir,
                         thumb,
                     }
                 }
-                Attachment::Image { label, .. } => UserRef {
+                Attachment::Image { label, path, .. } => UserRef {
                     name: label.clone().into(),
+                    path: path.clone().unwrap_or_default(),
                     is_dir: false,
                     thumb,
                 },
             }
         })
         .collect()
+}
+
+/// Material file/folder icon (same as the explorer tree).
+fn material_path_icon(path: &Path, is_dir: bool, is_root: bool, cx: &App) -> AnyElement {
+    tree_icon(path, is_dir, false, is_root, cx.theme().is_dark())
 }
 
 fn thumb_for_attachment(attachment: &Attachment) -> Option<ImageThumb> {
@@ -1433,6 +1443,7 @@ fn render_entry(
                                         col.child(
                                             h_flex().gap_1().flex_wrap().children(
                                                 refs.iter().enumerate().map(|(rix, r)| {
+                                                    // Images: thumb only (no Lucide, no "@name").
                                                     if let Some(thumb) = &r.thumb {
                                                         return render_image_thumb(
                                                             thumb,
@@ -1442,11 +1453,7 @@ fn render_entry(
                                                             theme.border,
                                                         );
                                                     }
-                                                    let icon = if r.is_dir {
-                                                        LucideIcon::Folder
-                                                    } else {
-                                                        LucideIcon::File
-                                                    };
+                                                    // Files/folders: Material icon + basename.
                                                     h_flex()
                                                         .items_center()
                                                         .gap_1()
@@ -1456,11 +1463,12 @@ fn render_entry(
                                                         .border_color(theme.border)
                                                         .bg(theme.muted.opacity(0.35))
                                                         .text_xs()
-                                                        .child(
-                                                            Icon::new(icon)
-                                                                .text_xs()
-                                                                .text_color(theme.muted_foreground),
-                                                        )
+                                                        .child(material_path_icon(
+                                                            &r.path,
+                                                            r.is_dir,
+                                                            false,
+                                                            cx,
+                                                        ))
                                                         .child(
                                                             div()
                                                                 .min_w_0()
@@ -1928,31 +1936,62 @@ impl AgentPanel {
     }
 
     fn render_transcript(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.entries.is_empty() {
-            return v_flex()
+        let theme = cx.theme();
+        let busy = self.turn_running;
+        let activity = self.activity_label();
+        let body = if self.entries.is_empty() {
+            v_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
                 .p_4()
                 .text_center()
                 .text_xs()
-                .text_color(cx.theme().muted_foreground)
+                .text_color(theme.muted_foreground)
                 .child(format!("Ask {} about this workspace.", self.agent_name))
-                .into_any_element();
-        }
-        let panel = cx.entity().downgrade();
-        MessageScroller::new("agent-transcript", self.scroller.clone(), move |ix, _, cx| {
-            let Some(this) = panel.upgrade() else {
-                return div().into_any_element();
-            };
-            let this = this.read(cx);
-            match this.entries.get(ix) {
-                Some(entry) => render_entry(&panel, entry, ix, cx),
-                None => div().into_any_element(),
-            }
-        })
-        .size_full()
-        .into_any_element()
+                .into_any_element()
+        } else {
+            let panel = cx.entity().downgrade();
+            MessageScroller::new("agent-transcript", self.scroller.clone(), move |ix, _, cx| {
+                let Some(this) = panel.upgrade() else {
+                    return div().into_any_element();
+                };
+                let this = this.read(cx);
+                match this.entries.get(ix) {
+                    Some(entry) => render_entry(&panel, entry, ix, cx),
+                    None => div().into_any_element(),
+                }
+            })
+            .size_full()
+            .into_any_element()
+        };
+        // In-chat activity (not only the header spinner) so a long transcript
+        // still shows that a turn is running at the bottom of the pane.
+        v_flex()
+            .size_full()
+            .child(div().flex_1().min_h_0().w_full().child(body))
+            .when(busy, |col| {
+                col.child(
+                    h_flex()
+                        .id("agent-chat-busy")
+                        .w_full()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .child(Spinner::new().small())
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(activity.unwrap_or_else(|| "Working…".into())),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -2076,6 +2115,8 @@ impl AgentPanel {
                     hit.label.clone()
                 };
                 let is_dir = hit.is_dir;
+                let is_root = self.roots.iter().any(|r| r == &hit.path);
+                let icon = material_path_icon(&hit.path, is_dir, is_root, cx);
                 ListItem::new(SharedString::from(format!("agent-mention-{ix}")))
                     .w_full()
                     .selected(ix == selected)
@@ -2087,15 +2128,7 @@ impl AgentPanel {
                             .gap_1()
                             .px_1p5()
                             .py_0p5()
-                            .child(
-                                Icon::new(if is_dir {
-                                    LucideIcon::Folder
-                                } else {
-                                    LucideIcon::File
-                                })
-                                .text_xs()
-                                .text_color(theme.muted_foreground),
-                            )
+                            .child(icon)
                             .child(
                                 div()
                                     .min_w_0()
@@ -2138,14 +2171,22 @@ impl AgentPanel {
                     )
                 } else {
                     let label = attachment.label();
+                    let (path, is_dir) = match attachment {
+                        Attachment::File { path, .. } => (path.as_path(), path.is_dir()),
+                        Attachment::Image { path: Some(p), .. } => (p.as_path(), false),
+                        Attachment::Image { label, .. } => (Path::new(label.as_str()), false),
+                    };
+                    let is_root = self.roots.iter().any(|r| r == path);
                     h_flex()
                         .items_center()
+                        .gap_1()
                         .px_2()
                         .py_1()
                         .bg(theme.muted.opacity(0.35))
                         .border_1()
                         .border_color(theme.border)
                         .text_xs()
+                        .child(material_path_icon(path, is_dir, is_root, cx))
                         .child(div().min_w_0().truncate().child(label))
                         .into_any_element()
                 };

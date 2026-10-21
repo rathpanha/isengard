@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent attachment chips drop the leading `@` (basename /
+  image thumb only); chat refs use Material icons, not Lucide.
+- **2026-10-21** — Agent `@` / attachment chips use Material file icons
+  (same as the tree); turn activity Spinner also shows at the bottom of
+  the chat transcript.
 - **2026-10-21** — `@` fuzzy search gives each workspace root its own walk
   budget so a huge primary folder cannot hide files in secondary roots.
 - **2026-10-21** — Agent image attach re-encodes ICO/BMP/TIFF to PNG so

@@ -131,13 +131,14 @@ Add a row here whenever a new shared component is created.
   empty zone accepts a drop at the end. No cross-strip drag, no
   detach-to-window, no editor splits. Order persists via existing session
   save (`open_files` / terminal cwds).
-- **File icons (tree + editor tabs):** full Material Icon Theme under
-  `assets/icons/material/` (MIT; see its `LICENSE`) with associations from
-  `assets/icons/material-icons.json`, via `file_tree::tree_icon`. Same helper
-  for tree rows and open editor tabs (icon + name as `Tab` children with
-  `gap_2`, same as tree rows). Render with `img()` so upstream fills survive —
-  GPUI Kit `Icon`/`svg()` alpha-masks and re-tints. Do not replace Lucide for
-  other UI chrome.
+- **File icons (tree + editor tabs + agent mentions):** full Material Icon
+  Theme under `assets/icons/material/` (MIT; see its `LICENSE`) with
+  associations from `assets/icons/material-icons.json`, via
+  `file_tree::tree_icon`. Same helper for tree rows, open editor tabs, Agent
+  `@` mention rows, and file/folder attachment chips in the composer and user
+  bubbles (raster attaches stay as image thumbs). Render with `img()` so
+  upstream fills survive — GPUI Kit `Icon`/`svg()` alpha-masks and re-tints.
+  Do not replace Lucide for other UI chrome.
 - **File tree indent guides:** vertical 1px lines in each ancestor column
   (`sidebar_border`) through every descendant row (including the last child),
   so a folder's rail runs the full height of its contents. Multi-root: col 0
@@ -214,8 +215,8 @@ Add a row here whenever a new shared component is created.
   updates keep streaming): one button per agent option, `.small()`,
   allow-once `.primary()`, allow-always `.outline()`, reject
   `.danger().outline()`.   Composer: optional wrap-row of attachment chips
-  (`@file`, `@file:n-m`, or 40×40 image thumbnails for raster attaches)
-  with ghost `CircleX` remove; `@` in
+  (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
+  `@` on chip text) with ghost `CircleX` remove; `@` in
   the textarea opens a slim bordered mention menu (`text_xs`, scrollable
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);
@@ -234,13 +235,14 @@ Add a row here whenever a new shared component is created.
   Composer stays mounted while a
   transcript is shown / session is opening (Send disabled until Ready) so
   history does not jump when the agent finishes connecting. User bubbles
-  show attachment refs as compact chips (Folder/File icon + basename, or
-  the same 40px image thumbnails — one per image), not `@name` dumped into
-  the message text. Non-ready states are one centred column: Spinner +
-  "Starting…"; not installed → primary Install (`Download`, loading while
-  npm runs) + danger error line; login → one button per agent login method
-  (first primary, others outline) + outline Retry; failed → danger message +
-  primary Retry.
+  show attachment refs the same way (Material icon + basename, or image
+  thumb only — never Lucide Folder/File/Image, never a leading `@`). While a turn runs, a Kit `Spinner` + activity
+  label also sits at the bottom of the transcript pane (in addition to the
+  header spinner), so a long chat still shows work in progress. Non-ready
+  states are one centred column: Spinner + "Starting…"; not installed →
+  primary Install (`Download`, loading while npm runs) + danger error line;
+  login → one button per agent login method (first primary, others outline)
+  + outline Retry; failed → danger message + primary Retry.
 - **Sidebar toggle:** file tree can be hidden while the workspace stays open.
   Width + visibility remembered per workspace in `sessions` (default 260px /
   visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /

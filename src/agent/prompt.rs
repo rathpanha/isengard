@@ -47,6 +47,7 @@ pub enum Attachment {
 }
 
 impl Attachment {
+    /// Chip / title label — basename only (no leading `@`; the `@` is for typing).
     pub fn label(&self) -> String {
         match self {
             Self::File {
@@ -54,13 +55,13 @@ impl Attachment {
             } => {
                 let name = file_label(path);
                 match selection {
-                    Some(r) if r.start == r.end => format!("@{name}:{start}", start = r.start),
-                    Some(r) => format!("@{name}:{}-{}", r.start, r.end),
-                    None if path.is_dir() => format!("@{name}/"),
-                    None => format!("@{name}"),
+                    Some(r) if r.start == r.end => format!("{name}:{start}", start = r.start),
+                    Some(r) => format!("{name}:{}-{}", r.start, r.end),
+                    None if path.is_dir() => format!("{name}/"),
+                    None => name,
                 }
             }
-            Self::Image { label, .. } => format!("@{label}"),
+            Self::Image { label, .. } => label.clone(),
         }
     }
 }
