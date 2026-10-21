@@ -38,6 +38,10 @@ use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
     FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
 };
+use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
+use crate::agent::prompt::{
+    self, Attachment, PromptCaps, MAX_ATTACHMENTS, display_user_message, image_from_bytes,
+};
 use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
@@ -49,6 +53,10 @@ pub enum AgentPanelEvent {
     WriteFile(FileWrite),
     /// Run the agent's login command in a terminal tab.
     Login { title: String, command: TerminalCommand },
+    /// Open the OS file picker and attach the chosen paths.
+    AttachFromDisk,
+    /// Attach a path from the `@` mention picker (buffer text preferred).
+    AttachPath(PathBuf),
     Hide,
     /// Chat index or active chat changed — persist it for this workspace.
     ChatsChanged,
@@ -87,13 +95,53 @@ struct ToolEntry {
     permission: Option<PendingPermission>,
 }
 
+/// File/folder/image chip shown inside a user bubble (not the `@name` text dump).
+#[derive(Clone)]
+struct UserRef {
+    /// Basename (folders keep a trailing `/`).
+    name: SharedString,
+    is_dir: bool,
+    is_image: bool,
+}
+
 enum Entry {
-    User(SharedString),
+    User {
+        text: SharedString,
+        refs: Vec<UserRef>,
+    },
     Agent(Entity<TextViewState>),
     Thought(Entity<TextViewState>),
     Tool(ToolEntry),
     Plan(Vec<PlanEntry>),
     Notice { text: SharedString, error: bool },
+}
+
+fn user_refs_from(attachments: &[Attachment]) -> Vec<UserRef> {
+    attachments
+        .iter()
+        .map(|a| match a {
+            Attachment::File { path, .. } => {
+                let is_dir = path.is_dir();
+                let mut name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                if is_dir && !name.ends_with('/') {
+                    name.push('/');
+                }
+                UserRef {
+                    name: name.into(),
+                    is_dir,
+                    is_image: false,
+                }
+            }
+            Attachment::Image { label, .. } => UserRef {
+                name: label.clone().into(),
+                is_dir: false,
+                is_image: true,
+            },
+        })
+        .collect()
 }
 
 pub struct AgentPanel {
@@ -126,10 +174,24 @@ pub struct AgentPanel {
     /// Which chat `entries` belongs to (lets a reconnect resume, not replay).
     transcript_of: Option<String>,
     entries: Vec<Entry>,
+    /// Context chips for the next prompt (@file / selection / image).
+    attachments: Vec<Attachment>,
+    /// Open `@` file/folder picker above the composer, if any.
+    mention: Option<MentionMenu>,
     scroller: Entity<MessageScrollerState>,
     input: Entity<TextareaState>,
     install_error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
+}
+
+struct MentionMenu {
+    query: MentionQuery,
+    /// Cursor byte offset when the menu was last refreshed.
+    cursor: usize,
+    selected: usize,
+    hits: Vec<MentionHit>,
+    /// Keeps ↑↓ selection inside the scroll viewport.
+    scroll: ScrollHandle,
 }
 
 impl EventEmitter<AgentPanelEvent> for AgentPanel {}
@@ -177,14 +239,56 @@ impl AgentPanel {
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Ask the agent…")
+                .placeholder("Ask the agent… · @ to mention files")
                 .auto_grow(2, 10)
                 .submit_on_enter(true)
         });
         let enter = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter { shift: false, .. } = event {
-                this.send(window, cx);
+            match event {
+                InputEvent::PressEnter { shift: false, .. } => {
+                    if this.mention.is_some() {
+                        this.confirm_mention(window, cx);
+                    } else {
+                        this.send(window, cx);
+                    }
+                }
+                InputEvent::Change => this.refresh_mention(cx),
+                _ => {}
             }
+        });
+        // ponytail: Textarea eats ↑↓/Esc; intercept only while the @ menu is open.
+        let panel = cx.weak_entity();
+        let keys = cx.intercept_keystrokes(move |event, window, cx| {
+            let Some(panel) = panel.upgrade() else {
+                return;
+            };
+            panel.update(cx, |this, cx| {
+                if this.mention.is_none() {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "up" => {
+                        this.mention_move(-1);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "down" => {
+                        this.mention_move(1);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    // Dive into folder without attaching (Enter attaches).
+                    "right" | "tab" => {
+                        this.dive_mention(window, cx);
+                        cx.stop_propagation();
+                    }
+                    "escape" => {
+                        this.close_mention(cx);
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            });
         });
         Self {
             agent_name: default_name(&settings),
@@ -205,11 +309,170 @@ impl AgentPanel {
             opens_in_flight: 0,
             transcript_of: None,
             entries: Vec::new(),
+            attachments: Vec::new(),
+            mention: None,
             scroller,
             input,
             install_error: None,
-            _subscriptions: vec![enter],
+            _subscriptions: vec![enter, keys],
         }
+    }
+
+    fn prompt_caps(&self) -> PromptCaps {
+        PromptCaps {
+            image: self.info.as_ref().is_some_and(|i| i.can_image),
+            embedded_context: self.info.as_ref().is_some_and(|i| i.can_embedded_context),
+        }
+    }
+
+    /// Add a file / selection / image chip (dedupes identical attachments).
+    pub fn attach_context(&mut self, attachment: Attachment, cx: &mut Context<Self>) {
+        if self.attachments.len() >= MAX_ATTACHMENTS {
+            self.push_notice(
+                format!("At most {MAX_ATTACHMENTS} attachments per message."),
+                true,
+                cx,
+            );
+            return;
+        }
+        let dup = self.attachments.iter().any(|a| a == &attachment);
+        if dup {
+            return;
+        }
+        if matches!(attachment, Attachment::Image { .. }) && !self.prompt_caps().image {
+            self.push_notice("This agent does not accept images.", true, cx);
+            return;
+        }
+        self.attachments.push(attachment);
+        cx.notify();
+    }
+
+    /// Labels of chips queued for the next prompt (tests).
+    #[cfg(test)]
+    pub fn attachment_labels(&self) -> Vec<String> {
+        self.attachments.iter().map(Attachment::label).collect()
+    }
+
+    /// Labels currently shown in the `@` mention menu (tests).
+    #[cfg(test)]
+    pub fn mention_labels(&self) -> Vec<String> {
+        self.mention
+            .as_ref()
+            .map(|m| m.hits.iter().map(|h| h.label.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.attachments.len() {
+            self.attachments.remove(index);
+            cx.notify();
+        }
+    }
+
+    fn refresh_mention(&mut self, cx: &mut Context<Self>) {
+        let (text, cursor) = self.input.read_with(cx, |input, _| {
+            (input.value().to_string(), input.selected_range().end)
+        });
+        let Some(query) = mention::mention_at_cursor(&text, cursor) else {
+            if self.mention.take().is_some() {
+                cx.notify();
+            }
+            return;
+        };
+        let hits = mention::list_mentions(&self.roots, &query.query, MAX_MENTION_HITS);
+        let selected = self
+            .mention
+            .as_ref()
+            .filter(|m| m.query.query == query.query)
+            .map(|m| m.selected.min(hits.len().saturating_sub(1)))
+            .unwrap_or(0);
+        let scroll = self
+            .mention
+            .as_ref()
+            .filter(|m| m.query.query == query.query)
+            .map(|m| m.scroll.clone())
+            .unwrap_or_else(ScrollHandle::new);
+        self.mention = Some(MentionMenu {
+            query,
+            cursor,
+            selected,
+            hits,
+            scroll: scroll.clone(),
+        });
+        scroll.scroll_to_item(selected);
+        cx.notify();
+    }
+
+    fn close_mention(&mut self, cx: &mut Context<Self>) {
+        if self.mention.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn mention_move(&mut self, delta: isize) {
+        let Some(menu) = self.mention.as_mut() else {
+            return;
+        };
+        if menu.hits.is_empty() {
+            return;
+        }
+        let n = menu.hits.len() as isize;
+        let next = (menu.selected as isize + delta).rem_euclid(n) as usize;
+        menu.selected = next;
+        menu.scroll.scroll_to_item(next);
+    }
+
+    fn confirm_mention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.mention.as_ref() else {
+            return;
+        };
+        let Some(hit) = menu.hits.get(menu.selected).cloned() else {
+            self.close_mention(cx);
+            return;
+        };
+        let at = menu.query.at;
+        let cursor = menu.cursor;
+        let text = self.input.read_with(cx, |input, _| input.value().to_string());
+        let (next, caret) = mention::strip_mention(&text, at, cursor);
+        self.input.update(cx, |input, cx| {
+            input.set_value(&next, window, cx);
+            input.set_selected_range(caret..caret, cx);
+        });
+        self.mention = None;
+        cx.emit(AgentPanelEvent::AttachPath(hit.path));
+        cx.notify();
+    }
+
+    /// Browse into the selected folder (`→` / Tab); does not attach.
+    fn dive_mention(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.mention.as_ref() else {
+            return;
+        };
+        let Some(hit) = menu.hits.get(menu.selected).filter(|h| h.is_dir).cloned() else {
+            return;
+        };
+        let at = menu.query.at;
+        let cursor = menu.cursor;
+        let text = self.input.read_with(cx, |input, _| input.value().to_string());
+        let rel = mention::mention_rel_label(&self.roots, &hit.path);
+        let insert = format!("@{}/", rel.trim_end_matches('/'));
+        let mut out = String::new();
+        out.push_str(&text[..at.min(text.len())]);
+        out.push_str(&insert);
+        out.push_str(&text[cursor.min(text.len())..]);
+        let caret = at + insert.len();
+        self.input.update(cx, |input, cx| {
+            input.set_value(&out, window, cx);
+            input.set_selected_range(caret..caret, cx);
+        });
+        self.refresh_mention(cx);
+    }
+
+    fn pick_mention(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.mention.as_mut() {
+            menu.selected = index;
+        }
+        self.confirm_mention(window, cx);
     }
 
     pub fn chats(&self) -> &[AgentChat] {
@@ -264,7 +527,16 @@ impl AgentPanel {
         self.entries
             .iter()
             .filter_map(|entry| match entry {
-                Entry::User(text) => Some(format!("you: {text}")),
+                Entry::User { text, refs } => {
+                    let mut line = text.to_string();
+                    for r in refs {
+                        if !line.is_empty() {
+                            line.push(' ');
+                        }
+                        line.push_str(&r.name);
+                    }
+                    Some(format!("you: {line}"))
+                }
                 Entry::Agent(state) => Some(format!("agent: {}", state.read(cx).rendered_text().source())),
                 _ => None,
             })
@@ -530,21 +802,78 @@ impl AgentPanel {
             return;
         }
         let text = self.input.read(cx).value().trim().to_string();
-        if text.is_empty() {
+        if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         let (Some(connection), Some(session)) = (&self.connection, self.session.clone()) else {
             return;
         };
-        connection.prompt(text.clone());
+        let attachments = std::mem::take(&mut self.attachments);
+        self.mention = None;
+        let caps = self.prompt_caps();
+        let blocks = prompt::build_blocks(&text, &attachments, caps);
+        if blocks.is_empty() {
+            self.attachments = attachments;
+            return;
+        }
+        let title = if text.is_empty() {
+            display_user_message(&text, &attachments)
+        } else {
+            text.clone()
+        };
+        let refs = user_refs_from(&attachments);
+        connection.prompt(blocks);
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
         self.turn_running = true;
-        self.touch_chat(&session, Some(&text));
+        self.touch_chat(&session, Some(&title));
         cx.emit(AgentPanelEvent::ChatsChanged);
-        self.push_entry(Entry::User(text.into()), cx);
+        self.push_entry(
+            Entry::User {
+                text: text.into(),
+                refs,
+            },
+            cx,
+        );
         // Show the reply even if the user had scrolled up.
         self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
         cx.notify();
+    }
+
+    /// Clipboard paste into the composer: images and dropped file paths become chips.
+    fn handle_composer_paste(
+        &mut self,
+        item: &gpui_kit::ClipboardItem,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut consumed = false;
+        for entry in item.entries() {
+            match entry {
+                gpui_kit::ClipboardEntry::Image(image) => {
+                    let mime = image.format.mime_type();
+                    let label = format!("paste.{}", image.format.extension());
+                    self.attach_context(image_from_bytes(mime, &image.bytes, label), cx);
+                    consumed = true;
+                }
+                gpui_kit::ClipboardEntry::ExternalPaths(paths) => {
+                    for path in paths.paths() {
+                        if path.is_file() {
+                            let text = std::fs::read_to_string(path).ok();
+                            self.attach_context(
+                                Attachment::File {
+                                    path: path.to_path_buf(),
+                                    text,
+                                    selection: None,
+                                },
+                                cx,
+                            );
+                            consumed = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        consumed
     }
 
     /// Move `id` to the front of the index (adding it on its first prompt).
@@ -741,12 +1070,25 @@ impl AgentPanel {
     /// Replayed user chunks merge into one bubble.
     fn append_user(&mut self, text: &str, cx: &mut Context<Self>) {
         if let Some(ix) = self.entries.len().checked_sub(1)
-            && let Entry::User(existing) = &self.entries[ix]
+            && let Entry::User {
+                text: existing,
+                refs,
+            } = &self.entries[ix]
         {
-            self.entries[ix] = Entry::User(format!("{existing}{text}").into());
+            let refs = refs.clone();
+            self.entries[ix] = Entry::User {
+                text: format!("{existing}{text}").into(),
+                refs,
+            };
             self.touched(ix, cx);
         } else {
-            self.push_entry(Entry::User(text.to_owned().into()), cx);
+            self.push_entry(
+                Entry::User {
+                    text: text.to_owned().into(),
+                    refs: Vec::new(),
+                },
+                cx,
+            );
         }
     }
 
@@ -966,16 +1308,60 @@ fn render_entry(
 ) -> AnyElement {
     let theme = cx.theme();
     let body: AnyElement = match entry {
-        Entry::User(text) => Message::new()
-            .alignment(MessageAlignment::End)
-            .content(
-                MessageContent::new().bubble(
-                    Bubble::new()
-                        .with_variant(BubbleVariant::Secondary)
-                        .child(div().text_sm().child(text.clone())),
-                ),
-            )
-            .into_any_element(),
+        Entry::User { text, refs } => {
+            let has_text = !text.trim().is_empty();
+            Message::new()
+                .alignment(MessageAlignment::End)
+                .content(
+                    MessageContent::new().bubble(
+                        Bubble::new()
+                            .with_variant(BubbleVariant::Secondary)
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .when(has_text, |col| {
+                                        col.child(div().text_sm().child(text.clone()))
+                                    })
+                                    .when(!refs.is_empty(), |col| {
+                                        col.child(
+                                            h_flex().gap_1().flex_wrap().children(
+                                                refs.iter().map(|r| {
+                                                    let icon = if r.is_dir {
+                                                        LucideIcon::Folder
+                                                    } else if r.is_image {
+                                                        LucideIcon::Image
+                                                    } else {
+                                                        LucideIcon::File
+                                                    };
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .px_1p5()
+                                                        .py_0p5()
+                                                        .border_1()
+                                                        .border_color(theme.border)
+                                                        .bg(theme.muted.opacity(0.35))
+                                                        .text_xs()
+                                                        .child(
+                                                            Icon::new(icon)
+                                                                .text_xs()
+                                                                .text_color(theme.muted_foreground),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .min_w_0()
+                                                                .truncate()
+                                                                .child(r.name.clone()),
+                                                        )
+                                                }),
+                                            ),
+                                        )
+                                    }),
+                            ),
+                    ),
+                )
+                .into_any_element()
+        }
         Entry::Agent(state) => div()
             .w_full()
             .min_w_0()
@@ -1456,12 +1842,19 @@ impl AgentPanel {
 
     fn render_composer(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let action = if self.turn_running {
+        let busy = self.turn_running;
+        let action = if busy {
+            // Lucide `Square` is stroke-only (hollow); stop needs a solid block.
             Button::new("agent-stop")
-                .outline()
+                .danger()
                 .small()
                 .cursor_pointer()
-                .icon(LucideIcon::Square)
+                .child(
+                    div()
+                        .size_2()
+                        .flex_shrink_0()
+                        .bg(theme.button_danger_foreground),
+                )
                 .label("Stop")
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
         } else {
@@ -1473,14 +1866,27 @@ impl AgentPanel {
                 .label("Send")
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
+        let panel = cx.entity().downgrade();
+        let muted = theme.muted_foreground;
+        let border = theme.border;
+        let chips = (!self.attachments.is_empty()).then(|| self.render_attachment_chips(cx));
+        let mention = self.mention.as_ref().map(|m| self.render_mention_menu(m, cx));
         v_flex()
             .w_full()
             .flex_shrink_0()
             .gap_2()
             .p_2()
             .border_t_1()
-            .border_color(theme.border)
-            .child(Textarea::new(&self.input))
+            .border_color(border)
+            .children(chips)
+            .children(mention)
+            .child(
+                Textarea::new(&self.input).on_paste(move |item, _window, cx| {
+                    panel
+                        .update(cx, |panel, cx| panel.handle_composer_paste(item, cx))
+                        .unwrap_or(false)
+                }),
+            )
             .child(
                 h_flex()
                     .w_full()
@@ -1488,15 +1894,135 @@ impl AgentPanel {
                     .justify_between()
                     .gap_2()
                     .child(
-                        div()
+                        h_flex()
                             .min_w_0()
-                            .truncate()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child("Enter to send · Shift+Enter for a new line"),
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                Button::new("agent-attach-file")
+                                    .ghost()
+                                    .small()
+                                    .icon(LucideIcon::Paperclip)
+                                    .tooltip("Attach files from disk…")
+                                    .disabled(busy)
+                                    .when(!busy, |b| b.cursor_pointer())
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(AgentPanelEvent::AttachFromDisk)
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child("@ mention · Enter to send"),
+                            ),
                     )
                     .child(action),
             )
+            .into_any_element()
+    }
+
+    fn render_mention_menu(&self, menu: &MentionMenu, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let selected = menu.selected;
+        // Items are direct children of the scroll container so
+        // `ScrollHandle::scroll_to_item` indexes match ↑↓ selection.
+        v_flex()
+            .id("agent-mention-menu")
+            .w_full()
+            .max_h(px(200.))
+            .gap_0()
+            .py_0p5()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .overflow_y_scroll()
+            .track_scroll(&menu.scroll)
+            .when(menu.hits.is_empty(), |col| {
+                col.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("No matches"),
+                )
+            })
+            .children(menu.hits.iter().enumerate().map(|(ix, hit)| {
+                let label = if hit.is_dir {
+                    format!("{}/", hit.label.trim_end_matches('/'))
+                } else {
+                    hit.label.clone()
+                };
+                let is_dir = hit.is_dir;
+                ListItem::new(SharedString::from(format!("agent-mention-{ix}")))
+                    .w_full()
+                    .selected(ix == selected)
+                    .cursor_pointer()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_1()
+                            .px_1p5()
+                            .py_0p5()
+                            .child(
+                                Icon::new(if is_dir {
+                                    LucideIcon::Folder
+                                } else {
+                                    LucideIcon::File
+                                })
+                                .text_xs()
+                                .text_color(theme.muted_foreground),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .truncate()
+                                    .text_xs()
+                                    .child(label),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.pick_mention(ix, window, cx);
+                    }))
+            }))
+            .into_any_element()
+    }
+
+    fn render_attachment_chips(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        h_flex()
+            .w_full()
+            .gap_1()
+            .flex_wrap()
+            .children(self.attachments.iter().enumerate().map(|(ix, attachment)| {
+                let label = attachment.label();
+                h_flex()
+                    .id(SharedString::from(format!("agent-attach-{ix}")))
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py_1()
+                    .bg(theme.muted.opacity(0.35))
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .child(div().min_w_0().truncate().child(label))
+                    .child(
+                        Button::new(SharedString::from(format!("agent-attach-x-{ix}")))
+                            .ghost()
+                            .small()
+                            .icon(LucideIcon::CircleX)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.remove_attachment(ix, cx);
+                            })),
+                    )
+            }))
             .into_any_element()
     }
 }

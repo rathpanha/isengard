@@ -373,6 +373,81 @@ fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.file("alpha.rs", "a\n");
+    h.file("beta.rs", "b\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    h.input("@", cx);
+    let labels = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .mention_labels()
+    });
+    assert!(
+        !labels.is_empty(),
+        "mention menu populated on @: {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|l| l == "alpha.rs" || l.ends_with("alpha.rs")),
+        "root files listed: {labels:?}"
+    );
+    assert!(h.has("agent-mention-menu", cx) || h.has("agent-mention-0", cx), "menu in tree");
+
+    h.input("alp", cx);
+    let labels = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .mention_labels()
+    });
+    assert!(
+        labels.iter().any(|l| l.contains("alpha")),
+        "filtered: {labels:?}"
+    );
+    assert!(
+        !labels.iter().any(|l| l.contains("beta")),
+        "filtered out beta: {labels:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let path = h.file("note.rs", "fn main() {}\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    assert!(h.has("agent-attach-file", cx), "disk picker button");
+    h.agent_event(AgentPanelEvent::AttachPath(path), cx);
+    let labels = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .attachment_labels()
+    });
+    assert_eq!(labels, ["@note.rs"]);
+}
+
+#[gpui_kit::test]
 fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

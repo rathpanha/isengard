@@ -18,7 +18,7 @@ use agent_client_protocol::schema::v1::{
     InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest,
     ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome, SessionId,
-    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    SessionNotification, SessionUpdate, StopReason, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, Error, ErrorCode,
@@ -29,7 +29,7 @@ use crate::acp::registry::AgentLaunch;
 /// UI → agent.
 enum AgentCommand {
     Open(SessionOpen),
-    Prompt(String),
+    Prompt(Vec<ContentBlock>),
     Cancel,
     Delete(String),
 }
@@ -51,6 +51,8 @@ pub struct AgentInfo {
     pub can_load: bool,
     pub can_resume: bool,
     pub can_delete: bool,
+    pub can_image: bool,
+    pub can_embedded_context: bool,
 }
 
 /// A terminal login the agent advertised (`authMethods[].type == "terminal"`):
@@ -153,8 +155,8 @@ impl AgentConnection {
         let _ = self.commands.send(AgentCommand::Delete(id));
     }
 
-    pub fn prompt(&self, text: String) {
-        let _ = self.commands.send(AgentCommand::Prompt(text));
+    pub fn prompt(&self, blocks: Vec<ContentBlock>) {
+        let _ = self.commands.send(AgentCommand::Prompt(blocks));
     }
 
     pub fn cancel(&self) {
@@ -306,6 +308,7 @@ async fn session(
         .await?;
     let logins = login_methods(&init.auth_methods);
     let caps = &init.agent_capabilities;
+    let prompt = &caps.prompt_capabilities;
     let info = AgentInfo {
         name: init
             .agent_info
@@ -315,6 +318,8 @@ async fn session(
         can_load: caps.load_session,
         can_resume: caps.session_capabilities.resume.is_some(),
         can_delete: caps.session_capabilities.delete.is_some(),
+        can_image: prompt.image,
+        can_embedded_context: prompt.embedded_context,
     };
     let can_close = caps.session_capabilities.close.is_some();
     // Multi-root workspaces: without the capability the agent only sees `cwd`.
@@ -375,15 +380,12 @@ async fn session(
                     }
                 }
             }
-            AgentCommand::Prompt(text) => {
+            AgentCommand::Prompt(blocks) => {
                 let Some(session_id) = current.clone() else {
                     let _ = events.send(AgentEvent::TurnFailed("No chat is open.".into()));
                     continue;
                 };
-                let request = PromptRequest::new(
-                    session_id,
-                    vec![ContentBlock::Text(TextContent::new(text))],
-                );
+                let request = PromptRequest::new(session_id, blocks);
                 let turn = cx.send_request(request);
                 let events = events.clone();
                 let logins = logins.clone();
@@ -441,6 +443,7 @@ mod tests {
             AgentEvent::Connected(info) => {
                 assert_eq!(info.name, "Fake Agent");
                 assert!(info.can_load && info.can_resume && info.can_delete);
+                assert!(info.can_image && info.can_embedded_context);
             }
             _ => panic!("expected Connected"),
         }
@@ -476,7 +479,9 @@ mod tests {
         let conn = connected(&agent);
         conn.open(SessionOpen::New);
         assert_eq!(opened(&conn), "s1");
-        conn.prompt("shout".into());
+        conn.prompt(vec![ContentBlock::Text(
+            agent_client_protocol::schema::v1::TextContent::new("shout"),
+        )]);
 
         let AgentEvent::ReadFile(read) = next(&conn) else {
             panic!("expected ReadFile");
@@ -506,7 +511,9 @@ mod tests {
         let conn = connected(&agent);
         conn.open(SessionOpen::New);
         let id = opened(&conn);
-        conn.prompt("hi".into());
+        conn.prompt(vec![ContentBlock::Text(
+            agent_client_protocol::schema::v1::TextContent::new("hi"),
+        )]);
         assert_eq!(chunk_text(&conn), (false, "echo: hi".into()));
         assert!(matches!(next(&conn), AgentEvent::TurnEnded(_)));
         drop(conn);

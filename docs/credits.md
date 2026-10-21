@@ -77,6 +77,7 @@ many to list; `cargo tree` is the full graph).
 | `trash` | Move tree Delete to the OS Trash / Recycle Bin |
 | `parking_lot` / `flume` / `ropey` | Sync + channels for the adapted terminal view (flume also bridges the agent thread) |
 | `agent-client-protocol` | Agent panel ACP client (see AI agents above) |
+| `base64` | Encode pasted images for ACP `image` prompt blocks |
 | `futures` | `block_on` executor for the agent connection thread |
 | `cc` | Build pin for tree-sitter/SQL + Windows resource embed |
 | `embed-resource` | Windows `.exe` icon (build) |

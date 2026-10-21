@@ -99,7 +99,7 @@ src/
 ├── app/                 IsengardApp entity (one GPUI view; split by concern)
 │   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`), module map
 │   ├── actions.rs       `actions!`, tab path actions, key bindings, menu bridge
-│   ├── agent.rs         Agent panel toggle, agent file read/write, login → terminal
+│   ├── agent.rs         Agent panel toggle, OS attach picker, file I/O, login → terminal
 │   ├── tab.rs           `EditorTab` / `TabBody` / `DiffKind`
 │   ├── workspace.rs     open/switch/persist workspace, recents, titles
 │   ├── session.rs       session + window geometry restore/persist
@@ -140,8 +140,11 @@ src/
 │   ├── files.rs         `slice_lines` for `fs/read_text_file` ranges
 │   └── testing.rs       (tests) in-memory `FakeAgent` + `install` hook
 ├── agent/
-│   └── panel.rs         `AgentPanel`: status, transcript (`MessageScroller`),
-│                        tool rows, permission buttons, composer
+│   ├── panel.rs         `AgentPanel`: status, transcript (`MessageScroller`),
+│   │                    tool rows, permission buttons, composer + `@` menu
+│   ├── mention.rs       `@` query parse + workspace file/folder listing
+│   └── prompt.rs        `Attachment` → ACP `ContentBlock`s (`resource` /
+│                        `resource_link` / `image`) from agent prompt caps
 ├── file_tree/
 │   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
 │   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)
@@ -293,12 +296,20 @@ src/
   We do **not** advertise ACP client `terminal/*` — Claude Agent 0.94.0
   runs Bash in-process and never calls those methods. Header
   `activity_label` shows the in-progress tool title (or Thinking / Writing)
-  while a turn runs. `apply_switch` calls `reset_agent_for_workspace` (drops
-  the agent: the SDK kills its process group). Tests:
-  `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
+  while a turn runs.   Composer attachments (`agent::mention` + `agent::prompt`): `@` opens a
+  filtered file/folder menu from workspace roots (`ignore` walk, capped);
+  pick emits `AttachPath` (buffer-first read). Paperclip →
+  `prompt_for_paths` (OS multi file+folder) → same attach path. Paste
+  image/paths also become chips. `session/prompt` sends `Vec<ContentBlock>`
+  (`resource` when `embeddedContext`, else `<context>` text, else
+  `resource_link`; images when `image`). Caps from `AgentInfo` after
+  `initialize`. `apply_switch` calls
+  `reset_agent_for_workspace` (drops the agent: the SDK kills its process
+  group). Tests: `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
   `acp::testing::FakeAgent` serves `Channel::duplex` connections with shared
   chat state (new/load/resume/close/delete), and `acp::testing::install`
-  makes panels on the test thread use it.
+  makes panels on the test thread use it; `agent::prompt` unit-tests block
+  assembly.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close

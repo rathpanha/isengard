@@ -98,9 +98,13 @@ tabs, highlighted editor, status bar):
   run the agent's own `--cli auth login …` in a terminal tab, then Retry.
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
-  plan checklist, inline permission buttons, Stop (`session/cancel`), New
-  Chat. Header shows a live activity line while busy (spinner + real tool
-  title, or Thinking/Writing/…). Agent file reads use the open buffer
+  plan checklist, inline permission buttons, Stop (`.danger()`,
+  `session/cancel`), New Chat. Header shows a live activity line while busy
+  (spinner + real tool title, or Thinking/Writing/…). Mentions show as
+  icon + name chips in the user bubble. Composer attachments: type `@` for a slim file/folder picker (filter;
+  Enter/click attaches file or folder, →/Tab dives into a folder); chip
+  row; Paperclip opens the OS file/folder picker (multi-select); paste
+  image or paths. Files embed when allowed; folders are resource links. Agent file reads use the open buffer
   (unsaved text) before disk; writes go to disk and reload the open tab as
   saved. Visibility + width persist per workspace. Shell tools run inside
   Claude Agent (not Isengard's Terminal panel) — ACP client `terminal/*` is
@@ -180,7 +184,6 @@ shortcuts. Check these first if something is off.
 
 ## Roadmap — Agent panel after v1
 
-- @-mention files / selection as prompt context; image paste.
 - Switching agents or modes/models inside the panel; chat rename.
 - Import `claude` CLI chats of the folder ("Import from Claude Code…").
 - Agent titles: the Claude adapter sends no `session_info_update` title, so

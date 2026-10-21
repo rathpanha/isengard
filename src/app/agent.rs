@@ -2,6 +2,7 @@
 use super::*;
 use super::tab::TabBody;
 use crate::acp::slice_lines;
+use crate::agent::Attachment;
 use crate::terminal::pty::TerminalCommand;
 
 impl IsengardApp {
@@ -95,6 +96,13 @@ impl IsengardApp {
             AgentPanelEvent::WriteFile(write) => {
                 let result = self.agent_write_file(&write.path, &write.content, window, cx);
                 let _ = write.reply.send(result);
+            }
+            // Attach to the panel that asked — don't require `is_current`.
+            AgentPanelEvent::AttachFromDisk => {
+                self.agent_pick_from_disk(panel, window, cx);
+            }
+            AgentPanelEvent::AttachPath(path) => {
+                self.agent_attach_path(panel, path.clone(), window, cx);
             }
             AgentPanelEvent::Login { title, command } if is_current => {
                 self.run_agent_login(title.clone(), command, window, cx);
@@ -198,5 +206,78 @@ impl IsengardApp {
         }
         self.persist_session(cx);
         cx.notify();
+    }
+
+    fn agent_attach_path(
+        &mut self,
+        panel: &Entity<AgentPanel>,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if document::is_untitled(&path) {
+            return notify_error("Save the file before attaching it", window, cx);
+        }
+        let text = if path.is_file() {
+            self.agent_read_file(&path, cx).ok()
+        } else if path.is_dir() {
+            // Folders go as a resource link (no embed); agent can browse from the URI.
+            None
+        } else {
+            return notify_error("That path is not a file or folder", window, cx);
+        };
+        panel.update(cx, |panel, cx| {
+            panel.attach_context(
+                Attachment::File {
+                    path,
+                    text,
+                    selection: None,
+                },
+                cx,
+            );
+        });
+    }
+
+    /// Native OS picker (multi file + folder) → attach each path as a chip.
+    fn agent_pick_from_disk(
+        &mut self,
+        panel: &Entity<AgentPanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+            prompt: Some("Attach to agent".into()),
+        });
+        let panel = panel.clone();
+        cx.spawn_in(window, async move |this, window| {
+            let chosen = match paths.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) => return,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Open dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Open dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            this.update_in(window, |this, window, cx| {
+                for path in chosen {
+                    this.agent_attach_path(&panel, path, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }

@@ -3870,6 +3870,7 @@ dependencies = [
  "aho-corasick",
  "alacritty_terminal",
  "anyhow",
+ "base64 0.22.1",
  "cc",
  "dirs 6.0.0",
  "embed-resource",

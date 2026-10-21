@@ -1,0 +1,284 @@
+//! Build ACP `session/prompt` content blocks from text + attachments.
+
+use std::path::{Path, PathBuf};
+
+use agent_client_protocol::schema::v1::{
+    ContentBlock, EmbeddedResource, EmbeddedResourceResource, ImageContent, ResourceLink,
+    TextContent, TextResourceContents,
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+
+/// What the agent advertised in `initialize.promptCapabilities`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PromptCaps {
+    pub image: bool,
+    pub embedded_context: bool,
+}
+
+/// Soft ceiling for embedding file text (bigger → resource link only).
+pub const MAX_EMBED_BYTES: usize = 256 * 1024;
+
+/// Max chips in the composer.
+pub const MAX_ATTACHMENTS: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineRange {
+    /// 1-based inclusive.
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Attachment {
+    /// Whole file or a selection from it.
+    File {
+        path: PathBuf,
+        /// When set and agent allows embedded context, send as `resource`.
+        text: Option<String>,
+        selection: Option<LineRange>,
+    },
+    Image {
+        mime: String,
+        data_b64: String,
+        label: String,
+    },
+}
+
+impl Attachment {
+    pub fn label(&self) -> String {
+        match self {
+            Self::File {
+                path, selection, ..
+            } => {
+                let name = file_label(path);
+                match selection {
+                    Some(r) if r.start == r.end => format!("@{name}:{start}", start = r.start),
+                    Some(r) => format!("@{name}:{}-{}", r.start, r.end),
+                    None if path.is_dir() => format!("@{name}/"),
+                    None => format!("@{name}"),
+                }
+            }
+            Self::Image { label, .. } => format!("@{label}"),
+        }
+    }
+}
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+pub fn file_uri(path: &Path) -> String {
+    url::Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", path.display()))
+}
+
+/// 1-based line of a byte offset in `text` (clamped).
+#[cfg(test)]
+pub fn line_at_offset(text: &str, offset: usize) -> u32 {
+    let offset = offset.min(text.len());
+    let line = text[..offset].bytes().filter(|&b| b == b'\n').count() + 1;
+    line as u32
+}
+
+pub fn image_from_bytes(mime: &str, bytes: &[u8], label: impl Into<String>) -> Attachment {
+    Attachment::Image {
+        mime: mime.to_owned(),
+        data_b64: B64.encode(bytes),
+        label: label.into(),
+    }
+}
+
+/// Assemble prompt blocks: attachments first (context), then the user text.
+pub fn build_blocks(text: &str, attachments: &[Attachment], caps: PromptCaps) -> Vec<ContentBlock> {
+    let mut blocks = Vec::with_capacity(attachments.len() + 1);
+    for attachment in attachments {
+        if let Some(block) = attachment_block(attachment, caps) {
+            blocks.push(block);
+        }
+    }
+    let trimmed = text.trim();
+    if !trimmed.is_empty() {
+        blocks.push(ContentBlock::Text(TextContent::new(trimmed)));
+    }
+    blocks
+}
+
+fn attachment_block(attachment: &Attachment, caps: PromptCaps) -> Option<ContentBlock> {
+    match attachment {
+        Attachment::File {
+            path,
+            text,
+            selection,
+        } => {
+            let uri = file_uri(path);
+            match (caps.embedded_context, text.as_ref()) {
+                (true, Some(body)) if body.len() <= MAX_EMBED_BYTES => {
+                    let mut contents = TextResourceContents::new(body.clone(), uri);
+                    contents = contents.mime_type("text/plain".to_owned());
+                    Some(ContentBlock::Resource(EmbeddedResource::new(
+                        EmbeddedResourceResource::TextResourceContents(contents),
+                    )))
+                }
+                // Agent didn't advertise embed (or file was huge): still put
+                // bytes in a text block so the model sees them. ResourceLink
+                // alone is only a markdown [@name](uri) in Claude ACP.
+                (_, Some(body)) if body.len() <= MAX_EMBED_BYTES => {
+                    Some(ContentBlock::Text(TextContent::new(format!(
+                        "<context ref=\"{uri}\">\n{body}\n</context>"
+                    ))))
+                }
+                _ => {
+                    let mut link = ResourceLink::new(file_label(path), uri);
+                    if let Some(r) = selection {
+                        link = link.description(format!("lines {}–{}", r.start, r.end));
+                    }
+                    Some(ContentBlock::ResourceLink(link))
+                }
+            }
+        }
+        Attachment::Image {
+            mime,
+            data_b64,
+            ..
+        } => {
+            if !caps.image {
+                return None;
+            }
+            Some(ContentBlock::Image(ImageContent::new(
+                data_b64.clone(),
+                mime.clone(),
+            )))
+        }
+    }
+}
+
+pub fn display_user_message(text: &str, attachments: &[Attachment]) -> String {
+    let mut out = text.trim().to_owned();
+    for attachment in attachments {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&attachment.label());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embeds_when_capable_and_small() {
+        let path = PathBuf::from("/w/a.rs");
+        let blocks = build_blocks(
+            "fix this",
+            &[Attachment::File {
+                path: path.clone(),
+                text: Some("fn main() {}".into()),
+                selection: None,
+            }],
+            PromptCaps {
+                image: false,
+                embedded_context: true,
+            },
+        );
+        assert!(matches!(blocks[0], ContentBlock::Resource(_)));
+        assert!(matches!(blocks[1], ContentBlock::Text(_)));
+    }
+
+    #[test]
+    fn falls_back_to_text_context_without_embed_cap() {
+        let blocks = build_blocks(
+            "hi",
+            &[Attachment::File {
+                path: PathBuf::from("/w/a.rs"),
+                text: Some("body".into()),
+                selection: Some(LineRange { start: 2, end: 4 }),
+            }],
+            PromptCaps::default(),
+        );
+        let ContentBlock::Text(t) = &blocks[0] else {
+            panic!("expected text context, got {:?}", blocks[0]);
+        };
+        assert!(t.text.contains("body"));
+        assert!(t.text.contains("file://") || t.text.contains("/w/a.rs"));
+        assert!(matches!(blocks[1], ContentBlock::Text(_)));
+    }
+
+    #[test]
+    fn resource_link_when_no_text() {
+        let blocks = build_blocks(
+            "hi",
+            &[Attachment::File {
+                path: PathBuf::from("/w/a.rs"),
+                text: None,
+                selection: Some(LineRange { start: 2, end: 4 }),
+            }],
+            PromptCaps::default(),
+        );
+        let ContentBlock::ResourceLink(link) = &blocks[0] else {
+            panic!("expected link");
+        };
+        assert_eq!(link.name, "a.rs");
+        assert_eq!(link.description.as_deref(), Some("lines 2–4"));
+    }
+
+    #[test]
+    fn skips_images_without_cap() {
+        let blocks = build_blocks(
+            "see",
+            &[image_from_bytes("image/png", b"\x89PNG", "paste.png")],
+            PromptCaps::default(),
+        );
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(blocks[0], ContentBlock::Text(_)));
+    }
+
+    #[test]
+    fn includes_images_when_capable() {
+        let blocks = build_blocks(
+            "",
+            &[image_from_bytes("image/png", b"\x89PNG", "paste.png")],
+            PromptCaps {
+                image: true,
+                embedded_context: false,
+            },
+        );
+        assert!(matches!(blocks[0], ContentBlock::Image(_)));
+    }
+
+    #[test]
+    fn line_at_offset_is_one_based() {
+        assert_eq!(line_at_offset("a\nb\nc", 0), 1);
+        assert_eq!(line_at_offset("a\nb\nc", 2), 2);
+        assert_eq!(line_at_offset("a\nb\nc", 4), 3);
+    }
+}
+
+#[cfg(test)]
+mod serde_shape {
+    use super::*;
+
+    #[test]
+    fn resource_serializes_like_claude_expects() {
+        let blocks = build_blocks(
+            "fix",
+            &[Attachment::File {
+                path: PathBuf::from("/tmp/a.rs"),
+                text: Some("fn main() {}".into()),
+                selection: None,
+            }],
+            PromptCaps {
+                image: false,
+                embedded_context: true,
+            },
+        );
+        let v = serde_json::to_value(&blocks[0]).unwrap();
+        assert_eq!(v["type"], "resource");
+        assert!(v["resource"]["text"].as_str().unwrap().contains("fn main"));
+        assert!(v["resource"]["uri"].as_str().unwrap().starts_with("file://"));
+    }
+}

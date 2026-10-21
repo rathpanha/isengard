@@ -14,12 +14,12 @@ use agent_client_protocol::schema::v1::{
     AgentCapabilities, CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk,
     DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
     InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
-    ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest, ResumeSessionRequest,
-    ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionAdditionalDirectoriesCapabilities, SessionDeleteCapabilities, SessionId, SessionNotification, SessionResumeCapabilities,
-    SessionUpdate, StopReason, TextContent, ToolCallUpdate, ToolCallUpdateFields,
-    WriteTextFileRequest,
+    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest,
+    PromptResponse, ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
+    SessionAdditionalDirectoriesCapabilities, SessionDeleteCapabilities, SessionId,
+    SessionNotification, SessionResumeCapabilities, SessionUpdate, StopReason, TextContent,
+    ToolCallUpdate, ToolCallUpdateFields, WriteTextFileRequest,
 };
 use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, Error};
 
@@ -110,7 +110,14 @@ impl FakeAgent {
                             responder.respond(
                                 InitializeResponse::new(req.protocol_version)
                                     .agent_capabilities(
-                                        AgentCapabilities::new().load_session(true).session_capabilities(
+                                        AgentCapabilities::new()
+                                            .load_session(true)
+                                            .prompt_capabilities(
+                                                PromptCapabilities::new()
+                                                    .image(true)
+                                                    .embedded_context(true),
+                                            )
+                                            .session_capabilities(
                                             SessionCapabilities::new()
                                                 .resume(SessionResumeCapabilities::new())
                                                 .close(SessionCloseCapabilities::new())
@@ -193,10 +200,15 @@ impl FakeAgent {
                             let cx2 = cx.clone();
                             cx.spawn(async move {
                                 let sid = req.session_id;
-                                let text = match req.prompt.first() {
-                                    Some(ContentBlock::Text(t)) => t.text.clone(),
-                                    _ => String::new(),
-                                };
+                                let text = req
+                                    .prompt
+                                    .iter()
+                                    .rev()
+                                    .find_map(|b| match b {
+                                        ContentBlock::Text(t) => Some(t.text.clone()),
+                                        _ => None,
+                                    })
+                                    .unwrap_or_default();
                                 let reply = if text == "shout" {
                                     shout(&cx2, &sid).await?;
                                     "done".to_string()

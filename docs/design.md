@@ -213,13 +213,25 @@ Add a row here whenever a new shared component is created.
   are inline** on the tool row (not a modal — several can be open while
   updates keep streaming): one button per agent option, `.small()`,
   allow-once `.primary()`, allow-always `.outline()`, reject
-  `.danger().outline()`. Composer: auto-growing `Textarea` (Enter sends,
-  Shift+Enter newline) + muted hint + `.small()` primary Send (`ArrowUp`)
-  that becomes outlined Stop (`Square`) while a turn runs. Non-ready states
-  are one centred column: Spinner + "Starting…"; not installed → primary
-  Install (`Download`, loading while npm runs) + danger error line; login
-  → one button per agent login method (first primary, others outline) +
-  outline Retry; failed → danger message + primary Retry.
+  `.danger().outline()`.   Composer: optional wrap-row of attachment chips
+  (`@file`, `@file:n-m`, `@paste.png`) with ghost `CircleX` remove; `@` in
+  the textarea opens a slim bordered mention menu (`text_xs`, scrollable
+  ~200px): empty `@` lists every root child except build/deps skips
+  (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);
+  ↑↓ move (scrolls selection into view), Enter/click attaches file or folder,
+  →/Tab dives into a folder,
+  Esc closes; then auto-growing `Textarea` (Enter sends when the menu is
+  closed, Shift+Enter newline; paste image / file paths become chips);
+  then a row of ghost `.small()` Attach from disk (`Paperclip` — OS multi
+  file/folder picker) + muted hint + primary Send (`ArrowUp`) that becomes
+  `.danger()` Stop (solid square block, not Lucide stroke `Square`) while a
+  turn runs. User bubbles show attachment refs as compact chips
+  (Folder/File/Image icon + basename), not `@name` dumped into the message
+  text. Non-ready states are one centred column: Spinner + "Starting…";
+  not installed → primary Install (`Download`, loading while npm runs) +
+  danger error line; login → one button per agent login method (first
+  primary, others outline) + outline Retry; failed → danger message +
+  primary Retry.
 - **Sidebar toggle:** file tree can be hidden while the workspace stays open.
   Width + visibility remembered per workspace in `sessions` (default 260px /
   visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /

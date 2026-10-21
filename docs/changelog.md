@@ -3,6 +3,24 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — `@` mention ↑↓ scrolls the selected row into view.
+- **2026-10-21** — `@` root listing no longer clipped to 8 rows (fuzzy
+  search still capped; build dirs still skipped).
+- **2026-10-21** — Agent Stop uses a solid square (Lucide `Square` is hollow).
+- **2026-10-21** — Agent Stop is `.danger()`; mentioned files/folders show
+  as icon + name chips in the user bubble.
+- **2026-10-21** — Agent Paperclip opens the OS file/folder picker
+  (replaced active-file / selection attach buttons).
+- **2026-10-21** — Slimmer `@` mention menu; Enter attaches folders too
+  (→/Tab still dives in).
+- **2026-10-21** — Agent composer `@` mention menu: workspace file/folder
+  list (filter, dive into folders, Enter attaches).
+- **2026-10-21** — Fix agent file attach: tree selection when no text tab;
+  embed file text as `<context>` when the agent lacks `embeddedContext`;
+  attach events no longer gated on panel Entity eq.
+- **2026-10-21** — Agent composer attachments: active file / selection
+  chips, paste image or paths; ACP `resource` / `resource_link` / `image`
+  from agent prompt capabilities (`agent::prompt`, `base64`).
 - **2026-10-21** — Dropped unused ACP client `terminal/*` (Claude Agent
   0.94.0 never calls it). Kept agent header live activity text (tool title /
   Thinking…).
