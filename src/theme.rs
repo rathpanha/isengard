@@ -25,6 +25,10 @@ const STATUS_BAR_HEIGHT: f32 = 28.0;
 /// sidebar | editor split. Matches Kit `Tab::large()` (36px).
 pub const PANEL_HEADER_ROW_H: f32 = 36.0;
 
+/// Agent composer Mode/Model/… band — one small-control row. Reserved even
+/// before ACP options arrive so Ready does not shove the textarea up.
+pub const AGENT_COMPOSER_CONFIG_ROW_H: f32 = 36.0;
+
 fn load_highlight(name: &str, json: &str) -> Arc<HighlightTheme> {
     let style: HighlightThemeStyle =
         serde_json::from_str(json).unwrap_or_else(|err| panic!("{name} highlight theme: {err}"));

@@ -3,6 +3,38 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-21** — Agent Mode/Model band is a fixed 36px row (scroll, no
+  wrap); open no longer clears options with `None` — stops the composer
+  height jump when controls arrive.
+- **2026-10-21** — `⌘N` / `Ctrl+N` in the Agent composer starts a new chat
+  (not New File); File menu / editor focus keep New File.
+- **2026-10-21** — Context used/size shows on session open/switch as
+  `— / {window}` until the agent’s first `usage_update`.
+- **2026-10-21** — Model picker uses `Cpu` (not `Bot`); Mode list hides
+  Claude Auto when the selected model is older than 4.6.
+- **2026-10-21** — Agent header / chat list show context used/size from
+  ACP `usage_update`; advertise compaction so agents can notify when they
+  auto-compact near the window limit.
+- **2026-10-21** — Queued follow-ups show under the composer with
+  per-item remove (`CircleX`).
+- **2026-10-21** — Rename → Generate titles any chat (cache or load);
+  Mode tap icon follows Ask / Auto / Plan / accept-edits.
+- **2026-10-21** — Follow-ups while the agent is busy are queued (FIFO);
+  Send stays as Queue beside Stop; drained when the turn ends.
+- **2026-10-21** — Composer config taps show Lucide icons (Shield/Bot/Tag/
+  Maximize2/Zap/…) so Mode vs Model vs Context vs agent are not label-only.
+- **2026-10-21** — Composer config pickers move to their own wrapping row
+  above Attach/Send so Mode/Model/Context/Fast no longer overflow.
+- **2026-10-21** — Composer Fast is a Switch labeled Fast; Context picker
+  when the model list has 200K/1M (etc.) variants for the selection.
+- **2026-10-21** — Model picker splits family + version (Sonnet / 4.5);
+  Fast mode shows as On/Off (was mislabeled Version).
+- **2026-10-21** — New Chat uses `Plus`; rename dialog can AI-Generate a
+  title from the open transcript (silent ACP turn).
+- **2026-10-21** — Agent header shows session title; Mode / Model pickers
+  sit on the composer row.
+- **2026-10-21** — Agent chat rename (history Pencil) + ACP mode/model
+  pickers when the session advertises them.
 - **2026-10-21** — Git Suggest uses the Ready ACP agent for a commit-message
   draft (any agent; silent turn); falls back to the path heuristic when
   none is connected.

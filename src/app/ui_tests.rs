@@ -569,6 +569,169 @@ fn agent_attach_image_path_is_image_chip_not_file(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_ctrl_n_starts_new_chat(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    h.ask("hello", cx);
+    assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
+    let tabs_before = cx.read(|cx| h.app.read(cx).tabs.len());
+    // Composer was focused on panel open; ask() types into it — keep focus.
+    h.with_app(cx, |app, window, cx| {
+        let panel = app.agent.clone().expect("agent");
+        panel.update(cx, |panel, cx| {
+            panel.input().update(cx, |input, cx| input.focus(window, cx));
+        });
+    });
+    h.press("secondary-n", cx);
+    h.wait_ready(cx);
+    assert!(
+        h.transcript(cx).is_empty(),
+        "Ctrl/Cmd+N in composer must open a new chat"
+    );
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).tabs.len()),
+        tabs_before,
+        "must not create an Untitled editor tab"
+    );
+}
+
+#[gpui_kit::test]
+fn agent_config_row_survives_new_chat_open(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    assert!(cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .has_composer_config_for_test()
+    }));
+    // New chat goes Opening with prior config_options kept — no row collapse.
+    h.with_app(cx, |app, window, cx| {
+        let panel = app.agent.clone().expect("agent");
+        panel.update(cx, |panel, cx| {
+            panel.new_chat_for_test(window, cx);
+            assert!(
+                panel.has_composer_config_for_test(),
+                "config row must stay mounted while Opening"
+            );
+        });
+    });
+    h.wait_ready(cx);
+    assert!(cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .has_composer_config_for_test()
+    }));
+}
+
+#[gpui_kit::test]
+fn agent_shows_context_placeholder_before_prompt(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    // No turn yet — Claude would not have sent usage_update; we seed size.
+    h.wait_for(cx, "context placeholder", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).context_usage_label().as_deref() == Some("— / 200K")
+            })
+        })
+    });
+}
+
+#[gpui_kit::test]
+fn agent_mode_hides_auto_when_model_too_old(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    // Default fake model is Sonnet 4.5 — Claude Auto needs 4.6+.
+    let ids = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .mode_choice_ids()
+    });
+    assert!(
+        !ids.iter().any(|id| id == "auto"),
+        "Auto hidden on Sonnet 4.5: {ids:?}"
+    );
+    assert!(ids.iter().any(|id| id == "ask"), "{ids:?}");
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_model_version_for_test("4.6", cx);
+        });
+    });
+    h.wait_for(cx, "sonnet 4.6 auto shown", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_model_id().as_deref() == Some("sonnet-4-6")
+                    && a.mode_choice_ids().iter().any(|id| id == "auto")
+            })
+        })
+    });
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_model_family_for_test("Haiku", cx);
+        });
+    });
+    h.wait_for(cx, "haiku hides auto", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_model_id().as_deref() == Some("haiku-4-5")
+                    && !a.mode_choice_ids().iter().any(|id| id == "auto")
+            })
+        })
+    });
+}
+
+#[gpui_kit::test]
+fn agent_shows_context_usage_after_prompt(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    h.ask("hello", cx);
+    // Fake agent: 10K + 2 msgs × 5K = 20K of 200K after one turn.
+    h.wait_for(cx, "context usage", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).context_usage_label().as_deref() == Some("20K / 200K")
+            })
+        })
+    });
+}
+
+#[gpui_kit::test]
 fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
@@ -606,6 +769,288 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
     h2.wait_ready(cx);
     assert_eq!(h2.transcript(cx), ["you: hello", "agent: echo: hello"]);
     assert!(agent.calls().contains(&"load s1".to_string()));
+}
+
+#[gpui_kit::test]
+fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+    h.ask("hello", cx);
+
+    // Rename is local (persisted with the chat index).
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            assert_eq!(panel.active_chat_title().as_deref(), Some("hello"));
+            panel.rename_chat("s1", "My notes", cx);
+            assert_eq!(panel.active_chat_title().as_deref(), Some("My notes"));
+        });
+    });
+    let titles: Vec<String> = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .config
+            .session(&folder.to_string_lossy())
+            .map(|s| s.agent_chats.iter().map(|c| c.title.clone()).collect())
+            .unwrap_or_default()
+    });
+    assert_eq!(titles, ["My notes"]);
+
+    // Fake agent: Auto, Sonnet 4.5 (+ 4.6 / 1M / Opus), Fast Off.
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_mode_id()),
+        Some("auto".into())
+    );
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_model_id()),
+        Some("sonnet-4-5".into())
+    );
+    assert_eq!(
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .current_model_family()
+        }),
+        Some("Sonnet".into())
+    );
+    assert_eq!(
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .current_model_version_label()
+        }),
+        Some("4.5".into())
+    );
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).fast_mode_on()),
+        Some(false)
+    );
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_mode_for_test("code", cx);
+            panel.set_model_version_for_test("4.6", cx);
+        });
+    });
+    h.wait_for(cx, "mode/version apply", |_cx| {
+        let calls = agent.calls();
+        calls.iter().any(|c| c == "set_mode code")
+            && calls.iter().any(|c| c == "set_config model=sonnet-4-6")
+    });
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_mode_id()),
+        Some("code".into())
+    );
+    h.wait_for(cx, "sonnet 4.6 selected", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_model_id().as_deref() == Some("sonnet-4-6")
+                    && a.current_model_version_label().as_deref() == Some("4.6")
+                    && a.current_model_context_label().as_deref() == Some("200K")
+            })
+        })
+    });
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_model_context_for_test("1M", cx);
+            panel.set_fast_mode_for_test(true, cx);
+        });
+    });
+    h.wait_for(cx, "context 1M + fast on", |_cx| {
+        let calls = agent.calls();
+        calls.iter().any(|c| c == "set_config model=sonnet-4-6[1m]")
+            && calls.iter().any(|c| c == "set_config fast_mode=on")
+    });
+    h.wait_for(cx, "1M + fast applied", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_model_id().as_deref() == Some("sonnet-4-6[1m]")
+                    && a.current_model_context_label().as_deref() == Some("1M")
+                    && a.fast_mode_on() == Some(true)
+            })
+        })
+    });
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_model_family_for_test("Opus", cx);
+        });
+    });
+    h.wait_for(cx, "opus family keeps 1M", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_model_id().as_deref() == Some("opus-5[1m]")
+                    && a.current_model_family().as_deref() == Some("Opus")
+                    && a.current_model_context_label().as_deref() == Some("1M")
+            })
+        })
+    });
+
+    // AI title for the open chat (silent turn).
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            assert!(panel.request_chat_title("s1".into(), cx));
+        });
+    });
+    h.wait_for(cx, "AI chat title", |cx| {
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).active_chat_title().as_deref() == Some("Generated Title"))
+        })
+    });
+
+    // Second chat, then Generate for the first via cached transcript.
+    let first_id = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .active_chat_id()
+            .expect("active chat after title")
+    });
+    h.with_app(cx, |app, window, cx| {
+        let panel = app.agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.new_chat_for_test(window, cx);
+        });
+    });
+    h.wait_ready(cx);
+    h.ask("other", cx);
+    assert_ne!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_id()),
+        Some(first_id.clone())
+    );
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            assert!(
+                panel.request_chat_title(first_id.clone(), cx),
+                "Generate should work for a non-active chat via cache"
+            );
+        });
+    });
+    h.wait_for(cx, "AI title for background chat", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx)
+                    .chat_title(&first_id)
+                    .as_deref()
+                    == Some("Generated Title")
+            })
+        })
+    });
+}
+
+#[gpui_kit::test]
+fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("q");
+    h.open_folder(&folder, cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    let release = agent.arm_hold();
+    h.input("hold", cx);
+    h.press("enter", cx);
+    h.wait_for(cx, "first turn running", |cx| {
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).is_turn_running())
+        })
+    });
+    h.input("next", cx);
+    h.press("enter", cx);
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_queue_len()),
+        1,
+        "follow-up should be queued while hold runs"
+    );
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_previews()),
+        ["next"]
+    );
+    let t = h.transcript(cx);
+    assert!(t.iter().any(|l| l == "you: hold"), "{t:?}");
+    assert!(
+        !t.iter().any(|l| l == "you: next"),
+        "queued bubble waits until drain: {t:?}"
+    );
+
+    // Queue a second follow-up, then drop the first from the strip.
+    h.input("skip-me", cx);
+    h.press("enter", cx);
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_previews()),
+        ["next", "skip-me"]
+    );
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.remove_outbound_for_test(1, cx));
+    });
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_previews()),
+        ["next"]
+    );
+
+    agent.release_hold(release);
+    // Wall-clock: the fake agent blocks a real thread on hold; GPUI's test
+    // clock does not advance that.
+    for _ in 0..200 {
+        cx.run_until_parked();
+        let lines = h.transcript(cx);
+        if lines.iter().any(|l| l == "agent: echo: next") {
+            assert_eq!(
+                lines,
+                [
+                    "you: hold",
+                    "agent: echo: hold",
+                    "you: next",
+                    "agent: echo: next",
+                ],
+                "{lines:?}"
+            );
+            assert_eq!(
+                cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_queue_len()),
+                0
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cx.executor().advance_clock(std::time::Duration::from_millis(10));
+    }
+    panic!(
+        "queued follow-up never drained; transcript={:?} queue={}",
+        h.transcript(cx),
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_queue_len()),
+    );
 }
 
 #[gpui_kit::test]

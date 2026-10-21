@@ -3,7 +3,8 @@
 //! Chats live in shared state, so they outlive a connection the way the
 //! Claude adapter's transcripts outlive its process. Prompt `"shout"` runs a
 //! file round trip (read `/w/notes.txt`, ask permission, write it upper-cased);
-//! any other prompt replies `"echo: <text>"`.
+//! `"hold"` waits until [`FakeAgent::release_hold`] (for queue tests); any
+//! other prompt replies `"echo: <text>"`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -17,9 +18,12 @@ use agent_client_protocol::schema::v1::{
     NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest,
     PromptResponse, ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest,
     ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionAdditionalDirectoriesCapabilities, SessionDeleteCapabilities, SessionId,
-    SessionNotification, SessionResumeCapabilities, SessionUpdate, StopReason, TextContent,
-    ToolCallUpdate, ToolCallUpdateFields, WriteTextFileRequest,
+    SessionAdditionalDirectoriesCapabilities, SessionConfigOption, SessionConfigOptionCategory,
+    SessionConfigSelectOption, SessionDeleteCapabilities, SessionId, SessionMode,
+    SessionModeState, SessionNotification, SessionResumeCapabilities, SessionUpdate,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+    SetSessionModeResponse, StopReason, TextContent, ToolCallUpdate, ToolCallUpdateFields,
+    UsageUpdate, WriteTextFileRequest,
 };
 use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, Error};
 
@@ -46,13 +50,88 @@ pub fn connection(roots: Vec<PathBuf>) -> Option<AgentConnection> {
 /// One message in a fake chat: `(from_user, text)`.
 pub type FakeMessage = (bool, String);
 
-#[derive(Default)]
 struct State {
     next_id: u32,
     chats: HashMap<String, Vec<FakeMessage>>,
     calls: Vec<String>,
     /// `additionalDirectories` of the last new/load/resume.
     extra_roots: Vec<PathBuf>,
+    mode_id: String,
+    model_id: String,
+    fast_mode: bool,
+    /// When set, a `"hold"` prompt blocks until the sender fires.
+    hold_rx: Option<flume::Receiver<()>>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            next_id: 0,
+            chats: HashMap::new(),
+            calls: Vec::new(),
+            extra_roots: Vec::new(),
+            mode_id: "auto".into(),
+            model_id: "sonnet-4-5".into(),
+            fast_mode: false,
+            hold_rx: None,
+        }
+    }
+}
+
+fn session_modes(mode_id: &str) -> SessionModeState {
+    SessionModeState::new(
+        mode_id.to_owned(),
+        vec![
+            SessionMode::new("ask", "Ask").description("Ask before changes"),
+            SessionMode::new("code", "Code").description("Edit freely"),
+            SessionMode::new("auto", "Auto").description("Auto permissions"),
+        ],
+    )
+}
+
+fn session_config(mode_id: &str, model_id: &str, fast_mode: bool) -> Vec<SessionConfigOption> {
+    vec![
+        SessionConfigOption::select(
+            "mode",
+            "Mode",
+            mode_id.to_owned(),
+            vec![
+                SessionConfigSelectOption::new("ask", "Ask"),
+                SessionConfigSelectOption::new("code", "Code"),
+                SessionConfigSelectOption::new("auto", "Auto"),
+                SessionConfigSelectOption::new("plan", "Plan"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Mode),
+        // Family + version + context (1M) so the UI can split Sonnet → 4.5/4.6
+        // and Context → 200K/1M when both exist for the selected version.
+        // Haiku 4.5: Claude Auto mode unsupported (<4.6) — UI filters it out.
+        SessionConfigOption::select(
+            "model",
+            "Model",
+            model_id.to_owned(),
+            vec![
+                SessionConfigSelectOption::new("sonnet-4-5", "Sonnet 4.5"),
+                SessionConfigSelectOption::new("sonnet-4-6", "Sonnet 4.6"),
+                SessionConfigSelectOption::new("sonnet-4-6[1m]", "Sonnet 4.6 1M"),
+                SessionConfigSelectOption::new("haiku-4-5", "Haiku 4.5"),
+                SessionConfigSelectOption::new("opus-5", "Opus 5"),
+                SessionConfigSelectOption::new("opus-5[1m]", "Opus 5 1M"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::Model),
+        // Fast mode — UI renders as a Switch labeled "Fast", not On/Off text.
+        SessionConfigOption::select(
+            "fast_mode",
+            "Fast mode",
+            if fast_mode { "on" } else { "off" },
+            vec![
+                SessionConfigSelectOption::new("on", "On"),
+                SessionConfigSelectOption::new("off", "Off"),
+            ],
+        )
+        .category(SessionConfigOptionCategory::ModelConfig),
+    ]
 }
 
 #[derive(Clone, Default)]
@@ -90,10 +169,34 @@ impl FakeAgent {
         self.state.lock().unwrap().chats.get(id).cloned()
     }
 
+    /// Next `"hold"` prompt waits until [`Self::release_hold`].
+    pub fn arm_hold(&self) -> flume::Sender<()> {
+        let (tx, rx) = flume::bounded(1);
+        self.state.lock().unwrap().hold_rx = Some(rx);
+        tx
+    }
+
+    /// Unblock a waiting `"hold"` prompt (no-op if none armed / already released).
+    pub fn release_hold(&self, tx: flume::Sender<()>) {
+        let _ = tx.send(());
+    }
+
     /// Serve one connection on a background thread; returns the client end.
     pub fn connect(&self) -> Channel {
         let (client_end, agent_end) = Channel::duplex();
-        let (s_new, s_load, s_resume, s_close, s_delete, s_prompt) = (
+        // Seed default mode/model once (empty strings mean "not yet").
+        {
+            let mut st = self.state.lock().unwrap();
+            if st.mode_id.is_empty() {
+                st.mode_id = "auto".into();
+            }
+            if st.model_id.is_empty() {
+                st.model_id = "sonnet-4-5".into();
+            }
+        }
+        let (s_new, s_load, s_resume, s_close, s_delete, s_prompt, s_mode, s_cfg) = (
+            self.state.clone(),
+            self.state.clone(),
             self.state.clone(),
             self.state.clone(),
             self.state.clone(),
@@ -140,18 +243,29 @@ impl FakeAgent {
                             let id = format!("s{}", st.next_id);
                             st.chats.insert(id.clone(), Vec::new());
                             st.calls.push(format!("new {id}"));
-                            responder.respond(NewSessionResponse::new(id))
+                            let modes = session_modes(&st.mode_id);
+                            let config =
+                                session_config(&st.mode_id, &st.model_id, st.fast_mode);
+                            responder.respond(
+                                NewSessionResponse::new(id)
+                                    .modes(modes)
+                                    .config_options(config),
+                            )
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
                     .on_receive_request(
                         async move |req: LoadSessionRequest, responder, cx: ConnectionTo<Client>| {
                             let id = req.session_id.to_string();
-                            let history = {
+                            let (history, modes, config) = {
                                 let mut st = s_load.lock().unwrap();
                                 st.extra_roots = req.additional_directories.clone();
                                 st.calls.push(format!("load {id}"));
-                                st.chats.get(&id).cloned()
+                                (
+                                    st.chats.get(&id).cloned(),
+                                    session_modes(&st.mode_id),
+                                    session_config(&st.mode_id, &st.model_id, st.fast_mode),
+                                )
                             };
                             let Some(history) = history else {
                                 return responder.respond_with_error(Error::resource_not_found(None));
@@ -159,7 +273,11 @@ impl FakeAgent {
                             for (user, text) in &history {
                                 cx.send_notification(chunk(&req.session_id, *user, text))?;
                             }
-                            responder.respond(LoadSessionResponse::new())
+                            responder.respond(
+                                LoadSessionResponse::new()
+                                    .modes(modes)
+                                    .config_options(config),
+                            )
                         },
                         agent_client_protocol::on_receive_request!(),
                     )
@@ -170,7 +288,14 @@ impl FakeAgent {
                             st.extra_roots = req.additional_directories;
                             st.calls.push(format!("resume {id}"));
                             if st.chats.contains_key(&id) {
-                                responder.respond(ResumeSessionResponse::new())
+                                let modes = session_modes(&st.mode_id);
+                                let config =
+                                    session_config(&st.mode_id, &st.model_id, st.fast_mode);
+                                responder.respond(
+                                    ResumeSessionResponse::new()
+                                        .modes(modes)
+                                        .config_options(config),
+                                )
                             } else {
                                 responder.respond_with_error(Error::resource_not_found(None))
                             }
@@ -212,6 +337,16 @@ impl FakeAgent {
                                 let reply = if text == "shout" {
                                     shout(&cx2, &sid).await?;
                                     "done".to_string()
+                                } else if text == "hold" {
+                                    // Block until the test releases — keeps the turn open
+                                    // so a follow-up can be queued.
+                                    let gate = state.lock().unwrap().hold_rx.take();
+                                    if let Some(rx) = gate {
+                                        let _ = rx.recv();
+                                    }
+                                    format!("echo: {text}")
+                                } else if text.starts_with("Write a short chat title") {
+                                    "Generated Title".to_string()
                                 } else {
                                     format!("echo: {text}")
                                 };
@@ -222,8 +357,63 @@ impl FakeAgent {
                                     chat.push((false, reply.clone()));
                                 }
                                 cx2.send_notification(chunk(&sid, false, &reply))?;
+                                // Fake context growth so UI tests can assert usage_update.
+                                let used = {
+                                    let n = state
+                                        .lock()
+                                        .unwrap()
+                                        .chats
+                                        .get(&sid.to_string())
+                                        .map(|c| c.len())
+                                        .unwrap_or(0)
+                                        as u64;
+                                    10_000 + n.saturating_mul(5_000)
+                                };
+                                cx2.send_notification(SessionNotification::new(
+                                    sid.clone(),
+                                    SessionUpdate::UsageUpdate(UsageUpdate::new(used, 200_000)),
+                                ))?;
                                 responder.respond(PromptResponse::new(StopReason::EndTurn))
                             })
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: SetSessionModeRequest, responder, _cx| {
+                            let id = req.mode_id.to_string();
+                            let mut st = s_mode.lock().unwrap();
+                            st.mode_id = id.clone();
+                            st.calls.push(format!("set_mode {id}"));
+                            responder.respond(SetSessionModeResponse::new())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: SetSessionConfigOptionRequest, responder, _cx| {
+                            let config_id = req.config_id.to_string();
+                            let mut st = s_cfg.lock().unwrap();
+                            if let Some(on) = req.value.as_bool() {
+                                st.calls.push(format!("set_config {config_id}={on}"));
+                                if config_id == "fast_mode" {
+                                    st.fast_mode = on;
+                                }
+                            } else {
+                                let value = req
+                                    .value
+                                    .as_value_id()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_default();
+                                st.calls.push(format!("set_config {config_id}={value}"));
+                                match config_id.as_str() {
+                                    "mode" => st.mode_id = value,
+                                    "model" => st.model_id = value,
+                                    "fast_mode" => st.fast_mode = value == "on",
+                                    _ => {}
+                                }
+                            }
+                            let options =
+                                session_config(&st.mode_id, &st.model_id, st.fast_mode);
+                            responder.respond(SetSessionConfigOptionResponse::new(options))
                         },
                         agent_client_protocol::on_receive_request!(),
                     )

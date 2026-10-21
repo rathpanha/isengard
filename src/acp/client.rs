@@ -13,12 +13,15 @@ use std::path::PathBuf;
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, CloseSessionRequest,
-    ContentBlock, DeleteSessionRequest, FileSystemCapabilities, Implementation,
-    InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest,
-    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome, SessionId,
-    SessionNotification, SessionUpdate, StopReason, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, ClientSessionCapabilities,
+    CloseSessionRequest, CompactionCapabilities, ContentBlock, DeleteSessionRequest,
+    FileSystemCapabilities, Implementation, InitializeRequest, LoadSessionRequest, NewSessionRequest,
+    PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    ResumeSessionRequest, SelectedPermissionOutcome, SessionConfigId, SessionConfigOption,
+    SessionConfigOptionValue, SessionId, SessionModeId, SessionModeState, SessionNotification,
+    SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, ToolCallUpdate,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, Error, ErrorCode,
@@ -32,6 +35,9 @@ enum AgentCommand {
     Prompt(Vec<ContentBlock>),
     Cancel,
     Delete(String),
+    SetMode(String),
+    SetConfig { config_id: String, value: String },
+    SetConfigBool { config_id: String, value: bool },
 }
 
 /// How to open a chat on a connected agent.
@@ -93,10 +99,16 @@ pub enum AgentEvent {
     /// `initialize` done; send [`AgentConnection::open`] next.
     Connected(AgentInfo),
     /// A chat is open (after any replay); prompts go to it from now on.
-    SessionOpened { id: String },
+    SessionOpened {
+        id: String,
+        modes: Option<SessionModeState>,
+        config_options: Option<Vec<SessionConfigOption>>,
+    },
     /// Opening a chat failed (e.g. it was deleted outside Isengard).
     SessionOpenFailed { open: SessionOpen, message: String },
     Update { session: String, update: SessionUpdate },
+    /// `session/set_config_option` returned a full options snapshot.
+    ConfigOptions(Vec<SessionConfigOption>),
     TurnEnded(StopReason),
     TurnFailed(String),
     /// Not signed in. The connection is finished; restart it after login.
@@ -161,6 +173,27 @@ impl AgentConnection {
 
     pub fn cancel(&self) {
         let _ = self.commands.send(AgentCommand::Cancel);
+    }
+
+    /// `session/set_mode` — no-op if no chat is open.
+    pub fn set_mode(&self, mode_id: impl Into<String>) {
+        let _ = self.commands.send(AgentCommand::SetMode(mode_id.into()));
+    }
+
+    /// `session/set_config_option` with a select value id (e.g. model).
+    pub fn set_config(&self, config_id: impl Into<String>, value: impl Into<String>) {
+        let _ = self.commands.send(AgentCommand::SetConfig {
+            config_id: config_id.into(),
+            value: value.into(),
+        });
+    }
+
+    /// `session/set_config_option` with a boolean value (e.g. Fast mode).
+    pub fn set_config_bool(&self, config_id: impl Into<String>, value: bool) {
+        let _ = self.commands.send(AgentCommand::SetConfigBool {
+            config_id: config_id.into(),
+            value,
+        });
     }
 }
 
@@ -298,7 +331,13 @@ async fn session(
                         .fs(FileSystemCapabilities::new()
                             .read_text_file(true)
                             .write_text_file(true))
-                        .auth(AuthCapabilities::new().terminal(true)),
+                        .auth(AuthCapabilities::new().terminal(true))
+                        // So agents can send CompactionUpdate / SummaryChunk when
+                        // they auto-compact near the context limit.
+                        .session(
+                            ClientSessionCapabilities::new()
+                                .compaction(CompactionCapabilities::new()),
+                        ),
                 )
                 .client_info(
                     Implementation::new("isengard", env!("CARGO_PKG_VERSION")).title("Isengard"),
@@ -342,30 +381,37 @@ async fn session(
                 }
                 let opened = match &open {
                     SessionOpen::New => cx
-                        .send_request(NewSessionRequest::new(cwd.clone())
-                            .additional_directories(extra_roots.clone()),
+                        .send_request(
+                            NewSessionRequest::new(cwd.clone())
+                                .additional_directories(extra_roots.clone()),
                         )
                         .block_task()
                         .await
-                        .map(|r| r.session_id),
+                        .map(|r| (r.session_id, r.modes, r.config_options)),
                     SessionOpen::Load(id) => cx
-                        .send_request(LoadSessionRequest::new(id.clone(), cwd.clone())
+                        .send_request(
+                            LoadSessionRequest::new(id.clone(), cwd.clone())
                                 .additional_directories(extra_roots.clone()),
                         )
                         .block_task()
                         .await
-                        .map(|_| SessionId::new(id.clone())),
+                        .map(|r| (SessionId::new(id.clone()), r.modes, r.config_options)),
                     SessionOpen::Resume(id) => cx
-                        .send_request(ResumeSessionRequest::new(id.clone(), cwd.clone())
+                        .send_request(
+                            ResumeSessionRequest::new(id.clone(), cwd.clone())
                                 .additional_directories(extra_roots.clone()),
                         )
                         .block_task()
                         .await
-                        .map(|_| SessionId::new(id.clone())),
+                        .map(|r| (SessionId::new(id.clone()), r.modes, r.config_options)),
                 };
                 match opened {
-                    Ok(id) => {
-                        let _ = events.send(AgentEvent::SessionOpened { id: id.to_string() });
+                    Ok((id, modes, config_options)) => {
+                        let _ = events.send(AgentEvent::SessionOpened {
+                            id: id.to_string(),
+                            modes,
+                            config_options,
+                        });
                         current = Some(id);
                     }
                     Err(err) if err.code == ErrorCode::AuthRequired => {
@@ -420,6 +466,63 @@ async fn session(
                     }
                 }
             }
+            AgentCommand::SetMode(mode_id) => {
+                let Some(session_id) = current.clone() else {
+                    continue;
+                };
+                if let Err(err) = cx
+                    .send_request(SetSessionModeRequest::new(
+                        session_id,
+                        SessionModeId::new(mode_id),
+                    ))
+                    .block_task()
+                    .await
+                {
+                    log::warn!("agent: set_mode failed: {}", describe_error(err));
+                }
+            }
+            AgentCommand::SetConfig { config_id, value } => {
+                let Some(session_id) = current.clone() else {
+                    continue;
+                };
+                match cx
+                    .send_request(SetSessionConfigOptionRequest::new(
+                        session_id,
+                        SessionConfigId::new(config_id),
+                        SessionConfigOptionValue::value_id(value),
+                    ))
+                    .block_task()
+                    .await
+                {
+                    Ok(reply) => {
+                        let _ = events.send(AgentEvent::ConfigOptions(reply.config_options));
+                    }
+                    Err(err) => {
+                        log::warn!("agent: set_config_option failed: {}", describe_error(err));
+                    }
+                }
+            }
+            AgentCommand::SetConfigBool { config_id, value } => {
+                let Some(session_id) = current.clone() else {
+                    continue;
+                };
+                match cx
+                    .send_request(SetSessionConfigOptionRequest::new(
+                        session_id,
+                        SessionConfigId::new(config_id),
+                        SessionConfigOptionValue::boolean(value),
+                    ))
+                    .block_task()
+                    .await
+                {
+                    Ok(reply) => {
+                        let _ = events.send(AgentEvent::ConfigOptions(reply.config_options));
+                    }
+                    Err(err) => {
+                        log::warn!("agent: set_config_option failed: {}", describe_error(err));
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -452,7 +555,7 @@ mod tests {
 
     fn opened(conn: &AgentConnection) -> String {
         match next(conn) {
-            AgentEvent::SessionOpened { id } => id,
+            AgentEvent::SessionOpened { id, .. } => id,
             _ => panic!("expected SessionOpened"),
         }
     }
@@ -471,6 +574,20 @@ mod tests {
             panic!("expected text");
         };
         (user, text.text)
+    }
+
+    /// FakeAgent sends `usage_update` before ending the turn.
+    fn turn_ended(conn: &AgentConnection) -> StopReason {
+        loop {
+            match next(conn) {
+                AgentEvent::Update {
+                    update: SessionUpdate::UsageUpdate(_),
+                    ..
+                } => continue,
+                AgentEvent::TurnEnded(reason) => return reason,
+                _ => panic!("expected TurnEnded"),
+            }
+        }
     }
 
     #[test]
@@ -502,7 +619,7 @@ mod tests {
         write.reply.send(Ok(())).unwrap();
 
         assert_eq!(chunk_text(&conn), (false, "done".into()));
-        assert!(matches!(next(&conn), AgentEvent::TurnEnded(StopReason::EndTurn)));
+        assert_eq!(turn_ended(&conn), StopReason::EndTurn);
     }
 
     #[test]
@@ -515,7 +632,7 @@ mod tests {
             agent_client_protocol::schema::v1::TextContent::new("hi"),
         )]);
         assert_eq!(chunk_text(&conn), (false, "echo: hi".into()));
-        assert!(matches!(next(&conn), AgentEvent::TurnEnded(_)));
+        let _ = turn_ended(&conn);
         drop(conn);
 
         // A new process loads the stored chat: history replays before it opens.

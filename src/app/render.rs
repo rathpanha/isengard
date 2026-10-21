@@ -1116,6 +1116,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_new_terminal))
             .on_action(cx.listener(Self::on_terminal_tabs_changed))
             .on_action(cx.listener(Self::on_toggle_agent_panel))
+            .on_action(cx.listener(Self::on_new_agent_chat))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_open_config_file))
             .on_action(cx.listener(Self::on_quit))

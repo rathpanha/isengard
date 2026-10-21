@@ -194,16 +194,26 @@ Add a row here whenever a new shared component is created.
   while shown), View > Toggle Agent Panel, `⌘⌥B` / `Ctrl+Alt+B`; header
   `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
   status square (success ready, warning starting/working, danger failed,
-  muted otherwise) + agent name, ghost `SquarePen` New Chat. Background
+  muted otherwise) + **session title** (active chat title, or `New chat`;
+  activity suffix while busy; Compacting… during agent compaction) +
+  muted/warning/danger `text_xs` context used/size (e.g. `53K / 200K`;
+  `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
+  `Plus` New Chat. Chat-list rows append last-known used/size beside the
+  relative time when available (process memory only). Background
   `theme.sidebar` like the other panels. Header also has a ghost
   `MessagesSquare` chat list (Popover, 300px): rows are Kit `ListItem`s —
   title (`text_sm`, truncated) over relative time (`text_xs` muted), active
-  row `.selected`, ghost `Trash` per row (confirm dialog: Cancel outline ·
-  Delete danger); rows and New Chat disabled while a turn runs. Empty list:
-  muted "No chats in this workspace yet." Loading a saved chat shows Spinner
-  + "Loading chat…" until the replay lands; reconnecting keeps the old
-  transcript on screen. A background workspace's agent asking for approval
-  raises a warning toast (`notify_warning`). Transcript in Kit
+  row `.selected`, ghost `Pencil` rename (dialog + `Input`; outline
+  **Generate** runs a silent ACP turn for a title for **any** chat when
+  Ready (uses the open transcript, a per-session cache from chats opened
+  earlier, or loads that chat then generates) — Cancel outline · Generate
+  outline · Rename primary) + ghost
+  `Trash` (confirm: Cancel outline · Delete danger); rows and New Chat
+  disabled while a turn runs. Empty list: muted "No chats in this
+  workspace yet." Loading a saved chat shows Spinner + "Loading chat…"
+  until the replay lands; reconnecting keeps the old transcript on screen.
+  A background workspace's agent asking for approval raises a warning toast
+  (`notify_warning`). Transcript in Kit
   `MessageScroller` (tail follow + jump-to-latest): user text in a
   `Secondary` `Bubble` aligned end as selectable `TextView` markdown (same
   selection as agent replies); agent replies as streamed
@@ -226,10 +236,34 @@ Add a row here whenever a new shared component is created.
   empty `@` lists nested folders (not only top-level) plus root files;
   Esc closes; then auto-growing
   `Textarea` (Enter sends when the menu is closed, Shift+Enter newline;
-  paste image / file paths become chips); then a row of ghost `.small()`
-  Attach from disk (`Paperclip` — OS multi-file picker; folders via `@`) +
-  muted hint + primary Send (`ArrowUp`) that becomes `.danger()` Stop
-  (solid square block, not Lucide stroke `Square`) while a turn runs.
+  paste image / file paths become chips); then **two** composer strips:
+  (1) session config row when ACP advertises options — each tap is ghost
+  `.small()` with a Lucide icon + current value (tooltip = ACP option
+  name): Mode icon follows the selection (`ShieldQuestionMark` Ask,
+  `Sparkles` Auto, `ListTodo` Plan, `Pencil` code/accept-edits, else
+  `Shield`); Model family `Cpu` (+ Version `Tag` when names parse, else
+  one Model `Cpu` — not `Bot`, which is the panel/status toggle); Mode
+  list omits Claude `auto` when the selected model is older than 4.6
+  (agent still advertises it); Context `Maximize2` when size variants exist; Fast
+  `Zap` + Kit `Switch` labeled `Fast`; other options by ACP name with
+  heuristic icons (`Brain` thought/effort, `Users` agent/persona, else
+  `SlidersHorizontal`) — Popover upward, `ListItem`s,
+  disabled while a turn runs or the session is not Ready; Prefer
+  `configOptions` over legacy `modes`. Config band is always
+  `AGENT_COMPOSER_CONFIG_ROW_H` (36px) with horizontal scroll (no wrap)
+  so open/switch/first options do not change composer height; last
+  options are kept across reconnect and not cleared when an open omits
+  them. (2) action
+  row: ghost `.small()` Attach (`Paperclip` — OS multi-file picker;
+  folders via `@`) + muted hint (`Enter to send`, or `Enter to queue` /
+  `N queued · Enter to queue` while busy) + primary Send (`ArrowUp`,
+  label **Queue** while a turn runs — always enqueues when busy) and,
+  while busy, a sibling `.danger()` Stop (solid square block, not Lucide
+  stroke `Square`). Queued prompts stay out of the transcript until
+  drained FIFO when the current turn ends (cleared on disconnect /
+  suspend) so the in-flight reply stays one bubble; while waiting they
+  show in a bordered strip **under** the composer (muted header + one
+  truncated line per item + ghost `CircleX` remove).
   Attachment chips bottom-align in the wrap row (file/folder chips share a
   baseline with taller image thumbs); ghost `CircleX` remove sits on the
   upper trailing corner of each chip/thumb (not inline in the flex row).
@@ -367,7 +401,9 @@ Add a row here whenever a new shared component is created.
     cancels; empty create name cancels).
 - **Welcome "Start" actions:** two columns separated by a vertical
   `Separator` — left: Open Workspace…, New Workspace…; right: Open Folder…
-  (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N`). File menu keeps
+  (`⌘O` / `Ctrl+O`), Open File…, New File (`⌘N` / `Ctrl+N` outside Agent).
+  With the Agent composer focused, `⌘N` / `Ctrl+N` is New Chat (`Agent` key
+  context); File → New File stays New File. File menu keeps
   the same order stacked (workspace group, separator, folder/file group).
   Distinct Kit icons: `LayoutDashboard`, `FolderClosed`, `FolderOpen`, `File`,
   `FileText`.

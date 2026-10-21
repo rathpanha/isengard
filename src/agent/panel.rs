@@ -7,6 +7,7 @@
 //! a replay. Anything that touches editor state (file reads/writes, login in
 //! the terminal, hiding, persisting the chat index) is an [`AgentPanelEvent`].
 
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,22 +18,24 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
-    input::{InputEvent, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState, Textarea, TextareaState},
     list::ListItem,
     message::{Message, MessageAlignment, MessageContent},
     message_scroller::{MessageScroller, MessageScrollerState},
     popover::{Popover, PopoverState},
     scroll::ScrollableElement as _,
     spinner::Spinner,
+    switch::Switch,
     text::{TextView, TextViewState},
     v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::acp::schema::{
-    ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    PlanEntry, PlanEntryStatus, SessionUpdate, StopReason, TextContent, ToolCall, ToolCallId,
-    ToolCallStatus, ToolCallUpdate, ToolKind,
+    CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
+    PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOptions, SessionModeState, SessionUpdate,
+    StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
@@ -238,6 +241,9 @@ pub struct AgentPanel {
     /// Bumped per connection so events from a dropped one are ignored.
     generation: u64,
     turn_running: bool,
+    /// Prompts typed while a turn (or silent job) is running — drained FIFO
+    /// when the current turn ends. User bubbles are already in `entries`.
+    outbound: VecDeque<QueuedPrompt>,
     /// In the background with a turn running: stop the agent when it ends.
     suspend_after_turn: bool,
     /// Chats started here, newest first (persisted by the app).
@@ -253,6 +259,10 @@ pub struct AgentPanel {
     opens_in_flight: usize,
     /// Which chat `entries` belongs to (lets a reconnect resume, not replay).
     transcript_of: Option<String>,
+    /// Plain-text transcripts for AI titles (survives switching chats this session).
+    title_transcripts: HashMap<String, String>,
+    /// After loading a non-active chat, run Generate once entries land.
+    pending_title: Option<String>,
     entries: Vec<Entry>,
     /// Context chips for the next prompt (@file / selection / image).
     attachments: Vec<Attachment>,
@@ -263,15 +273,52 @@ pub struct AgentPanel {
     scroller: Entity<MessageScrollerState>,
     input: Entity<TextareaState>,
     install_error: Option<SharedString>,
-    /// In-flight Source Control AI Suggest (accumulates assistant text; not shown in chat).
-    commit_suggest: Option<CommitSuggest>,
+    /// Silent one-shot turn (commit message / chat title) — not shown in chat.
+    silent: Option<SilentTurn>,
+    /// ACP session modes from the last open (Ask/Code/…).
+    modes: Option<SessionModeState>,
+    /// ACP session config options (model selector, …).
+    config_options: Option<Vec<SessionConfigOption>>,
+    /// Live context-window usage for the open session (`usage_update`).
+    usage: Option<ContextUsage>,
+    /// Last known usage per chat id (this process only — not persisted).
+    usage_by_chat: HashMap<String, ContextUsage>,
+    /// Agent is mid-compaction (`CompactionUpdate` InProgress).
+    compacting: bool,
     _subscriptions: Vec<Subscription>,
 }
 
-/// One-shot commit-message request from the Git panel (any ACP agent).
-struct CommitSuggest {
-    root: PathBuf,
+/// Context fill for the open session.
+///
+/// `used` is `None` until the agent sends `usage_update` (Claude only emits
+/// that mid-turn). We still seed `size` on open so the header is not blank.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContextUsage {
+    used: Option<u64>,
+    size: u64,
+}
+
+/// One-shot prompt that accumulates assistant text without chat bubbles.
+enum SilentTurn {
+    Commit { root: PathBuf, text: String },
+    Title { chat_id: String, text: String },
+}
+
+/// A user prompt waiting for the current turn to finish.
+struct QueuedPrompt {
+    /// First-line title / touch_chat seed (same as an immediate send).
+    title: String,
     text: String,
+    refs: Vec<UserRef>,
+    blocks: Vec<ContentBlock>,
+}
+
+impl SilentTurn {
+    fn text_mut(&mut self) -> &mut String {
+        match self {
+            Self::Commit { text, .. } | Self::Title { text, .. } => text,
+        }
+    }
 }
 
 struct MentionMenu {
@@ -290,6 +337,78 @@ fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+/// Compact token count for the header / history (`53K`, `1.2M`).
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        let m = n as f64 / 1_000_000.0;
+        if m >= 10.0 {
+            format!("{m:.0}M")
+        } else {
+            format!("{m:.1}M")
+        }
+    } else if n >= 10_000 {
+        format!("{}K", (n + 500) / 1_000)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+fn format_context_usage(u: ContextUsage) -> String {
+    let used = match u.used {
+        Some(n) => format_tokens(n),
+        None => "—".into(),
+    };
+    format!("{} / {}", used, format_tokens(u.size))
+}
+
+/// Best-effort window size from the model / Context picker (until ACP reports).
+fn estimate_context_window_size(options: &Option<Vec<SessionConfigOption>>) -> u64 {
+    if let Some(label) = model_family_split(options).and_then(|s| s.context_label)
+        && let Some(n) = tokens_from_context_label(&label)
+    {
+        return n;
+    }
+    if let Some(ctx) = find_context_select(options) {
+        let label = ctx
+            .choices
+            .iter()
+            .find(|(id, _)| id == &ctx.current)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or(ctx.current.as_str());
+        if let Some(n) = tokens_from_context_label(label) {
+            return n;
+        }
+    }
+    if let Some(id) = find_select(options, Some(SessionConfigOptionCategory::Model), "model")
+        .map(|m| m.current)
+        && let Some(n) = context_from_model_id(&id).and_then(|l| tokens_from_context_label(&l))
+    {
+        return n;
+    }
+    // Claude ACP's own default until the first authoritative usage_update.
+    200_000
+}
+
+fn tokens_from_context_label(label: &str) -> Option<u64> {
+    let l = label.trim().to_ascii_uppercase();
+    if l == "1M" || l == "1.0M" {
+        return Some(1_000_000);
+    }
+    if let Some(rest) = l.strip_suffix('M')
+        && let Ok(m) = rest.parse::<f64>()
+    {
+        return Some((m * 1_000_000.0).round() as u64);
+    }
+    if let Some(rest) = l.strip_suffix('K')
+        && let Ok(k) = rest.parse::<u64>()
+    {
+        return Some(k.saturating_mul(1_000));
+    }
+    None
 }
 
 /// First line of the first prompt, shortened — until the agent sends a title.
@@ -346,17 +465,36 @@ impl AgentPanel {
                 _ => {}
             }
         });
-        // ponytail: Textarea eats ↑↓/Esc; intercept only while the @ menu is open.
+        // ponytail: Textarea eats ↑↓/Esc; intercept while @ menu is open.
+        // Also ⌘N/Ctrl+N — Kit focus may not put parent `Agent` key context on
+        // the stack, so catch New Chat here when the composer is focused.
         let panel = cx.weak_entity();
         let keys = cx.intercept_keystrokes(move |event, window, cx| {
             let Some(panel) = panel.upgrade() else {
                 return;
             };
             panel.update(cx, |this, cx| {
+                let ks = &event.keystroke;
+                if ks.key.as_str() == "n"
+                    && ks.modifiers.secondary()
+                    && !ks.modifiers.alt
+                    && !ks.modifiers.shift
+                {
+                    let composer_focused = this
+                        .input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window);
+                    if composer_focused {
+                        this.new_chat(window, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
                 if this.mention.is_none() {
                     return;
                 }
-                match event.keystroke.key.as_str() {
+                match ks.key.as_str() {
                     "up" => {
                         this.mention_move(-1);
                         cx.stop_propagation();
@@ -391,6 +529,7 @@ impl AgentPanel {
             connection: None,
             generation: 0,
             turn_running: false,
+            outbound: VecDeque::new(),
             suspend_after_turn: false,
             chats,
             active,
@@ -398,6 +537,8 @@ impl AgentPanel {
             opening: None,
             opens_in_flight: 0,
             transcript_of: None,
+            title_transcripts: HashMap::new(),
+            pending_title: None,
             entries: Vec::new(),
             attachments: Vec::new(),
             attachment_thumbs: Vec::new(),
@@ -405,7 +546,12 @@ impl AgentPanel {
             scroller,
             input,
             install_error: None,
-            commit_suggest: None,
+            silent: None,
+            modes: None,
+            config_options: None,
+            usage: None,
+            usage_by_chat: HashMap::new(),
+            compacting: false,
             _subscriptions: vec![enter, keys],
         }
     }
@@ -445,6 +591,183 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn attachment_labels(&self) -> Vec<String> {
         self.attachments.iter().map(Attachment::label).collect()
+    }
+
+    /// Active chat title from the index (tests).
+    #[cfg(test)]
+    pub fn active_chat_title(&self) -> Option<String> {
+        let id = self.active.as_deref()?;
+        self.chats.iter().find(|c| c.id == id).map(|c| c.title.clone())
+    }
+
+    /// Current ACP session mode id (tests).
+    #[cfg(test)]
+    pub fn current_mode_id(&self) -> Option<String> {
+        self.modes
+            .as_ref()
+            .map(|m| m.current_mode_id.to_string())
+    }
+
+    /// Active chat id (tests).
+    #[cfg(test)]
+    pub fn active_chat_id(&self) -> Option<String> {
+        self.active.clone()
+    }
+
+    /// Title for a chat id (tests).
+    #[cfg(test)]
+    pub fn chat_title(&self, id: &str) -> Option<String> {
+        self.chats.iter().find(|c| c.id == id).map(|c| c.title.clone())
+    }
+
+    /// Start a new chat from tests (same as the header Plus).
+    #[cfg(test)]
+    pub fn new_chat_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_chat(window, cx);
+    }
+
+    /// Current model config value id (tests).
+    #[cfg(test)]
+    pub fn current_model_id(&self) -> Option<String> {
+        find_select(&self.config_options, Some(SessionConfigOptionCategory::Model), "model")
+            .map(|s| s.current)
+    }
+
+    /// Parsed model family label from the Model option (tests), e.g. `Sonnet`.
+    #[cfg(test)]
+    pub fn current_model_family(&self) -> Option<String> {
+        model_family_split(&self.config_options).map(|s| s.family)
+    }
+
+    /// Parsed version label for the current family (tests), e.g. `4.5`.
+    #[cfg(test)]
+    pub fn current_model_version_label(&self) -> Option<String> {
+        model_family_split(&self.config_options).and_then(|s| s.version_label)
+    }
+
+    /// Context window label for the current model (tests), e.g. `1M` / `200K`.
+    #[cfg(test)]
+    pub fn current_model_context_label(&self) -> Option<String> {
+        model_family_split(&self.config_options).and_then(|s| s.context_label)
+    }
+
+    /// Whether Fast mode is on (tests).
+    #[cfg(test)]
+    pub fn fast_mode_on(&self) -> Option<bool> {
+        find_fast_option(&self.config_options).map(|o| fast_is_on(o))
+    }
+
+    /// Live context usage label for the open session (tests), e.g. `20K / 200K`.
+    #[cfg(test)]
+    pub fn context_usage_label(&self) -> Option<String> {
+        self.usage.map(|u| format_context_usage(u))
+    }
+
+    /// Whether Mode/Model/… row is populated (tests).
+    #[cfg(test)]
+    pub fn has_composer_config_for_test(&self) -> bool {
+        self.has_composer_config_controls()
+    }
+
+    /// Mode choice ids shown in the composer picker (tests) — after model filtering.
+    #[cfg(test)]
+    pub fn mode_choice_ids(&self) -> Vec<String> {
+        let model_id = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        )
+        .map(|m| m.current);
+        if let Some(opt) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Mode),
+            "mode",
+        ) {
+            return filter_mode_choices(&opt.choices, model_id.as_deref())
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+        }
+        let Some(modes) = &self.modes else {
+            return Vec::new();
+        };
+        let raw: Vec<(String, String)> = modes
+            .available_modes
+            .iter()
+            .map(|m| (m.id.to_string(), m.name.clone()))
+            .collect();
+        filter_mode_choices(&raw, model_id.as_deref())
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// Set session mode from tests (same path as the composer picker).
+    #[cfg(test)]
+    pub fn set_mode_for_test(&mut self, mode_id: &str, cx: &mut Context<Self>) {
+        self.set_mode(mode_id.to_owned(), cx);
+    }
+
+    /// Pick a model family (tests) — keeps context when possible.
+    #[cfg(test)]
+    pub fn set_model_family_for_test(&mut self, family: &str, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let prefer_ctx = split.context_label.clone();
+        let Some(id) = split
+            .choices
+            .iter()
+            .filter(|c| c.family == family)
+            .find(|c| display_context_label(&split.choices, c).as_ref() == prefer_ctx.as_ref())
+            .or_else(|| split.choices.iter().find(|c| c.family == family))
+            .map(|c| c.id.clone())
+        else {
+            return;
+        };
+        self.set_config_value(split.config_id, id, cx);
+    }
+
+    /// Pick a version within the current family (tests).
+    #[cfg(test)]
+    pub fn set_model_version_for_test(&mut self, version: &str, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let prefer_ctx = split.context_label.clone();
+        let Some(id) = split
+            .choices
+            .iter()
+            .filter(|c| c.family == split.family && c.version.as_deref() == Some(version))
+            .find(|c| c.context == prefer_ctx)
+            .or_else(|| {
+                split.choices.iter().find(|c| {
+                    c.family == split.family && c.version.as_deref() == Some(version)
+                })
+            })
+            .map(|c| c.id.clone())
+        else {
+            return;
+        };
+        self.set_config_value(split.config_id, id, cx);
+    }
+
+    /// Pick a context window within the current family+version (tests).
+    #[cfg(test)]
+    pub fn set_model_context_for_test(&mut self, context: &str, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let Some(id) = context_choice_id(&split, context) else {
+            return;
+        };
+        self.set_config_value(split.config_id, id, cx);
+    }
+
+    /// Toggle Fast mode from tests.
+    #[cfg(test)]
+    pub fn set_fast_mode_for_test(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.set_fast_mode(on, cx);
     }
 
     /// Labels currently shown in the `@` mention menu (tests).
@@ -670,12 +993,32 @@ impl AgentPanel {
             && !self.turn_running
             && self.connection.is_some()
             && self.session.is_some()
-            && self.commit_suggest.is_none()
+            && self.silent.is_none()
     }
 
     #[cfg(test)]
     pub fn is_ready(&self) -> bool {
         self.can_prompt()
+    }
+
+    /// Whether a prompt turn (or silent job) is in flight.
+    #[cfg(test)]
+    pub fn is_turn_running(&self) -> bool {
+        self.turn_running
+    }
+
+    fn start_silent(&mut self, prompt: String, kind: SilentTurn, cx: &mut Context<Self>) -> bool {
+        if !self.can_prompt() {
+            return false;
+        }
+        let Some(connection) = &self.connection else {
+            return false;
+        };
+        connection.prompt(vec![ContentBlock::Text(TextContent::new(prompt))]);
+        self.turn_running = true;
+        self.silent = Some(kind);
+        cx.notify();
+        true
     }
 
     /// One-shot commit-message turn (any ACP agent). Does not add chat bubbles.
@@ -687,50 +1030,191 @@ impl AgentPanel {
         prompt: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.can_prompt() {
+        self.start_silent(
+            prompt,
+            SilentTurn::Commit {
+                root,
+                text: String::new(),
+            },
+            cx,
+        )
+    }
+
+    /// Whether Rename → Generate can run for `chat_id` (live, cached, or loadable).
+    fn can_generate_title(&self, chat_id: &str, cx: &App) -> bool {
+        if self.turn_running || self.silent.is_some() {
             return false;
         }
-        let Some(connection) = &self.connection else {
+        if !matches!(self.status, Status::Ready) || self.connection.is_none() {
+            return false;
+        }
+        if self.title_source(chat_id, cx).is_some() {
+            return true;
+        }
+        // Not opened this session — Generate will load it first.
+        self.info.as_ref().is_some_and(|i| i.can_load)
+            && self.chats.iter().any(|c| c.id == chat_id)
+    }
+
+    /// Live transcript if this chat is on screen, else a cached copy.
+    fn title_source(&self, chat_id: &str, cx: &App) -> Option<String> {
+        if self.active.as_deref() == Some(chat_id) {
+            let live = self.transcript_for_title(cx);
+            if !live.is_empty() {
+                return Some(live);
+            }
+        }
+        self.title_transcripts
+            .get(chat_id)
+            .filter(|t| !t.is_empty())
+            .cloned()
+    }
+
+    /// One-shot chat-title turn. Uses the open transcript or a cached one.
+    /// Returns `false` if busy / no text (caller may load then retry via
+    /// [`Self::begin_chat_title`]).
+    pub fn request_chat_title(&mut self, chat_id: String, cx: &mut Context<Self>) -> bool {
+        let Some(transcript) = self.title_source(&chat_id, cx) else {
             return false;
         };
-        connection.prompt(vec![ContentBlock::Text(TextContent::new(prompt))]);
-        self.turn_running = true;
-        self.commit_suggest = Some(CommitSuggest {
-            root,
-            text: String::new(),
-        });
-        cx.notify();
+        self.title_transcripts
+            .insert(chat_id.clone(), transcript.clone());
+        self.start_silent(
+            build_chat_title_prompt(&transcript),
+            SilentTurn::Title {
+                chat_id,
+                text: String::new(),
+            },
+            cx,
+        )
+    }
+
+    /// Generate a title for any chat: silent turn if we have text, else load
+    /// that chat and generate when the replay lands.
+    fn begin_chat_title(
+        &mut self,
+        chat_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.request_chat_title(chat_id.clone(), cx) {
+            return true;
+        }
+        if self.turn_running || self.silent.is_some() {
+            return false;
+        }
+        if !matches!(self.status, Status::Ready) || self.connection.is_none() {
+            return false;
+        }
+        if !self.info.as_ref().is_some_and(|i| i.can_load) {
+            return false;
+        }
+        if self.chats.iter().all(|c| c.id != chat_id) {
+            return false;
+        }
+        self.pending_title = Some(chat_id.clone());
+        if self.active.as_deref() == Some(chat_id.as_str()) {
+            // Already active but empty — nothing to title.
+            self.pending_title = None;
+            return false;
+        }
+        self.switch_chat(chat_id, window, cx);
         true
     }
 
-    fn finish_commit_suggest(&mut self, ok: bool, cx: &mut Context<Self>) {
-        let Some(pending) = self.commit_suggest.take() else {
+    fn cache_active_transcript(&mut self, cx: &App) {
+        let Some(id) = self
+            .transcript_of
+            .clone()
+            .or_else(|| self.active.clone())
+        else {
             return;
         };
-        if ok {
-            let message = crate::git::scrub_commit_message(&pending.text);
-            if message.is_empty() {
-                cx.emit(AgentPanelEvent::CommitSuggestFailed { root: pending.root });
-            } else {
-                cx.emit(AgentPanelEvent::CommitSuggestReady {
-                    root: pending.root,
-                    message,
-                });
-            }
-        } else {
-            cx.emit(AgentPanelEvent::CommitSuggestFailed { root: pending.root });
+        let text = self.transcript_for_title(cx);
+        if !text.is_empty() {
+            self.title_transcripts.insert(id, text);
         }
     }
 
-    /// Abort an in-flight Suggest turn (tools / permissions / disconnect).
-    fn abort_commit_suggest(&mut self, cx: &mut Context<Self>) {
-        if self.commit_suggest.is_none() {
+    fn maybe_start_pending_title(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.pending_title.clone() else {
+            return;
+        };
+        if self.active.as_deref() != Some(id.as_str()) {
+            return;
+        }
+        if !self.can_prompt() {
+            return;
+        }
+        if self.transcript_for_title(cx).is_empty() {
+            return;
+        }
+        self.pending_title = None;
+        let _ = self.request_chat_title(id, cx);
+    }
+
+    fn transcript_for_title(&self, cx: &App) -> String {
+        let mut out = String::new();
+        for entry in &self.entries {
+            let line = match entry {
+                Entry::User { text, .. } => format!("User: {text}"),
+                Entry::Agent(state) => {
+                    format!("Assistant: {}", state.read(cx).rendered_text().source())
+                }
+                _ => continue,
+            };
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&line);
+            if out.chars().count() > 6_000 {
+                break;
+            }
+        }
+        out
+    }
+
+    fn finish_silent(&mut self, ok: bool, cx: &mut Context<Self>) {
+        let Some(pending) = self.silent.take() else {
+            return;
+        };
+        match pending {
+            SilentTurn::Commit { root, text } => {
+                if ok {
+                    let message = crate::git::scrub_commit_message(&text);
+                    if message.is_empty() {
+                        cx.emit(AgentPanelEvent::CommitSuggestFailed { root });
+                    } else {
+                        cx.emit(AgentPanelEvent::CommitSuggestReady { root, message });
+                    }
+                } else {
+                    cx.emit(AgentPanelEvent::CommitSuggestFailed { root });
+                }
+            }
+            SilentTurn::Title { chat_id, text } => {
+                if ok {
+                    let title = scrub_chat_title(&text);
+                    if !title.is_empty() {
+                        self.rename_chat(&chat_id, &title, cx);
+                    } else {
+                        self.push_notice("Could not generate a title.", true, cx);
+                    }
+                } else {
+                    self.push_notice("Title generation stopped.", false, cx);
+                }
+            }
+        }
+    }
+
+    /// Abort an in-flight silent turn (tools / permissions / disconnect).
+    fn abort_silent(&mut self, cx: &mut Context<Self>) {
+        if self.silent.is_none() {
             return;
         }
         if let Some(connection) = &self.connection {
             connection.cancel();
         }
-        self.finish_commit_suggest(false, cx);
+        self.finish_silent(false, cx);
     }
 
     /// Prompt box (the app focuses it when showing the panel).
@@ -796,8 +1280,8 @@ impl AgentPanel {
 
     /// Drop the connection (kills the agent) and cancel open prompts.
     fn disconnect(&mut self, cx: &mut Context<Self>) {
-        if self.commit_suggest.is_some() {
-            self.finish_commit_suggest(false, cx);
+        if self.silent.is_some() {
+            self.finish_silent(false, cx);
         }
         self.connection = None;
         self.session = None;
@@ -805,7 +1289,19 @@ impl AgentPanel {
         self.opens_in_flight = 0;
         self.generation = self.generation.wrapping_add(1);
         self.turn_running = false;
+        self.outbound.clear();
+        self.pending_title = None;
+        // Keep modes / config_options so the composer row does not vanish
+        // (layout shift) while reconnecting; SessionOpened replaces them.
+        self.compacting = false;
+        // Keep usage_by_chat; live `usage` restored on reopen from that map.
+        self.usage = None;
         self.cancel_pending_permissions(cx);
+    }
+
+    /// Mode / Model / … stay visible while Opening, but must not change.
+    fn config_controls_locked(&self) -> bool {
+        self.turn_running || !matches!(self.status, Status::Ready)
     }
 
     /// Ask the connected agent to open the active chat (or a new one).
@@ -825,6 +1321,7 @@ impl AgentPanel {
             _ => SessionOpen::New,
         };
         if !matches!(open, SessionOpen::Resume(_)) {
+            self.cache_active_transcript(cx);
             self.clear_entries(cx);
             self.transcript_of = None;
         }
@@ -833,6 +1330,14 @@ impl AgentPanel {
             SessionOpen::Load(id) | SessionOpen::Resume(id) => Some(id.clone()),
             SessionOpen::New => None,
         };
+        self.compacting = false;
+        self.usage = self
+            .session
+            .as_ref()
+            .and_then(|id| self.usage_by_chat.get(id).copied());
+        if self.usage.is_none() {
+            self.ensure_usage_placeholder();
+        }
         if let Some(connection) = &self.connection {
             connection.open(open.clone());
             self.opens_in_flight += 1;
@@ -842,15 +1347,30 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Show at least `— / {size}` before the agent has sent `usage_update`.
+    fn ensure_usage_placeholder(&mut self) {
+        let size = estimate_context_window_size(&self.config_options);
+        match &mut self.usage {
+            Some(u) if u.used.is_some() => {}
+            Some(u) => u.size = size,
+            None => {
+                self.usage = Some(ContextUsage { used: None, size });
+            }
+        }
+    }
+
     /// Retry after a failure / login: reconnect, keeping the active chat.
     fn retry(&mut self, cx: &mut Context<Self>) {
         self.start(cx);
     }
 
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Header Plus / `⌘N`·`Ctrl+N` in the Agent key context.
+    pub(crate) fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.turn_running {
             return;
         }
+        self.pending_title = None;
+        self.cache_active_transcript(cx);
         self.active = None;
         cx.emit(AgentPanelEvent::ChatsChanged);
         if matches!(self.status, Status::Ready | Status::Opening) {
@@ -867,6 +1387,10 @@ impl AgentPanel {
         if self.turn_running || self.active.as_deref() == Some(id.as_str()) {
             return;
         }
+        if self.pending_title.as_deref() != Some(id.as_str()) {
+            self.pending_title = None;
+        }
+        self.cache_active_transcript(cx);
         self.active = Some(id);
         cx.emit(AgentPanelEvent::ChatsChanged);
         if matches!(self.status, Status::Ready | Status::Opening) {
@@ -919,6 +1443,158 @@ impl AgentPanel {
                 window,
             )
         });
+    }
+
+    fn confirm_rename_chat(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let title = self
+            .chats
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.title.clone())
+            .unwrap_or_default();
+        let can_generate = self.can_generate_title(&id, cx);
+        let panel = cx.entity().downgrade();
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(title));
+        input.update(cx, |input, cx| input.focus(window, cx));
+        window.open_dialog(cx, move |dialog, window, _| {
+            let (panel_ok, panel_gen, panel_cancel) =
+                (panel.clone(), panel.clone(), panel.clone());
+            let (input_ok, input_view) = (input.clone(), input.clone());
+            let (id_ok, id_gen) = (id.clone(), id.clone());
+            center_dialog(
+                dialog
+                    .title("Rename chat")
+                    .child(Input::new(&input_view).w_full().min_w(px(280.)))
+                    .footer(
+                        DialogFooter::new()
+                            .gap_2()
+                            .child(
+                                Button::new("dialog-cancel")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let _ = panel_cancel;
+                                    }),
+                            )
+                            .child(
+                                Button::new("dialog-generate")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .label("Generate")
+                                    .tooltip("Ask the agent for a title from this chat")
+                                    .disabled(!can_generate)
+                                    .when(can_generate, |b| {
+                                        b.on_click(move |_, window, cx| {
+                                            window.close_dialog(cx);
+                                            let id = id_gen.clone();
+                                            _ = panel_gen.update(cx, |this, cx| {
+                                                if !this.begin_chat_title(id, window, cx) {
+                                                    this.push_notice(
+                                                        "Could not generate a title right now.",
+                                                        true,
+                                                        cx,
+                                                    );
+                                                }
+                                            });
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new("dialog-primary")
+                                    .cursor_pointer()
+                                    .primary()
+                                    .label("Rename")
+                                    .on_click(move |_, window, cx| {
+                                        let title = input_ok.read(cx).value().to_string();
+                                        window.close_dialog(cx);
+                                        let id = id_ok.clone();
+                                        _ = panel_ok.update(cx, |this, cx| {
+                                            this.rename_chat(&id, &title, cx);
+                                        });
+                                    }),
+                            ),
+                    ),
+                window,
+            )
+        });
+    }
+
+    /// Local title only (ACP has no rename). Empty → keep current.
+    pub fn rename_chat(&mut self, id: &str, title: &str, cx: &mut Context<Self>) {
+        let title = title.trim();
+        if title.is_empty() {
+            return;
+        }
+        let Some(chat) = self.chats.iter_mut().find(|c| c.id == id) else {
+            return;
+        };
+        if chat.title == title {
+            return;
+        }
+        chat.title = title.to_owned();
+        chat.updated = now_secs();
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        cx.notify();
+    }
+
+    fn set_mode(&mut self, mode_id: String, cx: &mut Context<Self>) {
+        let Some(modes) = &mut self.modes else {
+            return;
+        };
+        if modes.current_mode_id.0.as_ref() == mode_id {
+            return;
+        }
+        modes.current_mode_id = mode_id.clone().into();
+        if let Some(connection) = &self.connection {
+            connection.set_mode(mode_id);
+        }
+        cx.notify();
+    }
+
+    fn set_config_value(&mut self, config_id: String, value: String, cx: &mut Context<Self>) {
+        // Optimistic label update; agent reply / ConfigOptionUpdate is source of truth.
+        if let Some(options) = &mut self.config_options
+            && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == config_id)
+            && let SessionConfigKind::Select(select) = &mut opt.kind
+        {
+            select.current_value = value.clone().into();
+        }
+        if let Some(connection) = &self.connection {
+            connection.set_config(config_id, value);
+        }
+        cx.notify();
+    }
+
+    fn set_config_bool(&mut self, config_id: String, value: bool, cx: &mut Context<Self>) {
+        if let Some(options) = &mut self.config_options
+            && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == config_id)
+            && let SessionConfigKind::Boolean(b) = &mut opt.kind
+        {
+            b.current_value = value;
+        }
+        if let Some(connection) = &self.connection {
+            connection.set_config_bool(config_id, value);
+        }
+        cx.notify();
+    }
+
+    fn set_fast_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(opt) = find_fast_option(&self.config_options) else {
+            return;
+        };
+        let config_id = opt.id.to_string();
+        match &opt.kind {
+            SessionConfigKind::Boolean(_) => self.set_config_bool(config_id, on, cx),
+            SessionConfigKind::Select(_) => {
+                let Some(value) = fast_select_value(opt, on) else {
+                    return;
+                };
+                self.set_config_value(config_id, value, cx);
+            }
+            _ => {}
+        }
     }
 
     fn delete_chat(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -980,16 +1656,19 @@ impl AgentPanel {
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.status, Status::Ready) || self.turn_running {
+        if !matches!(self.status, Status::Ready) {
             return;
         }
         let text = self.input.read(cx).value().trim().to_string();
         if text.is_empty() && self.attachments.is_empty() {
             return;
         }
-        let (Some(connection), Some(session)) = (&self.connection, self.session.clone()) else {
+        let Some(session) = self.session.clone() else {
             return;
         };
+        if self.connection.is_none() {
+            return;
+        }
         let attachments = std::mem::take(&mut self.attachments);
         let thumbs = std::mem::take(&mut self.attachment_thumbs);
         self.mention = None;
@@ -1006,8 +1685,25 @@ impl AgentPanel {
             text.clone()
         };
         let refs = user_refs_from(&attachments, &thumbs);
-        connection.prompt(blocks);
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
+
+        // Busy (user turn or silent job): queue without a transcript bubble yet
+        // so the current reply stays contiguous; drain pushes User + prompts.
+        if self.turn_running || self.silent.is_some() {
+            self.outbound.push_back(QueuedPrompt {
+                title,
+                text,
+                refs,
+                blocks,
+            });
+            cx.notify();
+            return;
+        }
+
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        connection.prompt(blocks);
         self.turn_running = true;
         self.touch_chat(&session, Some(&title));
         cx.emit(AgentPanelEvent::ChatsChanged);
@@ -1018,7 +1714,66 @@ impl AgentPanel {
             },
             cx,
         );
-        // Show the reply even if the user had scrolled up.
+        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        cx.notify();
+    }
+
+    /// How many prompts are waiting for the current turn (tests).
+    #[cfg(test)]
+    pub fn outbound_queue_len(&self) -> usize {
+        self.outbound.len()
+    }
+
+    /// Preview lines for the outbound queue strip (tests).
+    #[cfg(test)]
+    pub fn outbound_previews(&self) -> Vec<String> {
+        self.outbound.iter().map(queued_preview).collect()
+    }
+
+    /// Drop a queued prompt by index (composer queue strip).
+    fn remove_outbound(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.outbound.len() {
+            self.outbound.remove(index);
+            cx.notify();
+        }
+    }
+
+    /// Remove a queued prompt from tests (same path as the strip `CircleX`).
+    #[cfg(test)]
+    pub fn remove_outbound_for_test(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.remove_outbound(index, cx);
+    }
+
+    /// Send the next queued prompt, if any and idle.
+    fn drain_outbound_queue(&mut self, cx: &mut Context<Self>) {
+        if self.turn_running || self.silent.is_some() {
+            return;
+        }
+        if !matches!(self.status, Status::Ready) {
+            return;
+        }
+        let Some(item) = self.outbound.pop_front() else {
+            return;
+        };
+        let Some(connection) = &self.connection else {
+            self.outbound.push_front(item);
+            return;
+        };
+        let Some(session) = self.session.clone() else {
+            self.outbound.push_front(item);
+            return;
+        };
+        connection.prompt(item.blocks);
+        self.turn_running = true;
+        self.touch_chat(&session, Some(&item.title));
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        self.push_entry(
+            Entry::User {
+                text: item.text.into(),
+                refs: item.refs,
+            },
+            cx,
+        );
         self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
         cx.notify();
     }
@@ -1130,15 +1885,19 @@ impl AgentPanel {
     fn turn_finished(&mut self, suggest_ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
         // Resolve before reconnect/suspend so Git still gets a Suggest result.
-        if self.commit_suggest.is_some() {
-            self.finish_commit_suggest(suggest_ok, cx);
+        if self.silent.is_some() {
+            self.finish_silent(suggest_ok, cx);
         }
         if std::mem::take(&mut self.reconnect_after_turn) && !self.suspend_after_turn {
+            // Reconnect drops the connection (and the outbound queue).
             self.start(cx);
         } else if self.suspend_after_turn {
             self.suspend_after_turn = false;
             self.disconnect(cx);
             self.status = Status::Suspended;
+        } else {
+            self.cache_active_transcript(cx);
+            self.drain_outbound_queue(cx);
         }
     }
 
@@ -1157,17 +1916,39 @@ impl AgentPanel {
             }
             AgentEvent::SessionOpened { .. } | AgentEvent::SessionOpenFailed { .. }
                 if self.take_stale_open() => {}
-            AgentEvent::SessionOpened { id } => {
+            AgentEvent::SessionOpened {
+                id,
+                modes,
+                config_options,
+            } => {
                 self.session = Some(id.clone());
                 self.transcript_of = Some(id.clone());
                 // A brand-new chat is active but stays out of the index (and
                 // so is not reopened) until its first prompt.
-                self.active = Some(id);
+                self.active = Some(id.clone());
                 self.opening = None;
                 self.status = Status::Ready;
+                // Keep prior pickers if this open omits options (avoids the
+                // Mode/Model row vanishing for a frame, then popping back).
+                if let Some(modes) = modes {
+                    self.modes = Some(modes);
+                }
+                if let Some(opts) = config_options {
+                    self.config_options = Some(opts);
+                }
+                self.usage = self.usage_by_chat.get(&id).copied();
+                // Claude only sends usage_update mid-turn — seed size so the
+                // header is not blank on open / switch.
+                self.ensure_usage_placeholder();
+                self.maybe_start_pending_title(cx);
+            }
+            AgentEvent::ConfigOptions(options) => {
+                self.config_options = Some(options);
+                self.ensure_usage_placeholder();
             }
             AgentEvent::SessionOpenFailed { open, message } => {
                 self.opening = None;
+                self.pending_title = None;
                 match open {
                     SessionOpen::Load(id) | SessionOpen::Resume(id) => {
                         // Deleted outside Isengard (or never stored): forget it.
@@ -1185,10 +1966,11 @@ impl AgentPanel {
             AgentEvent::Update { session, update } => {
                 if self.session.as_deref() == Some(session.as_str()) {
                     self.apply_update(update, cx);
+                    self.maybe_start_pending_title(cx);
                 }
             }
             AgentEvent::TurnEnded(reason) => {
-                let silent = self.commit_suggest.is_some();
+                let silent = self.silent.is_some();
                 let suggest_ok = matches!(reason, StopReason::EndTurn);
                 if !silent {
                     let note = match reason {
@@ -1206,7 +1988,7 @@ impl AgentPanel {
                 self.turn_finished(suggest_ok, cx);
             }
             AgentEvent::TurnFailed(message) => {
-                if self.commit_suggest.is_none() {
+                if self.silent.is_none() {
                     self.push_notice(message, true, cx);
                 }
                 self.turn_finished(false, cx);
@@ -1216,10 +1998,10 @@ impl AgentPanel {
                 self.status = Status::LoginRequired(methods);
             }
             AgentEvent::Permission(ask) => {
-                if self.commit_suggest.is_some() {
+                if self.silent.is_some() {
                     // Suggest turns must not open tools — deny and fall back.
                     let _ = ask.reply.send(None);
-                    self.abort_commit_suggest(cx);
+                    self.abort_silent(cx);
                 } else {
                     self.ask_permission(ask, cx);
                     cx.emit(AgentPanelEvent::PermissionRequested);
@@ -1228,8 +2010,8 @@ impl AgentPanel {
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
             AgentEvent::Closed(error) => {
-                if self.commit_suggest.is_some() {
-                    self.finish_commit_suggest(false, cx);
+                if self.silent.is_some() {
+                    self.finish_silent(false, cx);
                 }
                 if !matches!(self.status, Status::LoginRequired(_) | Status::Suspended) {
                     let message = error.unwrap_or_else(|| "The agent exited.".into());
@@ -1245,8 +2027,8 @@ impl AgentPanel {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let Some(text) = block_text(&chunk.content) {
-                    if let Some(pending) = &mut self.commit_suggest {
-                        pending.text.push_str(&text);
+                    if let Some(pending) = &mut self.silent {
+                        pending.text_mut().push_str(&text);
                     } else {
                         self.append_text(false, &text, cx);
                     }
@@ -1254,7 +2036,7 @@ impl AgentPanel {
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
                 // Thoughts are not the commit message — ignore during Suggest.
-                if self.commit_suggest.is_some() {
+                if self.silent.is_some() {
                     return;
                 }
                 if let Some(text) = block_text(&chunk.content) {
@@ -1262,13 +2044,13 @@ impl AgentPanel {
                 }
             }
             SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_)
-                if self.commit_suggest.is_some() =>
+                if self.silent.is_some() =>
             {
-                self.abort_commit_suggest(cx);
+                self.abort_silent(cx);
             }
             SessionUpdate::ToolCall(call) => self.upsert_tool_call(call, cx),
             SessionUpdate::ToolCallUpdate(update) => self.update_tool_call(update, cx),
-            SessionUpdate::Plan(_) if self.commit_suggest.is_some() => {}
+            SessionUpdate::Plan(_) if self.silent.is_some() => {}
             SessionUpdate::Plan(plan) => {
                 if let Some(ix) = self.entries.iter().rposition(|e| matches!(e, Entry::Plan(_))) {
                     self.entries[ix] = Entry::Plan(plan.entries);
@@ -1278,7 +2060,7 @@ impl AgentPanel {
                 }
             }
             // Only arrives while `session/load` replays history.
-            SessionUpdate::UserMessageChunk(_) if self.commit_suggest.is_some() => {}
+            SessionUpdate::UserMessageChunk(_) if self.silent.is_some() => {}
             SessionUpdate::UserMessageChunk(chunk) => {
                 if let Some(text) = block_text(&chunk.content) {
                     self.append_user(&text, cx);
@@ -1293,7 +2075,51 @@ impl AgentPanel {
                     cx.emit(AgentPanelEvent::ChatsChanged);
                 }
             }
-            // Metadata the panel does not show.
+            SessionUpdate::CurrentModeUpdate(update) => {
+                if let Some(modes) = &mut self.modes {
+                    modes.current_mode_id = update.current_mode_id;
+                }
+            }
+            SessionUpdate::ConfigOptionUpdate(update) => {
+                self.config_options = Some(update.config_options);
+                // Model / context size may have changed before the next turn.
+                self.ensure_usage_placeholder();
+            }
+            SessionUpdate::UsageUpdate(update) => {
+                let snap = ContextUsage {
+                    used: Some(update.used),
+                    size: update.size,
+                };
+                self.usage = Some(snap);
+                if let Some(id) = self.session.clone() {
+                    self.usage_by_chat.insert(id, snap);
+                }
+                cx.notify();
+            }
+            SessionUpdate::CompactionUpdate(update) if self.silent.is_some() => {
+                self.compacting = matches!(update.status, CompactionStatus::InProgress);
+            }
+            SessionUpdate::CompactionUpdate(update) => {
+                match update.status {
+                    CompactionStatus::InProgress => {
+                        self.compacting = true;
+                    }
+                    CompactionStatus::Completed => {
+                        self.compacting = false;
+                        self.push_notice("Context compacted.", false, cx);
+                    }
+                    CompactionStatus::Failed => {
+                        self.compacting = false;
+                        self.push_notice("Context compaction failed.", true, cx);
+                    }
+                    CompactionStatus::Cancelled => {
+                        self.compacting = false;
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }
+            // Summary chunks / notices / other metadata the panel does not show.
             _ => {}
         }
     }
@@ -1497,6 +2323,527 @@ fn default_name(settings: &AgentSettings) -> SharedString {
         .into(),
         _ => CLAUDE_AGENT_NAME.into(),
     }
+}
+
+fn build_chat_title_prompt(transcript: &str) -> String {
+    format!(
+        "Write a short chat title for this conversation.\n\n\
+         Rules:\n\
+         - Reply with ONLY the title (a few words).\n\
+         - No quotes, no markdown fences, no preamble or explanation.\n\
+         - Do not use tools.\n\n\
+         Transcript:\n{transcript}\n"
+    )
+}
+
+/// First line, short — same ceiling as the first-prompt fallback title.
+fn scrub_chat_title(raw: &str) -> String {
+    let scrubbed = crate::git::scrub_commit_message(raw);
+    let line = scrubbed.lines().next().unwrap_or("").trim();
+    let mut title: String = line.chars().take(60).collect();
+    if line.chars().count() > 60 {
+        title.push('…');
+    }
+    title
+}
+
+struct ConfigSelect {
+    config_id: String,
+    name: String,
+    current: String,
+    choices: Vec<(String, String)>,
+}
+
+/// One Model select choice after parsing family / version / context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ModelChoice {
+    family: String,
+    id: String,
+    version: Option<String>,
+    /// Normalized context label (`1M`, `200K`, …) when the name/id carries one.
+    context: Option<String>,
+}
+
+/// Model option split into family + version (+ context) when names parse that way.
+struct ModelFamilySplit {
+    config_id: String,
+    choices: Vec<ModelChoice>,
+    family: String,
+    version_label: Option<String>,
+    /// Display label for the current context (`1M` / `200K`), when applicable.
+    context_label: Option<String>,
+}
+
+fn find_select(
+    options: &Option<Vec<SessionConfigOption>>,
+    category: Option<SessionConfigOptionCategory>,
+    id_fallback: &str,
+) -> Option<ConfigSelect> {
+    let options = options.as_ref()?;
+    let opt = options.iter().find(|o| {
+        category
+            .as_ref()
+            .is_some_and(|c| o.category.as_ref() == Some(c))
+            || o.id.0.as_ref() == id_fallback
+    })?;
+    select_from_option(opt)
+}
+
+fn select_from_option(opt: &SessionConfigOption) -> Option<ConfigSelect> {
+    let SessionConfigKind::Select(select) = &opt.kind else {
+        return None;
+    };
+    let choices: Vec<(String, String)> = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(opts) => opts
+            .iter()
+            .map(|o| (o.value.to_string(), o.name.clone()))
+            .collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|g| {
+                g.options
+                    .iter()
+                    .map(|o| (o.value.to_string(), o.name.clone()))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    if choices.is_empty() {
+        return None;
+    }
+    Some(ConfigSelect {
+        config_id: opt.id.to_string(),
+        name: opt.name.clone(),
+        current: select.current_value.to_string(),
+        choices,
+    })
+}
+
+/// `"1M"` / `"200k"` / `"[1m]"` → normalized label, or `None` if not a context token.
+fn normalize_context_token(tok: &str) -> Option<String> {
+    let clean = tok
+        .trim()
+        .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')'));
+    if clean.is_empty() {
+        return None;
+    }
+    let lower = clean.to_ascii_lowercase();
+    if lower == "1m" {
+        return Some("1M".into());
+    }
+    if let Some(digits) = lower.strip_suffix('k')
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return Some(format!("{digits}K"));
+    }
+    if let Some(digits) = lower.strip_suffix('m')
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return Some(format!("{digits}M"));
+    }
+    None
+}
+
+/// Strip a trailing context token from a display name: `"Sonnet 4.6 1M"` →
+/// (`"Sonnet 4.6"`, `Some("1M")`).
+fn strip_context_suffix(display: &str) -> (String, Option<String>) {
+    let trimmed = display.trim();
+    let Some((head, last)) = trimmed.rsplit_once(char::is_whitespace) else {
+        return (trimmed.to_owned(), None);
+    };
+    match normalize_context_token(last) {
+        Some(label) => (head.trim_end().to_owned(), Some(label)),
+        None => (trimmed.to_owned(), None),
+    }
+}
+
+/// Context from a model value id (`…[1m]`, `…-1m`, `…[200k]`).
+fn context_from_model_id(id: &str) -> Option<String> {
+    let lower = id.to_ascii_lowercase();
+    if let Some(start) = lower.rfind('[')
+        && let Some(end) = lower[start + 1..].find(']')
+    {
+        let inner = &lower[start + 1..start + 1 + end];
+        if let Some(label) = normalize_context_token(inner) {
+            return Some(label);
+        }
+    }
+    for suffix in ["-1m", "_1m"] {
+        if lower.ends_with(suffix) {
+            return Some("1M".into());
+        }
+    }
+    None
+}
+
+/// `"Sonnet 4.5"` → (`Sonnet`, `Some("4.5")`); `"Opus 5"` → (`Opus`, `Some("5")`).
+fn parse_model_family_version(display: &str) -> (String, Option<String>) {
+    let trimmed = display.trim();
+    let without_claude = trimmed
+        .strip_prefix("Claude ")
+        .or_else(|| trimmed.strip_prefix("claude "))
+        .unwrap_or(trimmed)
+        .trim();
+    // Trailing version: digits, optional .digits (not part of a longer token).
+    let bytes = without_claude.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 && (bytes[i - 1].is_ascii_digit() || bytes[i - 1] == b'.') {
+        i -= 1;
+    }
+    if i == 0 || i == bytes.len() || !bytes[i - 1].is_ascii_whitespace() {
+        return (without_claude.to_owned(), None);
+    }
+    let version = without_claude[i..].trim();
+    let family = without_claude[..i].trim();
+    if family.is_empty()
+        || version.is_empty()
+        || !version.chars().next().is_some_and(|c| c.is_ascii_digit())
+        || version.ends_with('.')
+    {
+        return (without_claude.to_owned(), None);
+    }
+    (family.to_owned(), Some(version.to_owned()))
+}
+
+fn parse_model_choice(id: &str, name: &str) -> ModelChoice {
+    let (base, ctx_name) = strip_context_suffix(name);
+    let (family, version) = parse_model_family_version(&base);
+    let context = ctx_name.or_else(|| context_from_model_id(id));
+    ModelChoice {
+        family,
+        id: id.to_owned(),
+        version,
+        context,
+    }
+}
+
+/// When ≥2 families have versions, expose family + version pickers.
+fn model_family_split(options: &Option<Vec<SessionConfigOption>>) -> Option<ModelFamilySplit> {
+    let model = find_select(options, Some(SessionConfigOptionCategory::Model), "model")?;
+    let parsed: Vec<ModelChoice> = model
+        .choices
+        .iter()
+        .map(|(id, name)| parse_model_choice(id, name))
+        .collect();
+    let versioned_families: std::collections::BTreeSet<&str> = parsed
+        .iter()
+        .filter(|c| c.version.is_some())
+        .map(|c| c.family.as_str())
+        .collect();
+    if versioned_families.is_empty() {
+        return None;
+    }
+    // Need at least one family with 2+ versions, or 2+ versioned families.
+    let worth_splitting = versioned_families.len() >= 2
+        || parsed.iter().any(|c| {
+            c.version.is_some()
+                && parsed
+                    .iter()
+                    .filter(|o| o.family == c.family && o.version.is_some())
+                    .map(|o| o.version.as_deref())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    >= 2
+        });
+    if !worth_splitting {
+        return None;
+    }
+    let current = parsed
+        .iter()
+        .find(|c| c.id == model.current)
+        .cloned()
+        .or_else(|| parsed.first().cloned())?;
+    let context_label = display_context_label(&parsed, &current);
+    Some(ModelFamilySplit {
+        config_id: model.config_id,
+        choices: parsed,
+        family: current.family,
+        version_label: current.version,
+        context_label,
+    })
+}
+
+/// Label shown for the current choice's context when siblings differ.
+fn display_context_label(all: &[ModelChoice], current: &ModelChoice) -> Option<String> {
+    let siblings: Vec<&ModelChoice> = all
+        .iter()
+        .filter(|c| c.family == current.family && c.version == current.version)
+        .collect();
+    if siblings.len() < 2 {
+        return current.context.clone();
+    }
+    let has_explicit = siblings.iter().any(|c| c.context.is_some());
+    if !has_explicit {
+        return None;
+    }
+    Some(
+        current
+            .context
+            .clone()
+            .unwrap_or_else(|| "200K".into()),
+    )
+}
+
+/// `(model_id, label)` context choices for the current family+version.
+fn context_choices(split: &ModelFamilySplit) -> Vec<(String, String)> {
+    let siblings: Vec<&ModelChoice> = split
+        .choices
+        .iter()
+        .filter(|c| c.family == split.family && c.version == split.version_label)
+        .collect();
+    if siblings.len() < 2 || !siblings.iter().any(|c| c.context.is_some()) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for c in siblings {
+        let label = c.context.clone().unwrap_or_else(|| "200K".into());
+        if !out.iter().any(|(_, l)| l == &label) {
+            out.push((c.id.clone(), label));
+        }
+    }
+    if out.len() < 2 {
+        return Vec::new();
+    }
+    out
+}
+
+#[cfg(test)]
+fn context_choice_id(split: &ModelFamilySplit, context: &str) -> Option<String> {
+    context_choices(split)
+        .into_iter()
+        .find(|(_, label)| label == context)
+        .map(|(id, _)| id)
+}
+
+fn is_fast_option(opt: &SessionConfigOption) -> bool {
+    let id = opt.id.0.as_ref().to_ascii_lowercase();
+    let name = opt.name.to_ascii_lowercase();
+    id.contains("fast") || name.contains("fast")
+}
+
+fn find_fast_option(options: &Option<Vec<SessionConfigOption>>) -> Option<&SessionConfigOption> {
+    options.as_ref()?.iter().find(|o| is_fast_option(o))
+}
+
+fn fast_is_on(opt: &SessionConfigOption) -> bool {
+    match &opt.kind {
+        SessionConfigKind::Boolean(b) => b.current_value,
+        SessionConfigKind::Select(select) => {
+            let cur = select.current_value.to_string().to_ascii_lowercase();
+            matches!(cur.as_str(), "on" | "true" | "yes" | "1")
+        }
+        _ => false,
+    }
+}
+
+fn fast_select_value(opt: &SessionConfigOption, on: bool) -> Option<String> {
+    let SessionConfigKind::Select(select) = &opt.kind else {
+        return None;
+    };
+    let choices: Vec<(String, String)> = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(opts) => opts
+            .iter()
+            .map(|o| (o.value.to_string(), o.name.to_ascii_lowercase()))
+            .collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|g| {
+                g.options
+                    .iter()
+                    .map(|o| (o.value.to_string(), o.name.to_ascii_lowercase()))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let want = if on {
+        ["on", "true", "yes", "1"]
+    } else {
+        ["off", "false", "no", "0"]
+    };
+    choices
+        .iter()
+        .find(|(id, name)| {
+            let id_l = id.to_ascii_lowercase();
+            want.iter()
+                .any(|w| id_l == *w || name == w || name.contains(w))
+        })
+        .map(|(id, _)| id.clone())
+}
+
+/// One-line preview for a queued prompt in the composer strip.
+fn queued_preview(item: &QueuedPrompt) -> String {
+    let mut line = item
+        .text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if line.is_empty() {
+        line = item.title.clone();
+    }
+    if !item.refs.is_empty() {
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(&format!("(+{})", item.refs.len()));
+    }
+    if line.is_empty() {
+        line = "(attachment)".into();
+    }
+    let mut out: String = line.chars().take(80).collect();
+    if line.chars().count() > 80 {
+        out.push('…');
+    }
+    out
+}
+
+/// Claude ACP still lists `auto` for every model; the SDK only supports it on
+/// Claude 4.6+. Hide it in the picker when the current model is older.
+/// ponytail: Claude-specific heuristic until ACP exposes `supportsAutoMode`.
+fn claudeish_model_id(model_id: &str) -> bool {
+    let l = model_id.to_ascii_lowercase();
+    ["claude", "sonnet", "opus", "haiku", "fable"]
+        .iter()
+        .any(|p| l.contains(p))
+}
+
+/// `(major, minor)` from ids like `sonnet-4-5`, `claude-haiku-4-5-20251001`, `opus-5`.
+fn parse_claude_model_version(model_id: &str) -> Option<(u32, u32)> {
+    let l = model_id.to_ascii_lowercase();
+    let mut nums = l
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<u32>().ok());
+    let major = nums.next()?;
+    // Date suffixes (`20251001`) are not a minor version.
+    let minor = nums.next().filter(|&n| n < 100).unwrap_or(0);
+    Some((major, minor))
+}
+
+fn model_supports_auto_mode(model_id: Option<&str>) -> bool {
+    let Some(id) = model_id.filter(|s| !s.is_empty()) else {
+        return true;
+    };
+    if !claudeish_model_id(id) {
+        return true;
+    }
+    match parse_claude_model_version(id) {
+        // Claude catalog: Auto permission mode requires 4.6+.
+        Some((major, minor)) if major < 4 || (major == 4 && minor < 6) => false,
+        _ => true,
+    }
+}
+
+/// Drop modes the current model cannot use (today: Claude `auto` on &lt;4.6).
+fn filter_mode_choices(
+    choices: &[(String, String)],
+    model_id: Option<&str>,
+) -> Vec<(String, String)> {
+    choices
+        .iter()
+        .filter(|(id, _)| id != "auto" || model_supports_auto_mode(model_id))
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
+mod mode_filter_tests {
+    // Avoid `use super::*` — it pulls gpui_kit's `#[test]` macro into scope.
+    use super::filter_mode_choices;
+
+    #[test]
+    fn hides_auto_below_claude_4_6() {
+        let choices = vec![
+            ("ask".into(), "Ask".into()),
+            ("auto".into(), "Auto".into()),
+            ("plan".into(), "Plan".into()),
+        ];
+        let ids = |model: &str| {
+            filter_mode_choices(&choices, Some(model))
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids("sonnet-4-5"), vec!["ask", "plan"]);
+        assert_eq!(ids("claude-haiku-4-5-20251001"), vec!["ask", "plan"]);
+        assert_eq!(ids("sonnet-4-6"), vec!["ask", "auto", "plan"]);
+        assert_eq!(ids("opus-5"), vec!["ask", "auto", "plan"]);
+        // Non-Claude agents keep Auto.
+        assert_eq!(ids("gpt-4o"), vec!["ask", "auto", "plan"]);
+    }
+}
+
+/// Icon for the current session mode (Ask / Auto / Plan / accept edits / …).
+fn mode_icon(id: &str, name: &str) -> LucideIcon {
+    let blob = format!("{id} {name}").to_ascii_lowercase();
+    if blob.contains("plan") {
+        LucideIcon::ListTodo
+    } else if blob.contains("auto") {
+        LucideIcon::Sparkles
+    } else if blob.contains("accept")
+        || blob.contains("code")
+        || (blob.contains("edit") && !blob.contains("ask"))
+    {
+        LucideIcon::Pencil
+    } else if blob.contains("ask") {
+        LucideIcon::ShieldQuestionMark
+    } else {
+        LucideIcon::Shield
+    }
+}
+
+/// Lucide for an ACP config option that is not Mode/Model/Context/Fast.
+fn config_option_icon(opt: &SessionConfigOption) -> LucideIcon {
+    if matches!(
+        opt.category,
+        Some(SessionConfigOptionCategory::ThoughtLevel)
+    ) {
+        return LucideIcon::Brain;
+    }
+    let id = opt.id.0.as_ref().to_ascii_lowercase();
+    let name = opt.name.to_ascii_lowercase();
+    let blob = format!("{id} {name}");
+    if blob.contains("agent")
+        || blob.contains("persona")
+        || blob.contains("subagent")
+        || blob.contains("skill")
+    {
+        LucideIcon::Users
+    } else if blob.contains("effort")
+        || blob.contains("thought")
+        || blob.contains("think")
+        || blob.contains("reason")
+    {
+        LucideIcon::Brain
+    } else if blob.contains("context") || blob.contains("window") {
+        LucideIcon::Maximize2
+    } else {
+        LucideIcon::SlidersHorizontal
+    }
+}
+
+/// Dedicated ACP Context / window-size select (not the Model list).
+fn find_context_select(options: &Option<Vec<SessionConfigOption>>) -> Option<ConfigSelect> {
+    let options = options.as_ref()?;
+    let opt = options.iter().find(|o| {
+        if is_fast_option(o) {
+            return false;
+        }
+        let id = o.id.0.as_ref().to_ascii_lowercase();
+        let name = o.name.to_ascii_lowercase();
+        (id.contains("context") || name.contains("context") || name.contains("window"))
+            && select_from_option(o).is_some_and(|s| {
+                s.choices.iter().any(|(cid, cname)| {
+                    normalize_context_token(cname).is_some()
+                        || normalize_context_token(cid).is_some()
+                        || context_from_model_id(cid).is_some()
+                })
+            })
+    })?;
+    select_from_option(opt)
 }
 
 fn block_text(block: &ContentBlock) -> Option<String> {
@@ -1758,6 +3105,9 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
 impl AgentPanel {
     /// Live status line: what the agent is doing right now (real tool title when possible).
     fn activity_label(&self) -> Option<SharedString> {
+        if self.compacting {
+            return Some("Compacting…".into());
+        }
         match &self.status {
             Status::Installing => Some("Installing…".into()),
             Status::Starting => Some("Starting…".into()),
@@ -1806,9 +3156,17 @@ impl AgentPanel {
         let can_new_chat =
             !self.turn_running && matches!(self.status, Status::Ready | Status::Failed(_));
         let activity = self.activity_label();
+        // Session title, not the agent process name — pickers live on the composer.
+        let session_title = self
+            .active
+            .as_ref()
+            .and_then(|id| self.chats.iter().find(|c| &c.id == id))
+            .map(|c| c.title.as_str())
+            .filter(|t| !t.is_empty())
+            .unwrap_or("New chat");
         let title: SharedString = match &activity {
-            Some(what) => format!("{} · {what}", self.agent_name).into(),
-            None => self.agent_name.clone(),
+            Some(what) => format!("{session_title} · {what}").into(),
+            None => session_title.into(),
         };
         h_flex()
             .w_full()
@@ -1832,11 +3190,32 @@ impl AgentPanel {
                     .when(activity.is_some(), |t| t.text_color(theme.muted_foreground))
                     .child(title),
             )
+            .when_some(self.usage, |row, u| {
+                let pct = match (u.used, u.size > 0) {
+                    (Some(used), true) => (used.saturating_mul(100)) / u.size,
+                    _ => 0,
+                };
+                let color = if pct >= 95 {
+                    theme.danger
+                } else if pct >= 80 {
+                    theme.warning
+                } else {
+                    theme.muted_foreground
+                };
+                row.child(
+                    div()
+                        .id("agent-context-usage")
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(color)
+                        .child(format_context_usage(u)),
+                )
+            })
             .child(
                 Button::new("agent-new-chat")
                     .ghost()
                     .small()
-                    .icon(LucideIcon::SquarePen)
+                    .icon(LucideIcon::Plus)
                     .tooltip("New Chat")
                     .disabled(!can_new_chat)
                     .when(can_new_chat, |b| b.cursor_pointer())
@@ -1854,6 +3233,404 @@ impl AgentPanel {
                     .tooltip("Hide Agent Panel")
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(AgentPanelEvent::Hide))),
             )
+            .into_any_element()
+    }
+
+    /// Mode: prefer ACP `configOptions` (category mode), else legacy `modes`.
+    fn render_mode_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let model_id = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        )
+        .map(|m| m.current);
+        if let Some(opt) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Mode),
+            "mode",
+        ) {
+            let config_id = opt.config_id.clone();
+            // Name/icon from the full agent list (current may be filtered out of picks).
+            let current_name = opt
+                .choices
+                .iter()
+                .find(|(id, _)| id == &opt.current)
+                .map(|(_, n)| n.as_str())
+                .unwrap_or("");
+            let icon = mode_icon(&opt.current, current_name);
+            let choices = filter_mode_choices(&opt.choices, model_id.as_deref());
+            return self.render_bottom_select(
+                "agent-mode",
+                icon,
+                &opt.name,
+                current_name,
+                &opt.current,
+                &choices,
+                self.config_controls_locked(),
+                cx,
+                move |this, id, cx| {
+                    // Keep legacy mode state in sync for the header/tests.
+                    if let Some(modes) = &mut this.modes {
+                        modes.current_mode_id = id.clone().into();
+                    }
+                    this.set_config_value(config_id.clone(), id, cx);
+                },
+            );
+        }
+        let Some(modes) = self.modes.clone() else {
+            return div().into_any_element();
+        };
+        let current = modes.current_mode_id.to_string();
+        let raw: Vec<(String, String)> = modes
+            .available_modes
+            .iter()
+            .map(|m| (m.id.to_string(), m.name.clone()))
+            .collect();
+        let current_name = raw
+            .iter()
+            .find(|(id, _)| id == &current)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or(current.as_str());
+        let icon = mode_icon(&current, current_name);
+        let choices = filter_mode_choices(&raw, model_id.as_deref());
+        self.render_bottom_select(
+            "agent-mode",
+            icon,
+            "Mode",
+            current_name,
+            &current,
+            &choices,
+            self.config_controls_locked(),
+            cx,
+            |this, id, cx| this.set_mode(id, cx),
+        )
+    }
+
+    /// Model family (Sonnet / Opus / …) when names parse with versions.
+    fn render_model_family_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return div().into_any_element();
+        };
+        let mut families = Vec::new();
+        for c in &split.choices {
+            if !families.iter().any(|f| f == &c.family) {
+                families.push(c.family.clone());
+            }
+        }
+        let choices: Vec<(String, String)> = families
+            .into_iter()
+            .map(|f| (f.clone(), f))
+            .collect();
+        let config_id = split.config_id.clone();
+        let all = split.choices.clone();
+        let prefer_ctx = split.context_label.clone();
+        self.render_bottom_select(
+            "agent-model-family",
+            LucideIcon::Cpu,
+            "Model",
+            &split.family,
+            &split.family,
+            &choices,
+            self.config_controls_locked(),
+            cx,
+            move |this, family, cx| {
+                let id = all
+                    .iter()
+                    .filter(|c| c.family == family)
+                    .find(|c| {
+                        display_context_label(&all, c).as_ref() == prefer_ctx.as_ref()
+                    })
+                    .or_else(|| all.iter().find(|c| c.family == family))
+                    .map(|c| c.id.clone());
+                let Some(id) = id else {
+                    return;
+                };
+                this.set_config_value(config_id.clone(), id, cx);
+            },
+        )
+    }
+
+    /// Versions for the current family (`4.5`, `4.6`, …).
+    fn render_model_version_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return div().into_any_element();
+        };
+        let mut versions: Vec<(String, String)> = Vec::new();
+        for c in &split.choices {
+            if c.family != split.family {
+                continue;
+            }
+            let Some(ver) = &c.version else {
+                continue;
+            };
+            if versions.iter().any(|(_, v)| v == ver) {
+                continue;
+            }
+            // Prefer the choice matching current context when several share a version.
+            let id = split
+                .choices
+                .iter()
+                .filter(|o| o.family == split.family && o.version.as_deref() == Some(ver.as_str()))
+                .find(|o| display_context_label(&split.choices, o) == split.context_label)
+                .or_else(|| {
+                    split.choices.iter().find(|o| {
+                        o.family == split.family && o.version.as_deref() == Some(ver.as_str())
+                    })
+                })
+                .map(|o| o.id.clone())
+                .unwrap_or_else(|| c.id.clone());
+            versions.push((id, ver.clone()));
+        }
+        if versions.is_empty() {
+            return div().into_any_element();
+        }
+        let current = split
+            .choices
+            .iter()
+            .find(|c| c.family == split.family && c.version == split.version_label)
+            .and_then(|c| {
+                versions
+                    .iter()
+                    .find(|(_, v)| Some(v.as_str()) == c.version.as_deref())
+                    .map(|(id, _)| id.clone())
+            })
+            .or_else(|| versions.first().map(|(id, _)| id.clone()))
+            .unwrap_or_default();
+        let config_id = split.config_id.clone();
+        let version_label = versions
+            .iter()
+            .find(|(id, _)| id == &current)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or(current.as_str());
+        self.render_bottom_select(
+            "agent-model-version",
+            LucideIcon::Tag,
+            "Version",
+            version_label,
+            &current,
+            &versions,
+            self.config_controls_locked(),
+            cx,
+            move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
+        )
+    }
+
+    /// Context window (`200K` / `1M` / …) when the agent advertises variants.
+    fn render_context_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(opt) = find_context_select(&self.config_options) {
+            let config_id = opt.config_id.clone();
+            let label = opt
+                .choices
+                .iter()
+                .find(|(id, _)| id == &opt.current)
+                .map(|(_, n)| n.as_str())
+                .unwrap_or(opt.current.as_str());
+            return self.render_bottom_select(
+                "agent-context",
+                LucideIcon::Maximize2,
+                "Context",
+                label,
+                &opt.current,
+                &opt.choices,
+                self.config_controls_locked(),
+                cx,
+                move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
+            );
+        }
+        let Some(split) = model_family_split(&self.config_options) else {
+            return div().into_any_element();
+        };
+        let choices = context_choices(&split);
+        if choices.len() < 2 {
+            return div().into_any_element();
+        }
+        let current = split
+            .context_label
+            .as_ref()
+            .and_then(|label| {
+                choices
+                    .iter()
+                    .find(|(_, l)| l == label)
+                    .map(|(id, _)| id.clone())
+            })
+            .or_else(|| choices.first().map(|(id, _)| id.clone()))
+            .unwrap_or_default();
+        let label = choices
+            .iter()
+            .find(|(id, _)| id == &current)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or(current.as_str());
+        let config_id = split.config_id.clone();
+        self.render_bottom_select(
+            "agent-model-context",
+            LucideIcon::Maximize2,
+            "Context",
+            label,
+            &current,
+            &choices,
+            self.config_controls_locked(),
+            cx,
+            move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
+        )
+    }
+
+    /// Fast mode as a Kit Switch labeled "Fast" (On/Off select or boolean).
+    fn render_fast_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(opt) = find_fast_option(&self.config_options) else {
+            return div().into_any_element();
+        };
+        let checked = fast_is_on(opt);
+        let busy = self.config_controls_locked();
+        let panel = cx.entity().downgrade();
+        let muted = cx.theme().muted_foreground;
+        h_flex()
+            .id("agent-fast-mode-wrap")
+            .gap_1()
+            .items_center()
+            .child(Icon::new(LucideIcon::Zap).small().text_color(muted))
+            .child(
+                Switch::new("agent-fast-mode")
+                    .label("Fast")
+                    .small()
+                    .checked(checked)
+                    .disabled(busy)
+                    .tooltip(SharedString::from(opt.name.clone()))
+                    .when(!busy, |s| s.cursor_pointer())
+                    .on_click(move |on, _, cx| {
+                        let on = *on;
+                        _ = panel.update(cx, |this, cx| this.set_fast_mode(on, cx));
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_flat_model_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(opt) =
+            find_select(&self.config_options, Some(SessionConfigOptionCategory::Model), "model")
+        else {
+            return div().into_any_element();
+        };
+        let config_id = opt.config_id.clone();
+        let label = opt
+            .choices
+            .iter()
+            .find(|(id, _)| id == &opt.current)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or(opt.current.as_str());
+        self.render_bottom_select(
+            "agent-model",
+            LucideIcon::Cpu,
+            &opt.name,
+            label,
+            &opt.current,
+            &opt.choices,
+            self.config_controls_locked(),
+            cx,
+            move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
+        )
+    }
+
+    /// Effort / other selects (not Mode, Model, Fast, or Context).
+    fn render_extra_config_pickers(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(options) = &self.config_options else {
+            return Vec::new();
+        };
+        let busy = self.config_controls_locked();
+        let context_id = find_context_select(&self.config_options).map(|s| s.config_id);
+        options
+            .iter()
+            .filter(|o| {
+                !matches!(
+                    o.category,
+                    Some(SessionConfigOptionCategory::Mode | SessionConfigOptionCategory::Model)
+                ) && o.id.0.as_ref() != "mode"
+                    && o.id.0.as_ref() != "model"
+                    && !is_fast_option(o)
+                    && context_id.as_deref() != Some(o.id.0.as_ref())
+            })
+            .filter_map(|o| {
+                let opt = select_from_option(o)?;
+                let icon = config_option_icon(o);
+                let config_id = opt.config_id.clone();
+                let popover_id: SharedString =
+                    format!("agent-config-{}", opt.config_id).into();
+                let label = opt
+                    .choices
+                    .iter()
+                    .find(|(id, _)| id == &opt.current)
+                    .map(|(_, n)| n.as_str())
+                    .unwrap_or(opt.current.as_str());
+                Some(self.render_bottom_select(
+                    popover_id,
+                    icon,
+                    opt.name,
+                    label,
+                    &opt.current,
+                    &opt.choices,
+                    busy,
+                    cx,
+                    move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
+                ))
+            })
+            .collect()
+    }
+
+    /// Composer-row Popover select (opens upward).
+    fn render_bottom_select(
+        &self,
+        popover_id: impl Into<SharedString>,
+        icon: LucideIcon,
+        tooltip: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        current: &str,
+        choices: &[(String, String)],
+        busy: bool,
+        cx: &mut Context<Self>,
+        on_pick: impl Fn(&mut Self, String, &mut Context<Self>) + Clone + 'static,
+    ) -> AnyElement {
+        let popover_id: SharedString = popover_id.into();
+        let tooltip: SharedString = tooltip.into();
+        let label: SharedString = label.into();
+        let panel = cx.entity().downgrade();
+        let current = current.to_owned();
+        let choices = choices.to_vec();
+        let trigger_id: SharedString = format!("{popover_id}-button").into();
+        Popover::new(popover_id.clone())
+            .anchor(Anchor::BottomLeft)
+            .trigger(
+                Button::new(trigger_id)
+                    .ghost()
+                    .small()
+                    .icon(icon)
+                    .label(label)
+                    .tooltip(tooltip)
+                    .disabled(busy)
+                    .when(!busy, |b| b.cursor_pointer()),
+            )
+            .content(move |_state: &mut PopoverState, _, cx| {
+                let popover = cx.weak_entity();
+                let popover_id = popover_id.clone();
+                v_flex()
+                    .w(px(200.))
+                    .children(choices.iter().map(|(id, name)| {
+                        let selected = id == &current;
+                        let (panel, popover) = (panel.clone(), popover.clone());
+                        let on_pick = on_pick.clone();
+                        let id = id.clone();
+                        ListItem::new(SharedString::from(format!("{popover_id}-{id}")))
+                            .selected(selected)
+                            .cursor_pointer()
+                            .on_click(move |_, window, cx| {
+                                if let Some(p) = popover.upgrade() {
+                                    p.update(cx, |p, cx| p.dismiss(window, cx));
+                                }
+                                let id = id.clone();
+                                let on_pick = on_pick.clone();
+                                _ = panel.update(cx, |this, cx| on_pick(this, id, cx));
+                            })
+                            .child(div().text_sm().child(name.clone()))
+                    }))
+            })
             .into_any_element()
     }
 
@@ -1893,9 +3670,15 @@ impl AgentPanel {
                     })
                     .children(chats.iter().map(|chat| {
                         let selected = active.as_deref() == Some(chat.id.as_str());
-                        let (open_panel, delete_panel) = (panel.clone(), panel.clone());
-                        let (open_popover, delete_popover) = (popover.clone(), popover.clone());
-                        let (open_id, delete_id) = (chat.id.clone(), chat.id.clone());
+                        let usage = panel
+                            .upgrade()
+                            .and_then(|p| p.read(cx).usage_by_chat.get(&chat.id).copied());
+                        let (open_panel, rename_panel, delete_panel) =
+                            (panel.clone(), panel.clone(), panel.clone());
+                        let (open_popover, rename_popover, delete_popover) =
+                            (popover.clone(), popover.clone(), popover.clone());
+                        let (open_id, rename_id, delete_id) =
+                            (chat.id.clone(), chat.id.clone(), chat.id.clone());
                         ListItem::new(SharedString::from(format!("agent-chat-{}", chat.id)))
                             .selected(selected)
                             .disabled(busy)
@@ -1918,11 +3701,37 @@ impl AgentPanel {
                                             .min_w_0()
                                             .child(div().text_sm().truncate().child(chat.title.clone()))
                                             .child(
-                                                div()
+                                                h_flex()
+                                                    .gap_2()
                                                     .text_xs()
                                                     .text_color(theme.muted_foreground)
-                                                    .child(relative_time(chat.updated, now)),
+                                                    .child(relative_time(chat.updated, now))
+                                                    .when_some(usage, |row, u| {
+                                                        row.child(format_context_usage(u))
+                                                    }),
                                             ),
+                                    )
+                                    .child(
+                                        Button::new(SharedString::from(format!(
+                                            "agent-chat-rename-{}",
+                                            chat.id
+                                        )))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(LucideIcon::Pencil)
+                                        .tooltip("Rename Chat")
+                                        .disabled(busy)
+                                        .when(!busy, |b| b.cursor_pointer())
+                                        .on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            if let Some(p) = rename_popover.upgrade() {
+                                                p.update(cx, |p, cx| p.dismiss(window, cx));
+                                            }
+                                            let id = rename_id.clone();
+                                            _ = rename_panel.update(cx, |this, cx| {
+                                                this.confirm_rename_chat(id, window, cx);
+                                            });
+                                        }),
                                     )
                                     .child(
                                         Button::new(SharedString::from(format!(
@@ -2121,8 +3930,10 @@ impl AgentPanel {
     fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let busy = self.turn_running;
-        let can_send = ready && !busy;
-        let action = if busy {
+        let draft = !self.input.read(cx).value().trim().is_empty() || !self.attachments.is_empty();
+        // Send stays available while busy — it queues. Stop is separate.
+        let can_send = ready && draft;
+        let stop = busy.then(|| {
             // Lucide `Square` is stroke-only (hollow); stop needs a solid block.
             Button::new("agent-stop")
                 .danger()
@@ -2136,17 +3947,35 @@ impl AgentPanel {
                 )
                 .label("Stop")
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+                .into_any_element()
+        });
+        let send = Button::new("agent-send")
+            .primary()
+            .small()
+            .icon(LucideIcon::ArrowUp)
+            .label(if busy { "Queue" } else { "Send" })
+            .disabled(!can_send)
+            .when(can_send, |b| {
+                b.cursor_pointer()
+                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+            })
+            .into_any_element();
+        let actions = h_flex()
+            .gap_1()
+            .items_center()
+            .children(stop)
+            .child(send);
+        let hint = if busy {
+            if self.outbound.is_empty() {
+                "@ mention · Enter to queue".to_owned()
+            } else {
+                format!(
+                    "{} queued · Enter to queue",
+                    self.outbound.len()
+                )
+            }
         } else {
-            Button::new("agent-send")
-                .primary()
-                .small()
-                .icon(LucideIcon::ArrowUp)
-                .label("Send")
-                .disabled(!can_send)
-                .when(can_send, |b| {
-                    b.cursor_pointer()
-                        .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
-                })
+            "@ mention · Enter to send".to_owned()
         };
         let panel = cx.entity().downgrade();
         let muted = theme.muted_foreground;
@@ -2169,40 +3998,168 @@ impl AgentPanel {
                         .unwrap_or(false)
                 }),
             )
+            // Config band then attach/hint/Send. Always reserve one control-row
+            // height so first options / session open do not shove the textarea.
             .child(
-                h_flex()
+                v_flex()
                     .w_full()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
+                    .gap_1()
+                    .child(
+                        v_flex()
+                            .id("agent-composer-config-band")
+                            .w_full()
+                            .min_h(px(theme::AGENT_COMPOSER_CONFIG_ROW_H))
+                            .justify_center()
+                            .when(self.has_composer_config_controls(), |band| {
+                                band.child(self.render_composer_config_row(cx))
+                            }),
+                    )
                     .child(
                         h_flex()
-                            .min_w_0()
-                            .gap_1()
+                            .w_full()
                             .items_center()
+                            .justify_between()
+                            .gap_2()
                             .child(
-                                Button::new("agent-attach-file")
-                                    .ghost()
-                                    .small()
-                                    .icon(LucideIcon::Paperclip)
-                                    .tooltip("Attach files from disk… (@ for folders)")
-                                    .disabled(busy)
-                                    .when(!busy, |b| b.cursor_pointer())
-                                    .on_click(cx.listener(|_, _, _, cx| {
-                                        cx.emit(AgentPanelEvent::AttachFromDisk)
-                                    })),
-                            )
-                            .child(
-                                div()
+                                h_flex()
                                     .min_w_0()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child("@ mention · Enter to send"),
-                            ),
-                    )
-                    .child(action),
+                                    .gap_1()
+                                    .items_center()
+                                    .child(
+                                        Button::new("agent-attach-file")
+                                            .ghost()
+                                            .small()
+                                            .icon(LucideIcon::Paperclip)
+                                            .tooltip("Attach files from disk… (@ for folders)")
+                                            .disabled(busy)
+                                            .when(!busy, |b| b.cursor_pointer())
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(AgentPanelEvent::AttachFromDisk)
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(muted)
+                                            .child(hint),
+                                    ),
+                            )
+                            .child(actions),
+                    ),
             )
+            .when(!self.outbound.is_empty(), |col| {
+                col.child(self.render_outbound_queue(cx))
+            })
+            .into_any_element()
+    }
+
+    /// Waiting prompts under the composer — remove with ghost `CircleX`.
+    fn render_outbound_queue(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let n = self.outbound.len();
+        v_flex()
+            .id("agent-outbound-queue")
+            .w_full()
+            .gap_1()
+            .p_2()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(if n == 1 {
+                        "Queued — sends when this turn ends".to_owned()
+                    } else {
+                        format!("Queued ({n}) — send in order when this turn ends")
+                    }),
+            )
+            .children(self.outbound.iter().enumerate().map(|(ix, item)| {
+                let preview = queued_preview(item);
+                h_flex()
+                    .id(SharedString::from(format!("agent-outbound-{ix}")))
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(preview),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("agent-outbound-remove-{ix}")))
+                            .ghost()
+                            .small()
+                            .icon(LucideIcon::CircleX)
+                            .tooltip("Remove from queue")
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.remove_outbound(ix, cx);
+                            })),
+                    )
+            }))
+            .into_any_element()
+    }
+
+    fn has_composer_config_controls(&self) -> bool {
+        self.modes.is_some()
+            || self
+                .config_options
+                .as_ref()
+                .is_some_and(|opts| !opts.is_empty())
+    }
+
+    /// Mode / Model / Version / Context / Fast / Effort — one horizontal row
+    /// (scroll if narrow) so height stays stable and does not wrap-jump.
+    fn render_composer_config_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .id("agent-composer-config")
+            .w_full()
+            .min_w_0()
+            .h(px(theme::AGENT_COMPOSER_CONFIG_ROW_H))
+            .gap_1()
+            .items_center()
+            .overflow_x_scroll()
+            .when(
+                find_select(
+                    &self.config_options,
+                    Some(SessionConfigOptionCategory::Mode),
+                    "mode",
+                )
+                .is_some()
+                    || self.modes.is_some(),
+                |row| row.child(self.render_mode_picker(cx)),
+            )
+            .when(model_family_split(&self.config_options).is_some(), |row| {
+                row.child(self.render_model_family_picker(cx))
+                    .child(self.render_model_version_picker(cx))
+            })
+            .when(
+                model_family_split(&self.config_options).is_none()
+                    && find_select(
+                        &self.config_options,
+                        Some(SessionConfigOptionCategory::Model),
+                        "model",
+                    )
+                    .is_some(),
+                |row| row.child(self.render_flat_model_picker(cx)),
+            )
+            .when(
+                find_context_select(&self.config_options).is_some()
+                    || model_family_split(&self.config_options)
+                        .is_some_and(|s| context_choices(&s).len() >= 2),
+                |row| row.child(self.render_context_picker(cx)),
+            )
+            .when(find_fast_option(&self.config_options).is_some(), |row| {
+                row.child(self.render_fast_toggle(cx))
+            })
+            .children(self.render_extra_config_pickers(cx))
             .into_any_element()
     }
 
@@ -2348,9 +4305,14 @@ impl Render for AgentPanel {
             );
         v_flex()
             .id("agent-panel")
+            // So `⌘N` / `Ctrl+N` maps to NewAgentChat while this panel (composer) is focused.
+            .key_context("Agent")
             .size_full()
             .min_w_0()
             .bg(cx.theme().sidebar)
+            .on_action(cx.listener(|this, _: &crate::app::NewAgentChat, window, cx| {
+                this.new_chat(window, cx);
+            }))
             .child(self.render_header(cx))
             .child(
                 div()

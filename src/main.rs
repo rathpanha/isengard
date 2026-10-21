@@ -47,7 +47,7 @@ gpui_kit::assets::icon_assets!(
         // Agent panel (status bar toggle, header, tool rows, composer).
         Bot,
         PanelRightClose,
-        SquarePen,
+        Plus,
         LogIn,
         RotateCw,
         ArrowUp,
@@ -64,6 +64,18 @@ gpui_kit::assets::icon_assets!(
         Globe,
         Wrench,
         MessagesSquare,
+        // Composer config taps (Mode / Model / Version / Context / Fast / …).
+        // Model uses Cpu (not Bot — Bot is the agent panel / status-bar toggle).
+        Shield,
+        ShieldQuestionMark,
+        Sparkles,
+        ListTodo,
+        Cpu,
+        Tag,
+        Maximize2,
+        Zap,
+        Users,
+        SlidersHorizontal,
     ]
 );
 

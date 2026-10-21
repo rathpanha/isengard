@@ -6,6 +6,22 @@ use crate::agent::Attachment;
 use crate::terminal::pty::TerminalCommand;
 
 impl IsengardApp {
+    /// `⌘N` / `Ctrl+N` while the Agent panel has key focus → new chat.
+    pub(super) fn on_new_agent_chat(
+        &mut self,
+        _: &NewAgentChat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.agent_visible {
+            return;
+        }
+        let Some(agent) = self.agent.clone() else {
+            return;
+        };
+        agent.update(cx, |agent, cx| agent.new_chat(window, cx));
+    }
+
     pub(super) fn on_toggle_agent_panel(
         &mut self,
         _: &ToggleAgentPanel,

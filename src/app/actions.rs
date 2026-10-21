@@ -33,6 +33,8 @@ actions!(
         NewTerminal,
         /// Show/hide the right-hand Agent panel (`⌘⌥B` / `Ctrl+Alt+B`).
         ToggleAgentPanel,
+        /// New agent chat when the Agent panel has focus (`⌘N` / `Ctrl+N`).
+        NewAgentChat,
         /// Fired by the terminal panel after tabs change (close / need persist).
         TerminalTabsChanged,
         /// Rename the tree selection (F2 while Tree focused).
@@ -92,7 +94,9 @@ pub(super) fn with_active_app(
 /// Registers global key bindings. `secondary` is Cmd on macOS and Ctrl elsewhere.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("secondary-n", NewFile, None),
+        // Agent composer steals ⌘N / Ctrl+N for New Chat (see `Agent` key context).
+        KeyBinding::new("secondary-n", NewFile, Some("!Agent")),
+        KeyBinding::new("secondary-n", NewAgentChat, Some("Agent")),
         KeyBinding::new("secondary-o", OpenFolder, None),
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-alt-s", SaveAll, None),
@@ -195,6 +199,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &ToggleAgentPanel, cx| {
         with_active_app(cx, |app, window, cx| {
             app.on_toggle_agent_panel(&ToggleAgentPanel, window, cx);
+        });
+    });
+    cx.on_action(|_: &NewAgentChat, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_new_agent_chat(&NewAgentChat, window, cx);
         });
     });
     cx.on_action(|_: &TogglePreview, cx| {

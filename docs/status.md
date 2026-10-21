@@ -126,7 +126,23 @@ tabs, highlighted editor, status bar):
   chat index (`sessions.<key>.agent_chats` / `agent_active`; only chats
   started in Isengard — not `claude` CLI chats). Header chat list
   (`MessagesSquare`): title (first prompt line) + relative time, click to
-  open, delete with confirm. Switching workspace parks the old panel: a
+  open, pencil rename (manual or AI Generate for any chat — live,
+  cached, or load-then-generate), delete with confirm.   Header: session title + context used/size (`— / {window}` on open /
+  switch until ACP `usage_update`, then live fill) + ghost `Plus` New Chat
+  (`⌘N` / `Ctrl+N` while the Agent composer is focused; elsewhere still New File).
+  Compaction is agent-side (Isengard advertises
+  `ClientSessionCapabilities.compaction`); we show Compacting… / a short
+  notice — we do not summarize or reset the window ourselves.
+  Composer: config row (icon+label taps: Mode icon tracks Ask/Auto/Plan/
+  accept-edits — Auto omitted for Claude models older than 4.6; Model `Cpu` /
+  Version/Context; Fast Switch; Effort/agent/…)
+  sits in a fixed-height band above Attach / Queue+Stop (horizontal
+  scroll; kept across open/switch; disabled until Ready).
+  Follow-ups while a turn runs go into an outbound FIFO queue (strip
+  under the composer with remove; drained when the turn ends).
+  (`session/set_config_option`). Process-level agent still comes from
+  `config.json` `agent.command` (Open Config File…). Switching workspace
+  parks the old panel: a
   running turn finishes in the background (approval requests toast), then its
   agent stops; coming back resumes the chat (`session/resume`, no replay)
   with the transcript still in memory. After a restart the active chat
@@ -193,12 +209,13 @@ shortcuts. Check these first if something is off.
 
 ## Roadmap — Agent panel after v1
 
-- Switching agents or modes/models inside the panel; chat rename.
+- Process-level agent switch in the panel (today: `config.json` /
+  Open Config File… only). Mode/model pickers + chat rename shipped.
 - Import `claude` CLI chats of the folder ("Import from Claude Code…").
 - Agent titles: the Claude adapter sends no `session_info_update` title, so
-  titles are the first prompt line.
+  titles are the first prompt line (rename overrides locally).
 - Auto-retry after the login terminal exits (v1 needs a Retry click).
 - Interactive checks still owed: permission buttons against the real adapter
   (its default mode did not ask), Install button, login flow, typing in the
-  prompt box, and the chat list popover / delete dialog (the automated run
-  could not inject keystrokes or clicks).
+  prompt box, and the chat list popover / rename / delete dialog (the
+  automated run could not inject keystrokes or clicks).
