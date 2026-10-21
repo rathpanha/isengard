@@ -14,11 +14,16 @@ use std::path::PathBuf;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, CloseSessionRequest,
-    ContentBlock, DeleteSessionRequest, FileSystemCapabilities, Implementation,
-    InitializeRequest, LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest,
-    ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome, SessionId,
-    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
+    ContentBlock, CreateTerminalRequest, CreateTerminalResponse, DeleteSessionRequest,
+    FileSystemCapabilities, Implementation, InitializeRequest, KillTerminalRequest,
+    KillTerminalResponse, LoadSessionRequest, NewSessionRequest, PermissionOption,
+    PermissionOptionId, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, ResumeSessionRequest,
+    SelectedPermissionOutcome, SessionId, SessionNotification, SessionUpdate, StopReason,
+    TextContent, TerminalExitStatus, TerminalOutputRequest, TerminalOutputResponse,
+    ToolCallUpdate, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, Error, ErrorCode,
@@ -86,6 +91,25 @@ pub struct FileWrite {
     pub reply: flume::Sender<Result<(), String>>,
 }
 
+/// `terminal/create` — spawn a command in the editor's terminal panel.
+pub struct TerminalCreate {
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub cwd: Option<PathBuf>,
+    pub output_byte_limit: Option<u64>,
+    /// `Ok(terminal_id)`.
+    pub reply: flume::Sender<Result<String, String>>,
+}
+
+/// Snapshot for `terminal/output`.
+pub struct TerminalOutputSnapshot {
+    pub output: String,
+    pub truncated: bool,
+    pub exit_code: Option<u32>,
+    pub signal: Option<String>,
+}
+
 /// Agent → UI.
 pub enum AgentEvent {
     /// `initialize` done; send [`AgentConnection::open`] next.
@@ -102,6 +126,23 @@ pub enum AgentEvent {
     Permission(PermissionAsk),
     ReadFile(FileRead),
     WriteFile(FileWrite),
+    CreateTerminal(TerminalCreate),
+    TerminalOutput {
+        id: String,
+        reply: flume::Sender<Result<TerminalOutputSnapshot, String>>,
+    },
+    WaitForTerminalExit {
+        id: String,
+        reply: flume::Sender<Result<(Option<u32>, Option<String>), String>>,
+    },
+    KillTerminal {
+        id: String,
+        reply: flume::Sender<Result<(), String>>,
+    },
+    ReleaseTerminal {
+        id: String,
+        reply: flume::Sender<Result<(), String>>,
+    },
     /// Connection ended (`Some` = error such as a spawn failure or crash).
     Closed(Option<String>),
 }
@@ -199,6 +240,11 @@ async fn run(
     let on_permission = events.clone();
     let on_read = events.clone();
     let on_write = events.clone();
+    let on_term_create = events.clone();
+    let on_term_output = events.clone();
+    let on_term_wait = events.clone();
+    let on_term_kill = events.clone();
+    let on_term_release = events.clone();
     Client
         .builder()
         .name("isengard")
@@ -273,6 +319,124 @@ async fn run(
             },
             agent_client_protocol::on_receive_request!(),
         )
+        .on_receive_request(
+            async move |req: CreateTerminalRequest, responder, cx: ConnectionTo<Agent>| {
+                let (reply, answer) = flume::bounded(1);
+                let _ = on_term_create.send(AgentEvent::CreateTerminal(TerminalCreate {
+                    command: req.command,
+                    args: req.args,
+                    env: req
+                        .env
+                        .into_iter()
+                        .map(|e| (e.name, e.value))
+                        .collect(),
+                    cwd: req.cwd,
+                    output_byte_limit: req.output_byte_limit,
+                    reply,
+                }));
+                cx.spawn(async move {
+                    match answer.recv_async().await {
+                        Ok(Ok(id)) => responder.respond(CreateTerminalResponse::new(id)),
+                        Ok(Err(msg)) => {
+                            responder.respond_with_error(Error::internal_error().data(msg))
+                        }
+                        Err(_) => responder.respond_with_error(Error::internal_error()),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: TerminalOutputRequest, responder, cx: ConnectionTo<Agent>| {
+                let (reply, answer) = flume::bounded(1);
+                let _ = on_term_output.send(AgentEvent::TerminalOutput {
+                    id: req.terminal_id.to_string(),
+                    reply,
+                });
+                cx.spawn(async move {
+                    match answer.recv_async().await {
+                        Ok(Ok(snap)) => {
+                            let mut response =
+                                TerminalOutputResponse::new(snap.output, snap.truncated);
+                            if snap.exit_code.is_some() || snap.signal.is_some() {
+                                response = response.exit_status(
+                                    TerminalExitStatus::new()
+                                        .exit_code(snap.exit_code)
+                                        .signal(snap.signal),
+                                );
+                            }
+                            responder.respond(response)
+                        }
+                        Ok(Err(msg)) => {
+                            responder.respond_with_error(Error::resource_not_found(None).data(msg))
+                        }
+                        Err(_) => responder.respond_with_error(Error::internal_error()),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: WaitForTerminalExitRequest, responder, cx: ConnectionTo<Agent>| {
+                let (reply, answer) = flume::bounded(1);
+                let _ = on_term_wait.send(AgentEvent::WaitForTerminalExit {
+                    id: req.terminal_id.to_string(),
+                    reply,
+                });
+                cx.spawn(async move {
+                    match answer.recv_async().await {
+                        Ok(Ok((code, signal))) => responder.respond(
+                            WaitForTerminalExitResponse::new(
+                                TerminalExitStatus::new().exit_code(code).signal(signal),
+                            ),
+                        ),
+                        Ok(Err(msg)) => {
+                            responder.respond_with_error(Error::resource_not_found(None).data(msg))
+                        }
+                        Err(_) => responder.respond_with_error(Error::internal_error()),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: KillTerminalRequest, responder, cx: ConnectionTo<Agent>| {
+                let (reply, answer) = flume::bounded(1);
+                let _ = on_term_kill.send(AgentEvent::KillTerminal {
+                    id: req.terminal_id.to_string(),
+                    reply,
+                });
+                cx.spawn(async move {
+                    match answer.recv_async().await {
+                        Ok(Ok(())) => responder.respond(KillTerminalResponse::new()),
+                        Ok(Err(msg)) => {
+                            responder.respond_with_error(Error::resource_not_found(None).data(msg))
+                        }
+                        Err(_) => responder.respond_with_error(Error::internal_error()),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: ReleaseTerminalRequest, responder, cx: ConnectionTo<Agent>| {
+                let (reply, answer) = flume::bounded(1);
+                let _ = on_term_release.send(AgentEvent::ReleaseTerminal {
+                    id: req.terminal_id.to_string(),
+                    reply,
+                });
+                cx.spawn(async move {
+                    match answer.recv_async().await {
+                        Ok(Ok(())) => responder.respond(ReleaseTerminalResponse::new()),
+                        Ok(Err(msg)) => {
+                            responder.respond_with_error(Error::resource_not_found(None).data(msg))
+                        }
+                        Err(_) => responder.respond_with_error(Error::internal_error()),
+                    }
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
         .connect_with(transport, async move |cx: ConnectionTo<Agent>| {
             session(cx, roots, commands, events).await
         })
@@ -296,6 +460,7 @@ async fn session(
                         .fs(FileSystemCapabilities::new()
                             .read_text_file(true)
                             .write_text_file(true))
+                        .terminal(true)
                         .auth(AuthCapabilities::new().terminal(true)),
                 )
                 .client_info(
@@ -474,6 +639,7 @@ mod tests {
     fn prompt_roundtrip_with_file_io_and_permission() {
         let agent = FakeAgent::new();
         let conn = connected(&agent);
+        assert!(agent.client_terminal(), "initialize must advertise terminal");
         conn.open(SessionOpen::New);
         assert_eq!(opened(&conn), "s1");
         conn.prompt("shout".into());
@@ -497,6 +663,49 @@ mod tests {
         write.reply.send(Ok(())).unwrap();
 
         assert_eq!(chunk_text(&conn), (false, "done".into()));
+        assert!(matches!(next(&conn), AgentEvent::TurnEnded(StopReason::EndTurn)));
+    }
+
+    #[test]
+    fn prompt_roundtrip_with_terminal_methods() {
+        let agent = FakeAgent::new();
+        let conn = connected(&agent);
+        conn.open(SessionOpen::New);
+        opened(&conn);
+        conn.prompt("term".into());
+
+        let AgentEvent::CreateTerminal(create) = next(&conn) else {
+            panic!("expected CreateTerminal");
+        };
+        assert_eq!(create.command, "true");
+        create.reply.send(Ok("term_1".into())).unwrap();
+
+        let AgentEvent::TerminalOutput { id, reply } = next(&conn) else {
+            panic!("expected TerminalOutput");
+        };
+        assert_eq!(id, "term_1");
+        reply
+            .send(Ok(super::TerminalOutputSnapshot {
+                output: "ok\n".into(),
+                truncated: false,
+                exit_code: None,
+                signal: None,
+            }))
+            .unwrap();
+
+        let AgentEvent::WaitForTerminalExit { id, reply } = next(&conn) else {
+            panic!("expected WaitForTerminalExit");
+        };
+        assert_eq!(id, "term_1");
+        reply.send(Ok((Some(0), None))).unwrap();
+
+        let AgentEvent::ReleaseTerminal { id, reply } = next(&conn) else {
+            panic!("expected ReleaseTerminal");
+        };
+        assert_eq!(id, "term_1");
+        reply.send(Ok(())).unwrap();
+
+        assert_eq!(chunk_text(&conn), (false, "term-ok".into()));
         assert!(matches!(next(&conn), AgentEvent::TurnEnded(StopReason::EndTurn)));
     }
 

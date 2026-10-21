@@ -1,7 +1,7 @@
-//! Right Agent panel: show/hide, plus the agent's file and login requests.
+//! Right Agent panel: show/hide, plus the agent's file, terminal, and login requests.
 use super::*;
 use super::tab::TabBody;
-use crate::acp::slice_lines;
+use crate::acp::{TerminalOutputSnapshot, slice_lines};
 use crate::terminal::pty::TerminalCommand;
 
 impl IsengardApp {
@@ -95,6 +95,50 @@ impl IsengardApp {
             AgentPanelEvent::WriteFile(write) => {
                 let result = self.agent_write_file(&write.path, &write.content, window, cx);
                 let _ = write.reply.send(result);
+            }
+            AgentPanelEvent::CreateTerminal(create) => {
+                let result = self.agent_create_terminal(create, window, cx);
+                let _ = create.reply.send(result);
+            }
+            AgentPanelEvent::TerminalOutput { id, reply } => {
+                let result = self.terminal.read(cx).agent_terminal_output(id).map(|snap| {
+                    TerminalOutputSnapshot {
+                        output: snap.output,
+                        truncated: snap.truncated,
+                        exit_code: snap.exit.as_ref().and_then(|e| e.exit_code),
+                        signal: snap.exit.as_ref().and_then(|e| e.signal.clone()),
+                    }
+                });
+                let _ = reply.send(result);
+            }
+            AgentPanelEvent::WaitForTerminalExit { id, reply } => {
+                match self.terminal.read(cx).agent_terminal_exit_rx(id) {
+                    Ok(rx) => {
+                        let reply = reply.clone();
+                        cx.spawn(async move |_this, _cx| match rx.recv_async().await {
+                            Ok(exit) => {
+                                let _ = reply.send(Ok((exit.exit_code, exit.signal)));
+                            }
+                            Err(_) => {
+                                let _ = reply.send(Err("Terminal closed before exit.".into()));
+                            }
+                        })
+                        .detach();
+                    }
+                    Err(err) => {
+                        let _ = reply.send(Err(err));
+                    }
+                }
+            }
+            AgentPanelEvent::KillTerminal { id, reply } => {
+                let _ = reply.send(self.terminal.read(cx).kill_agent_terminal(id));
+            }
+            AgentPanelEvent::ReleaseTerminal { id, reply } => {
+                let result = self.terminal.update(cx, |term, cx| {
+                    term.release_agent_terminal(id, window, cx)
+                });
+                let _ = reply.send(result);
+                self.persist_session(cx);
             }
             AgentPanelEvent::Login { title, command } if is_current => {
                 self.run_agent_login(title.clone(), command, window, cx);
@@ -198,5 +242,33 @@ impl IsengardApp {
         }
         self.persist_session(cx);
         cx.notify();
+    }
+
+    fn agent_create_terminal(
+        &mut self,
+        create: &crate::acp::TerminalCreate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<String, String> {
+        let cwd = create
+            .cwd
+            .clone()
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| crate::terminal::pty::default_cwd(self.workspace.folders()));
+        if !cwd.is_absolute() {
+            return Err(format!("cwd must be absolute: {}", cwd.display()));
+        }
+        let command = TerminalCommand {
+            program: PathBuf::from(&create.command),
+            args: create.args.clone(),
+            env: create.env.clone(),
+        };
+        let limit = create.output_byte_limit;
+        let id = self.terminal.update(cx, |term, cx| {
+            term.create_agent_terminal(&command, cwd, limit, window, cx)
+        })?;
+        self.persist_session(cx);
+        cx.notify();
+        Ok(id)
     }
 }

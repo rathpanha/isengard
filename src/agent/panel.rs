@@ -36,7 +36,8 @@ use crate::acp::schema::{
 };
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
-    FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
+    FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen, TerminalCreate,
+    TerminalOutputSnapshot,
 };
 use crate::config::{AgentChat, AgentSettings, MAX_AGENT_CHATS};
 use crate::terminal::pty::TerminalCommand;
@@ -49,6 +50,23 @@ pub enum AgentPanelEvent {
     WriteFile(FileWrite),
     /// Run the agent's login command in a terminal tab.
     Login { title: String, command: TerminalCommand },
+    CreateTerminal(TerminalCreate),
+    TerminalOutput {
+        id: String,
+        reply: flume::Sender<Result<TerminalOutputSnapshot, String>>,
+    },
+    WaitForTerminalExit {
+        id: String,
+        reply: flume::Sender<Result<(Option<u32>, Option<String>), String>>,
+    },
+    KillTerminal {
+        id: String,
+        reply: flume::Sender<Result<(), String>>,
+    },
+    ReleaseTerminal {
+        id: String,
+        reply: flume::Sender<Result<(), String>>,
+    },
     Hide,
     /// Chat index or active chat changed — persist it for this workspace.
     ChatsChanged,
@@ -685,6 +703,21 @@ impl AgentPanel {
             }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
+            AgentEvent::CreateTerminal(create) => {
+                cx.emit(AgentPanelEvent::CreateTerminal(create))
+            }
+            AgentEvent::TerminalOutput { id, reply } => {
+                cx.emit(AgentPanelEvent::TerminalOutput { id, reply })
+            }
+            AgentEvent::WaitForTerminalExit { id, reply } => {
+                cx.emit(AgentPanelEvent::WaitForTerminalExit { id, reply })
+            }
+            AgentEvent::KillTerminal { id, reply } => {
+                cx.emit(AgentPanelEvent::KillTerminal { id, reply })
+            }
+            AgentEvent::ReleaseTerminal { id, reply } => {
+                cx.emit(AgentPanelEvent::ReleaseTerminal { id, reply })
+            }
             AgentEvent::Closed(error) => {
                 if !matches!(self.status, Status::LoginRequired(_) | Status::Suspended) {
                     let message = error.unwrap_or_else(|| "The agent exited.".into());
@@ -1123,17 +1156,60 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
 }
 
 impl AgentPanel {
+    /// Live status line: what the agent is doing right now (real tool title when possible).
+    fn activity_label(&self) -> Option<SharedString> {
+        match &self.status {
+            Status::Installing => Some("Installing…".into()),
+            Status::Starting => Some("Starting…".into()),
+            Status::Opening => Some(
+                match &self.opening {
+                    Some(SessionOpen::Load(_)) => "Loading chat…",
+                    Some(SessionOpen::Resume(_)) => "Resuming…",
+                    _ => "Opening chat…",
+                }
+                .into(),
+            ),
+            Status::Ready if self.turn_running => {
+                if let Some(title) = self.entries.iter().rev().find_map(|e| match e {
+                    Entry::Tool(tool)
+                        if matches!(
+                            tool.status,
+                            ToolCallStatus::Pending | ToolCallStatus::InProgress
+                        ) =>
+                    {
+                        Some(tool.title.clone())
+                    }
+                    _ => None,
+                }) {
+                    return Some(title);
+                }
+                match self.entries.last() {
+                    Some(Entry::Thought(_)) => Some("Thinking…".into()),
+                    Some(Entry::Agent(_)) => Some("Writing…".into()),
+                    Some(Entry::Plan(_)) => Some("Planning…".into()),
+                    _ => Some("Working…".into()),
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let color = match &self.status {
             Status::Ready if self.turn_running => theme.warning,
             Status::Ready => theme.success,
-            Status::Starting | Status::Installing => theme.warning,
+            Status::Starting | Status::Installing | Status::Opening => theme.warning,
             Status::Failed(_) => theme.danger,
             _ => theme.muted_foreground,
         };
         let can_new_chat =
             !self.turn_running && matches!(self.status, Status::Ready | Status::Failed(_));
+        let activity = self.activity_label();
+        let title: SharedString = match &activity {
+            Some(what) => format!("{} · {what}", self.agent_name).into(),
+            None => self.agent_name.clone(),
+        };
         h_flex()
             .w_full()
             .h(px(theme::PANEL_HEADER_ROW_H))
@@ -1144,13 +1220,17 @@ impl AgentPanel {
             .border_b_1()
             .border_color(theme.border)
             .child(status_mark(color))
+            .when(activity.is_some(), |row| {
+                row.child(Spinner::new().small())
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_sm()
-                    .child(self.agent_name.clone()),
+                    .when(activity.is_some(), |t| t.text_color(theme.muted_foreground))
+                    .child(title),
             )
             .child(
                 Button::new("agent-new-chat")

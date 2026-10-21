@@ -99,9 +99,14 @@ tabs, highlighted editor, status bar):
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
   plan checklist, inline permission buttons, Stop (`session/cancel`), New
-  Chat. Agent file reads use the open buffer (unsaved text) before disk;
-  writes go to disk and reload the open tab as saved. Visibility + width
-  persist per workspace.
+  Chat. Header shows a live activity line while busy (spinner + real tool
+  title, or Thinking/Writing/…). Agent file reads use the open buffer
+  (unsaved text) before disk; writes go to disk and reload the open tab as
+  saved. ACP `terminal/*`: agent shell commands can run as tabs in the
+  bottom Terminal panel (create/output/wait/kill/release; output teed for
+  the agent). Dangerous-command policy stays with the agent
+  (`session/request_permission`); Isengard does not add a second denylist.
+  Visibility + width persist per workspace.
   **Multi-root:** the agent runs in the first root and gets the other roots
   as ACP `additionalDirectories` (new/load/resume; skipped if the agent does
   not advertise it). Adding/removing a folder reconnects the live agent
@@ -179,7 +184,8 @@ shortcuts. Check these first if something is off.
 
 - Review agent edits as a diff before they land (v1 writes directly; undo +
   Source Control are the safety net).
-- `terminal/*` client capability (agent commands in our terminal panel).
+- Confirm the pinned Claude adapter actually uses client `terminal/*` when
+  advertised (handlers are ready; adapter may still run Bash in-process).
 - @-mention files / selection as prompt context; image paste.
 - Switching agents or modes/models inside the panel; chat rename.
 - Import `claude` CLI chats of the folder ("Import from Claude Code…").

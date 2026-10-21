@@ -12,14 +12,15 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk,
-    DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
-    InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
-    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
-    ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest, ResumeSessionRequest,
-    ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionAdditionalDirectoriesCapabilities, SessionDeleteCapabilities, SessionId, SessionNotification, SessionResumeCapabilities,
-    SessionUpdate, StopReason, TextContent, ToolCallUpdate, ToolCallUpdateFields,
-    WriteTextFileRequest,
+    CreateTerminalRequest, DeleteSessionRequest, DeleteSessionResponse, Implementation,
+    InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+    NewSessionRequest, NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest,
+    PromptResponse, ReadTextFileRequest, ReleaseTerminalRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities,
+    SessionCloseCapabilities, SessionAdditionalDirectoriesCapabilities, SessionDeleteCapabilities,
+    SessionId, SessionNotification, SessionResumeCapabilities, SessionUpdate, StopReason,
+    TextContent, TerminalOutputRequest, ToolCallUpdate, ToolCallUpdateFields,
+    WaitForTerminalExitRequest, WriteTextFileRequest,
 };
 use agent_client_protocol::{Agent, Channel, Client, ConnectionTo, Error};
 
@@ -53,6 +54,8 @@ struct State {
     calls: Vec<String>,
     /// `additionalDirectories` of the last new/load/resume.
     extra_roots: Vec<PathBuf>,
+    /// Whether the client advertised `clientCapabilities.terminal`.
+    client_terminal: bool,
 }
 
 #[derive(Clone, Default)]
@@ -86,6 +89,10 @@ impl FakeAgent {
         self.state.lock().unwrap().extra_roots.clone()
     }
 
+    pub fn client_terminal(&self) -> bool {
+        self.state.lock().unwrap().client_terminal
+    }
+
     pub fn chat(&self, id: &str) -> Option<Vec<FakeMessage>> {
         self.state.lock().unwrap().chats.get(id).cloned()
     }
@@ -93,7 +100,8 @@ impl FakeAgent {
     /// Serve one connection on a background thread; returns the client end.
     pub fn connect(&self) -> Channel {
         let (client_end, agent_end) = Channel::duplex();
-        let (s_new, s_load, s_resume, s_close, s_delete, s_prompt) = (
+        let (s_init, s_new, s_load, s_resume, s_close, s_delete, s_prompt) = (
+            self.state.clone(),
             self.state.clone(),
             self.state.clone(),
             self.state.clone(),
@@ -106,7 +114,8 @@ impl FakeAgent {
                 Agent
                     .builder()
                     .on_receive_request(
-                        async |req: InitializeRequest, responder, _cx| {
+                        async move |req: InitializeRequest, responder, _cx| {
+                            s_init.lock().unwrap().client_terminal = req.client_capabilities.terminal;
                             responder.respond(
                                 InitializeResponse::new(req.protocol_version)
                                     .agent_capabilities(
@@ -200,6 +209,9 @@ impl FakeAgent {
                                 let reply = if text == "shout" {
                                     shout(&cx2, &sid).await?;
                                     "done".to_string()
+                                } else if text == "term" {
+                                    run_terminal(&cx2, &sid).await?;
+                                    "term-ok".to_string()
                                 } else {
                                     format!("echo: {text}")
                                 };
@@ -220,6 +232,26 @@ impl FakeAgent {
         });
         client_end
     }
+}
+
+async fn run_terminal(cx: &ConnectionTo<Client>, sid: &SessionId) -> Result<(), Error> {
+    let created = cx
+        .send_request(CreateTerminalRequest::new(sid.clone(), "true"))
+        .block_task()
+        .await?;
+    let tid = created.terminal_id;
+    let _ = cx
+        .send_request(TerminalOutputRequest::new(sid.clone(), tid.clone()))
+        .block_task()
+        .await?;
+    let _ = cx
+        .send_request(WaitForTerminalExitRequest::new(sid.clone(), tid.clone()))
+        .block_task()
+        .await?;
+    cx.send_request(ReleaseTerminalRequest::new(sid.clone(), tid))
+        .block_task()
+        .await?;
+    Ok(())
 }
 
 async fn shout(cx: &ConnectionTo<Client>, sid: &SessionId) -> Result<(), Error> {
