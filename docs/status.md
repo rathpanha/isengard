@@ -46,7 +46,8 @@ tabs, highlighted editor, status bar):
   raster image preview tabs; drag within the strip to reorder (persists in
   session). Details in design.
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
-  `tree-sitter-languages`; line numbers, indent guides, search; unknown
+  `tree-sitter-languages` (GraphQL/TSX highlight queries patched — Kit ships
+  empty/delta queries); line numbers, indent guides, search; unknown
   extensions stay Plain Text. Syntax: Ayu Darker; editor/gutter bg = sidebar.
   Markdown/agent code blocks: same tokens on muted gray (`theme::text_view_style`).
   **IntelliSense (LSP):** not bundled into the app binary. **Install** downloads
@@ -241,8 +242,8 @@ shortcuts. Check these first if something is off.
   folder open / expand, not on every save of `.gitignore`. `.env` /
   `.gitignore` / lockfiles / Dockerfile use Bash/JSON/TOML aliases (no
   dedicated Dockerfile grammar compatible with GPUI's tree-sitter); GraphQL
-  highlights are patched in `editor::highlights` because GPUI Kit ships an
-  empty query.
+  and TSX highlights are patched in `editor::highlights` because GPUI Kit
+  ships an empty GraphQL query and only a TS-keyword delta for TSX.
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
   root context menu, switch dialogs. Quitting with an untitled multi-root
   workspace does not offer to save it (only switching does). Workspace

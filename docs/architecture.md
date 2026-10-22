@@ -124,7 +124,7 @@ src/
 ├── editor/
 │   ├── document.rs      read_text / write_text / file_name / is_image
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
-│   ├── highlights.rs    patches empty GPUI Kit highlight queries (GraphQL)
+│   ├── highlights.rs    patches weak GPUI Kit highlight queries (GraphQL, TSX)
 │   └── tabs.rs          TabList<T>: order/activate/reorder (unit-tested)
 ├── lsp/                 Language Server Protocol (IntelliSense)
 │   ├── host.rs          workspace servers, didOpen/Change/Close, diagnostics pump

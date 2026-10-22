@@ -25,6 +25,7 @@ and power most of our chrome (buttons, menus, etc.).
 | [Ayu Darker](https://github.com/k4yt3x/zed-theme-ayu-darker) (Zed theme) | [k4yt3x](https://github.com/k4yt3x) | GPL-3.0 | Editor token colours (`assets/themes/`) |
 | [Ayu](https://github.com/dempfi/ayu) | [Ike Ku](https://github.com/dempfi) | (original palette) | Palette Ayu Darker builds on |
 | GraphQL highlight query | Adapted from [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) / [Helix](https://github.com/helix-editor/helix) queries for [joowani/tree-sitter-graphql](https://github.com/joowani/tree-sitter-graphql) | as upstream | `assets/highlights/graphql.scm` (Kit ships an empty GraphQL query) |
+| TSX JSX highlight query | Adapted from [Helix](https://github.com/helix-editor/helix) `_jsx` queries | as upstream | `assets/highlights/tsx_jsx.scm` (appended to Kit TypeScript highlights; Kit ships only a TS delta for TSX) |
 
 Theme notice: [`assets/themes/NOTICE.txt`](../assets/themes/NOTICE.txt).
 

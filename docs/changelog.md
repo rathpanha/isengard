@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — TSX syntax highlighting: re-register Kit's `tsx` grammar
+  with TypeScript highlights + JSX captures (`assets/highlights/tsx_jsx.scm`);
+  Kit had only the short `HIGHLIGHTS_QUERY` delta so `.tsx` looked plain.
+
 - **2026-10-22** — Agent Improve keeps inline `@` mention chips (and
   paperclip attachments) when rewriting the draft; only plain text is
   replaced.
