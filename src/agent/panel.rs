@@ -19,8 +19,8 @@ use gpui_kit::component::{
     dialog::DialogFooter,
     h_flex,
     input::{
-        InlineToken, InlineTokenContext, InlineTokenSpan, Input, InputEvent, InputState, Textarea,
-        TextareaState,
+        InlineToken, InlineTokenContext, InlineTokenSpan, Input, InputContent, InputEvent,
+        InputState, Textarea, TextareaState,
     },
     list::ListItem,
     message::{Message, MessageAlignment, MessageContent},
@@ -1752,21 +1752,34 @@ impl AgentPanel {
     }
 
     /// Apply a finished Improve rewrite (needs `Window` for Textarea `set_value`).
+    ///
+    /// Paperclip chips live outside the Textarea and are untouched. Inline `@`
+    /// tokens are snapshotted before `set_value` and spliced back in front of
+    /// the rewritten prose (Improve only rewrites plain text).
     fn flush_pending_improve(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = self.pending_improve.take() else {
             return;
         };
         self.mention = None;
-        let caret = text.len();
+        let tokens: Vec<InlineToken> = self
+            .input
+            .read(cx)
+            .tokens()
+            .iter()
+            .map(|s| s.token().clone())
+            .collect();
+        let content = improved_composer_content(&text, &tokens);
+        let caret = content.text().len();
         self.input.update(cx, |input, cx| {
-            input.set_value(&text, window, cx);
+            input.set_value(content, window, cx);
             input.set_selected_range(caret..caret, cx);
         });
         self.focus_input(window, cx);
         cx.notify();
     }
 
-    /// Silent rewrite of the composer draft into plain text (attachments kept).
+    /// Silent rewrite of the composer draft into plain text (`@` chips +
+    /// paperclip attachments kept).
     fn request_improve_prompt(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.can_prompt() {
             return false;
@@ -3379,6 +3392,39 @@ fn build_improve_prompt(draft: &str) -> String {
          - Do not use tools.\n\n\
          Draft:\n{draft}\n"
     )
+}
+
+/// Rebuild composer content after Improve: keep `@` tokens, replace prose.
+///
+/// Tokens are placed before the rewritten text (Improve never sees them).
+fn improved_composer_content(improved: &str, tokens: &[InlineToken]) -> InputContent {
+    if tokens.is_empty() {
+        return InputContent::new(improved);
+    }
+    let mut text = String::new();
+    let mut spans = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        let start = text.len();
+        text.push_str(token.text());
+        spans.push((start..text.len(), token.clone()));
+    }
+    if !improved.is_empty() {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(improved);
+    }
+    let mut content = InputContent::new(text);
+    for (range, token) in spans {
+        // Ranges were built from `token.text()`; mismatch would be a bug.
+        content = content
+            .with_token(range, token)
+            .expect("improved_composer_content: token text matches range");
+    }
+    content
 }
 
 /// First line, short — same ceiling as the first-prompt fallback title.
@@ -5895,7 +5941,8 @@ mod mode_filter_tests {
 
 #[cfg(test)]
 mod improve_prompt_tests {
-    use super::{build_improve_prompt, scrub_improved_prompt};
+    use super::{build_improve_prompt, improved_composer_content, scrub_improved_prompt};
+    use gpui_kit::component::input::InlineToken;
 
     #[test]
     fn scrub_strips_fences_and_preamble() {
@@ -5921,5 +5968,26 @@ mod improve_prompt_tests {
         assert!(p.contains("Draft:\nfix overlay push chat"));
         assert!(p.contains("ONLY the improved prompt"));
         assert!(p.contains("do not invent"));
+    }
+
+    #[test]
+    fn improved_content_keeps_inline_tokens() {
+        let a = InlineToken::new("/ws/a.rs", "a.rs").with_label("a.rs");
+        let b = InlineToken::new("/ws/b/", "b/").with_label("b/");
+        let content = improved_composer_content("Please fix the overlay.", &[a.clone(), b.clone()]);
+        assert_eq!(content.text().as_ref(), "a.rs b/ Please fix the overlay.");
+        let tokens = content.tokens();
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].token(), &a);
+        assert_eq!(tokens[1].token(), &b);
+        assert_eq!(&content.text()[tokens[0].range()], "a.rs");
+        assert_eq!(&content.text()[tokens[1].range()], "b/");
+    }
+
+    #[test]
+    fn improved_content_without_tokens_is_plain() {
+        let content = improved_composer_content("Tighten the error message", &[]);
+        assert_eq!(content.text().as_ref(), "Tighten the error message");
+        assert!(content.tokens().is_empty());
     }
 }

@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent Improve keeps inline `@` mention chips (and
+  paperclip attachments) when rewriting the draft; only plain text is
+  replaced.
+
 - **2026-10-22** — Plan usage accordion expands to full content height (no
   inner scroll); transcript keeps the remaining `flex_1` space.
 
