@@ -1012,6 +1012,12 @@ impl AgentPanel {
         self.confirm_mention(window, cx);
     }
 
+    /// Workspace roots the agent was given; the first is its cwd (tests).
+    #[cfg(test)]
+    pub fn roots_for_test(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
     /// Composer text (tests).
     #[cfg(test)]
     pub fn composer_text_for_test(&self, cx: &App) -> String {

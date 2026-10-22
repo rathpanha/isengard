@@ -3,6 +3,16 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — File tree: folders toggle on click instead of mouse-down,
+  so dragging a folder no longer expands it.
+
+- **2026-10-22** — Multi-root workspaces: drag a root folder in the tree to
+  reorder; the first root is the agent's primary folder, so moving a root to
+  the top reconnects the agent there.
+
+- **2026-10-22** — File tree: drag files/folders onto a folder (or blank
+  space → root) to move them; open tabs are remapped.
+
 - **2026-10-22** — Agent `@` mentions are Kit inline tokens **inside** the
   prompt Textarea (folder/file icon + basename, or image thumb); paperclip
   chip row stays Attach / paste only.

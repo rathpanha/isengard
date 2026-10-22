@@ -600,6 +600,23 @@ impl IsengardApp {
             self.persist_session(cx);
         }
     }
+    /// Drag-reorder of workspace roots. The first root is the agent's primary
+    /// folder, so the agent reconnects (resuming its chat) from the new first root.
+    pub(super) fn on_reorder_root(
+        &mut self,
+        action: &ReorderRoot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.move_folder(&action.folder, action.before.as_deref()) {
+            self.sync_agent_roots(cx);
+            self.persist_workspace(window, cx);
+            self.workspace_changed(window, cx);
+            self.file_tree.select_path(&action.folder, cx);
+            self.persist_session(cx);
+        }
+    }
+
     pub(super) fn on_close_workspace(
         &mut self,
         _: &CloseWorkspace,

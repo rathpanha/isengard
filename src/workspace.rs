@@ -104,6 +104,30 @@ impl Workspace {
         self.folders.len() != before
     }
 
+    /// Reorders roots: puts `folder` right before `before`, or last when `None`.
+    /// The first root is the agent's primary folder. Returns `false` when
+    /// nothing changed (unknown folder, or already in that position).
+    pub fn move_folder(&mut self, folder: &Path, before: Option<&Path>) -> bool {
+        let Some(from) = self.folders.iter().position(|f| f == folder) else {
+            return false;
+        };
+        let mut next = self.folders.clone();
+        let moved = next.remove(from);
+        let to = match before {
+            Some(target) => match next.iter().position(|f| f == target) {
+                Some(ix) => ix,
+                None => return false,
+            },
+            None => next.len(),
+        };
+        next.insert(to, moved);
+        if next == self.folders {
+            return false;
+        }
+        self.folders = next;
+        true
+    }
+
     /// Renames a root folder path in place (e.g. after a disk rename).
     pub fn replace_folder(&mut self, old: &Path, new: &Path) -> bool {
         if old == new || self.folders.iter().any(|f| f == new) {
@@ -329,6 +353,23 @@ mod tests {
             ws(&["/code/b", "/code/a"]).session_key().as_deref(),
             Some("untitled:/code/a\n/code/b")
         );
+    }
+
+    #[test]
+    fn move_folder_reorders_roots() {
+        let order = |w: &Workspace| -> Vec<String> {
+            w.folders().iter().map(|f| f.display().to_string()).collect()
+        };
+        let mut w = ws(&["/a", "/b", "/c"]);
+        assert!(w.move_folder(Path::new("/c"), Some(Path::new("/a"))));
+        assert_eq!(order(&w), ["/c", "/a", "/b"]);
+        assert!(w.move_folder(Path::new("/c"), None));
+        assert_eq!(order(&w), ["/a", "/b", "/c"]);
+        // No-ops: already last, already right before target, unknown paths.
+        assert!(!w.move_folder(Path::new("/c"), None));
+        assert!(!w.move_folder(Path::new("/a"), Some(Path::new("/b"))));
+        assert!(!w.move_folder(Path::new("/x"), None));
+        assert!(!w.move_folder(Path::new("/a"), Some(Path::new("/x"))));
     }
 
     #[test]

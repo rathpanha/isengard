@@ -271,6 +271,73 @@ impl IsengardApp {
         Ok(())
     }
 
+    /// Moves `from` into the folder `to_dir` (tree drag-and-drop).
+    pub(super) fn move_path(
+        &mut self,
+        from: &Path,
+        to_dir: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if !self.path_in_workspace(from) || !self.path_in_workspace(to_dir) {
+            return Err("Path is not in the workspace.".into());
+        }
+        if self.workspace.folders().iter().any(|root| root == from) {
+            return Err("Workspace folders cannot be moved.".into());
+        }
+        if !to_dir.is_dir() {
+            return Err("Drop target is not a folder.".into());
+        }
+        if !crate::ui::file_tree::move_allowed(from, to_dir) {
+            return Err("Cannot move a folder into itself.".into());
+        }
+        let Some(name) = from.file_name() else {
+            return Err("Cannot move this path.".into());
+        };
+        let new_path = to_dir.join(name);
+        if new_path.exists() {
+            return Err(format!(
+                "\"{}\" already exists in {}.",
+                name.to_string_lossy(),
+                document::file_name(to_dir)
+            ));
+        }
+        std::fs::rename(from, &new_path).map_err(|err| format!("Move failed: {err}"))?;
+        self.remap_open_paths(from, &new_path, window, cx);
+        if let Some(parent) = from.parent() {
+            self.file_tree.refresh_dir(parent, cx);
+        }
+        self.file_tree.refresh_dir(to_dir, cx);
+        self.file_tree.select_path(&new_path, cx);
+        self.persist_session(cx);
+        cx.notify();
+        Ok(())
+    }
+
+    pub(super) fn on_toggle_dir(
+        &mut self,
+        action: &ToggleDir,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.file_tree.set_dir_expanded(&action.path, action.expand, cx);
+        self.persist_session(cx);
+    }
+
+    pub(super) fn on_move_path(
+        &mut self,
+        action: &MovePath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tree_edit.is_some() {
+            self.cancel_tree_edit(window, cx);
+        }
+        if let Err(err) = self.move_path(&action.from, &action.to_dir, window, cx) {
+            notify_error(err, window, cx);
+        }
+    }
+
     pub(super) fn delete_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if !self.path_in_workspace(path) {
             return;

@@ -44,6 +44,85 @@ pub struct NewFileIn(pub PathBuf);
 #[action(namespace = isengard, no_json)]
 pub struct NewFolderIn(pub PathBuf);
 
+/// Expands or collapses a folder row. Dispatched on click (not mouse-down) so
+/// starting a drag on a folder does not toggle it.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct ToggleDir {
+    pub path: PathBuf,
+    pub expand: bool,
+}
+
+/// Moves `from` into the directory `to_dir` (tree drag-and-drop).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct MovePath {
+    pub from: PathBuf,
+    pub to_dir: PathBuf,
+}
+
+/// Reorders a workspace root: before `before`, or last when `None`. The first
+/// root is the agent's primary folder.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct ReorderRoot {
+    pub folder: PathBuf,
+    pub before: Option<PathBuf>,
+}
+
+/// Drag payload for a tree row.
+#[derive(Clone, Debug)]
+pub struct TreeEntryDrag {
+    pub path: PathBuf,
+    pub label: SharedString,
+    pub is_dir: bool,
+    pub dark: bool,
+    /// A workspace root row (multi-root): dropping reorders instead of moving.
+    pub is_root: bool,
+}
+
+/// Drag preview: icon + name.
+pub struct TreeDragPreview {
+    drag: TreeEntryDrag,
+}
+
+impl Render for TreeDragPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .items_center()
+            .px_3()
+            .py_1()
+            .bg(cx.theme().tab_active)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_sm()
+            .text_color(cx.theme().foreground)
+            .child(tree_icon(&self.drag.path, self.drag.is_dir, false, false, self.drag.dark))
+            .child(self.drag.label.clone())
+    }
+}
+
+/// Whether dragging `from` into `to_dir` is a real move: not onto itself, not
+/// into its own subtree, and not into the folder it already lives in.
+pub fn move_allowed(from: &Path, to_dir: &Path) -> bool {
+    to_dir != from && !to_dir.starts_with(from) && from.parent() != Some(to_dir)
+}
+
+/// Whether dropping root `from` before `before` (or last) changes the order.
+pub fn reorder_allowed(roots: &[PathBuf], from: &Path, before: Option<&Path>) -> bool {
+    let Some(from_ix) = roots.iter().position(|r| r == from) else {
+        return false;
+    };
+    match before {
+        Some(target) => roots
+            .iter()
+            .position(|r| r == target)
+            .is_some_and(|to_ix| to_ix != from_ix && to_ix != from_ix + 1),
+        None => from_ix + 1 != roots.len(),
+    }
+}
+
 /// Separates a directory path from the suffix of its placeholder child's id.
 const PLACEHOLDER_SUFFIX: &str = "\u{0}placeholder";
 /// Temporary New File / New Folder row while the name is being typed.
@@ -206,6 +285,19 @@ impl FileTreePanel {
         }
     }
 
+    /// Row click on a folder. Kit's own mouse-down toggle is suppressed (see the
+    /// row's mouse-down), so unlike [`Self::handle_event`] the Kit tree has not
+    /// flipped its state yet: always rebuild from the `FsNode`s.
+    pub fn set_dir_expanded(&mut self, path: &Path, expand: bool, cx: &mut App) {
+        let Some(node) = self.roots.iter_mut().find_map(|root| root.find_mut(path)) else {
+            return;
+        };
+        if node.set_expanded(expand) {
+            self.refresh_gitignores();
+        }
+        self.sync(cx);
+    }
+
     /// Highlights `path` in the tree if it is currently visible.
     pub fn select_path(&self, path: &Path, cx: &mut App) {
         let id = SharedString::from(path.to_string_lossy().into_owned());
@@ -365,6 +457,9 @@ impl FileTreePanel {
             }
             set
         });
+        let root_paths: Rc<Vec<PathBuf>> =
+            Rc::new(self.roots.iter().map(|r| r.path().to_path_buf()).collect());
+        let blank_roots = root_paths.clone();
         let git_files = Rc::new(self.git_file_status.clone());
         let git_folders = Rc::new(self.git_folder_status.clone());
 
@@ -411,7 +506,34 @@ impl FileTreePanel {
                     let on_open_file = on_open_file.clone();
                     let tree_state = tree_state.clone();
                     let is_file = !entry.is_folder() && !is_placeholder && !is_creating;
+                    let toggle_on_click =
+                        entry.is_folder() && !is_placeholder && !is_creating && !is_missing_root;
+                    let expanded_now = entry.is_expanded();
                     let row_input = edit_input.clone().filter(|_| is_editing);
+                    let base_path = PathBuf::from(
+                        item.id.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(item.id.as_ref()),
+                    );
+                    let draggable = !is_placeholder
+                        && !is_creating
+                        && !is_editing
+                        && !entry.is_disabled()
+                        && !is_missing_root;
+                    let row_is_root = multi_root && entry.depth() == 0;
+                    let root_paths = root_paths.clone();
+                    let drag_payload = TreeEntryDrag {
+                        path: path.clone(),
+                        label: item.label.clone(),
+                        is_dir,
+                        dark: cx.theme().is_dark(),
+                        is_root: row_is_root,
+                    };
+                    let drop_dir: Option<PathBuf> = if is_creating {
+                        None
+                    } else if is_placeholder || is_dir {
+                        Some(base_path)
+                    } else {
+                        base_path.parent().map(Path::to_path_buf)
+                    };
                     let guides = guide_masks.get(ix).cloned().unwrap_or_default();
                     let guide_color = cx.theme().sidebar_border;
                     let muted = cx.theme().muted_foreground;
@@ -435,12 +557,61 @@ impl FileTreePanel {
                             item.on_mouse_down(MouseButton::Left, {
                                 let tree_state = tree_state.clone();
                                 move |_, window, cx| {
-                                    tree_state.update(cx, |state, cx| state.focus(window, cx));
+                                    tree_state.update(cx, |state, cx| {
+                                        state.focus(window, cx);
+                                        state.set_selected_index(Some(ix), cx);
+                                    });
+                                    // Kit expands a folder on mouse-down, before we
+                                    // know whether this press is a drag. Keep it from
+                                    // seeing the press; folders toggle on click below.
+                                    cx.stop_propagation();
                                 }
                             })
                             .on_mouse_down(MouseButton::Right, move |_, window, cx| {
                                 blank_menu_blocked.set(true);
                                 tree_state.update(cx, |state, cx| state.focus(window, cx));
+                            })
+                        })
+                        .when(draggable, |item| {
+                            item.on_drag(drag_payload, |drag, _, _, cx| {
+                                cx.new(|_| TreeDragPreview { drag: drag.clone() })
+                            })
+                        })
+                        .when_some(drop_dir, |item, dir| {
+                            let dir_ok = dir.clone();
+                            let roots_ok = root_paths.clone();
+                            item.can_drop(move |value, _, _| {
+                                value.downcast_ref::<TreeEntryDrag>().is_some_and(|d| {
+                                    if d.is_root {
+                                        // Roots only reorder, and only onto another root.
+                                        row_is_root
+                                            && reorder_allowed(&roots_ok, &d.path, Some(&dir_ok))
+                                    } else {
+                                        move_allowed(&d.path, &dir_ok)
+                                    }
+                                })
+                            })
+                            .drag_over::<TreeEntryDrag>(|this, _, _, cx| {
+                                this.bg(cx.theme().drop_target)
+                            })
+                            .on_drop(move |d: &TreeEntryDrag, window, cx| {
+                                if d.is_root {
+                                    window.dispatch_action(
+                                        Box::new(ReorderRoot {
+                                            folder: d.path.clone(),
+                                            before: Some(dir.clone()),
+                                        }),
+                                        cx,
+                                    );
+                                } else {
+                                    window.dispatch_action(
+                                        Box::new(MovePath {
+                                            from: d.path.clone(),
+                                            to_dir: dir.clone(),
+                                        }),
+                                        cx,
+                                    );
+                                }
                             })
                         })
                         .child(
@@ -507,6 +678,15 @@ impl FileTreePanel {
                         )
                         .when(!is_editing, |item| {
                             item.on_click(move |ev: &ClickEvent, window, cx| {
+                                if toggle_on_click {
+                                    window.dispatch_action(
+                                        Box::new(ToggleDir {
+                                            path: path.clone(),
+                                            expand: !expanded_now,
+                                        }),
+                                        cx,
+                                    );
+                                }
                                 if is_file {
                                     on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
                                 }
@@ -621,6 +801,7 @@ impl FileTreePanel {
         // Fill the panel so right-click on empty space (below rows) can create
         // at the workspace root — single-root never shows a root row to target.
         let tree_state_blank = self.state.clone();
+        let blank_drop_root = blank_create_root.clone();
         let tree_panel = div()
             .id("file-tree-panel")
             .flex_1()
@@ -628,6 +809,40 @@ impl FileTreePanel {
             .min_w_0()
             .w_full()
             .overflow_hidden()
+            .when_some(blank_drop_root, |panel, root| {
+                let root_ok = root.clone();
+                let roots_ok = blank_roots.clone();
+                panel
+                    .can_drop(move |value, _, _| {
+                        value.downcast_ref::<TreeEntryDrag>().is_some_and(|d| {
+                            if d.is_root {
+                                // Blank space below the rows → last root.
+                                reorder_allowed(&roots_ok, &d.path, None)
+                            } else {
+                                move_allowed(&d.path, &root_ok)
+                            }
+                        })
+                    })
+                    .on_drop(move |d: &TreeEntryDrag, window, cx| {
+                        if d.is_root {
+                            window.dispatch_action(
+                                Box::new(ReorderRoot {
+                                    folder: d.path.clone(),
+                                    before: None,
+                                }),
+                                cx,
+                            );
+                        } else {
+                            window.dispatch_action(
+                                Box::new(MovePath {
+                                    from: d.path.clone(),
+                                    to_dir: root.clone(),
+                                }),
+                                cx,
+                            );
+                        }
+                    })
+            })
             .context_menu(move |menu, window, cx| {
                 if blank_menu_blocked.replace(false) {
                     return menu;

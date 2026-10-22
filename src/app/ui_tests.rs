@@ -353,6 +353,64 @@ fn agent_panel_toggles_and_is_remembered_per_folder(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn tree_move_relocates_files_and_remaps_open_tabs(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let file = h.file("a.txt", "hello");
+    let inner = h.file("dir/inner.txt", "inner");
+    let dst = h.folder("dst");
+    h.open_folder(h.dir.path(), cx);
+    h.open(&file, cx);
+    h.open(&inner, cx);
+
+    // File into a folder: moves on disk, open tab follows.
+    let moved = dst.join("a.txt");
+    let r = h.with_app(cx, |app, w, cx| app.move_path(&file, &dst, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(!file.exists() && moved.exists());
+    assert!(h.tab(&moved, cx).is_some() && h.tab(&file, cx).is_none());
+
+    // Folder with an open tab inside.
+    let dir = h.dir.path().join("dir");
+    let r = h.with_app(cx, |app, w, cx| app.move_path(&dir, &dst, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(h.tab(&dst.join("dir/inner.txt"), cx).is_some());
+
+    // Refusals: into own subtree, name collision, workspace root.
+    let moved_dir = dst.join("dir");
+    let r = h.with_app(cx, |app, w, cx| app.move_path(&dst, &moved_dir, w, cx));
+    assert!(r.is_err());
+    h.file("collide/a.txt", "x");
+    let collide = h.dir.path().join("collide");
+    let r = h.with_app(cx, |app, w, cx| app.move_path(&collide.join("a.txt"), &dst, w, cx));
+    assert!(r.is_err());
+    let root = h.dir.path().to_path_buf();
+    let r = h.with_app(cx, |app, w, cx| app.move_path(&root, &dst, w, cx));
+    assert!(r.is_err());
+}
+
+#[test]
+fn reorder_allowed_skips_noop_drops() {
+    use crate::ui::file_tree::reorder_allowed;
+    use std::path::{Path, PathBuf};
+    let roots: Vec<PathBuf> = ["/a", "/b", "/c"].iter().map(PathBuf::from).collect();
+    assert!(reorder_allowed(&roots, Path::new("/c"), Some(Path::new("/a"))));
+    assert!(reorder_allowed(&roots, Path::new("/a"), None));
+    assert!(!reorder_allowed(&roots, Path::new("/c"), None));
+    assert!(!reorder_allowed(&roots, Path::new("/a"), Some(Path::new("/b"))));
+    assert!(!reorder_allowed(&roots, Path::new("/a"), Some(Path::new("/a"))));
+}
+
+#[test]
+fn move_allowed_rejects_noop_and_cyclic_moves() {
+    use crate::ui::file_tree::move_allowed;
+    use std::path::Path;
+    assert!(move_allowed(Path::new("/w/a.txt"), Path::new("/w/dst")));
+    assert!(!move_allowed(Path::new("/w/a"), Path::new("/w/a")));
+    assert!(!move_allowed(Path::new("/w/a"), Path::new("/w/a/b")));
+    assert!(!move_allowed(Path::new("/w/a/x.txt"), Path::new("/w/a")));
+}
+
+#[gpui_kit::test]
 fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("a.txt", "one\ntwo\nthree\n");
@@ -699,6 +757,36 @@ fn agent_at_mention_matches_multi_root_folder(cx: &mut TestAppContext) {
         labels.iter().any(|l| l.contains("note")),
         "search inside non-primary root must work, got {labels:?}"
     );
+}
+
+#[gpui_kit::test]
+fn reordering_roots_changes_the_agents_primary_folder(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let first = h.folder("first");
+    let second = h.folder("second");
+    h.open_folder(&first, cx);
+    h.with_app(cx, |app, window, cx| {
+        app.add_folders(std::slice::from_ref(&second), window, cx);
+    });
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    let agent_roots = |h: &Harness, cx: &mut TestAppContext| -> Vec<PathBuf> {
+        cx.read(|cx| {
+            let app = h.app.read(cx);
+            app.agent.as_ref().unwrap().read(cx).roots_for_test().to_vec()
+        })
+    };
+    assert_eq!(agent_roots(&h, cx), [first.clone(), second.clone()]);
+
+    // Drag `second` onto `first` → it becomes the primary folder.
+    let action = crate::ui::file_tree::ReorderRoot { folder: second.clone(), before: Some(first.clone()) };
+    h.with_app(cx, |app, window, cx| app.on_reorder_root(&action, window, cx));
+    assert_eq!(agent_roots(&h, cx), [second.clone(), first.clone()]);
+    let ws = cx.read(|cx| h.app.read(cx).workspace.folders().to_vec());
+    assert_eq!(ws, [second, first]);
 }
 
 #[gpui_kit::test]

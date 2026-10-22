@@ -30,7 +30,13 @@ tabs, highlighted editor, status bar):
   Mini toolbar above the tree: New File / New Folder (selection's dir,
   else root) so create still works when the tree has no blank space.
   Rename / New File / New Folder are inline in the tree (Enter/blur
-  commit, Escape cancel). Clicking a tree row focuses the Tree (preview
+  commit, Escape cancel). Drag a row onto a folder (a file row → its
+  folder; blank space → first root) to move it; open tabs follow;
+  self/descendant and same-folder drops are refused. Multi-root: drag a root
+  row onto another root (insert before) or blank space (last) to reorder —
+  the first root is the agent's primary folder, so it reconnects (chat
+  resumes) and the order is saved to the `.isengard-workspace` file. Rows
+  inside a folder stay sorted (dirs first, A–Z); no manual order. Clicking a tree row focuses the Tree (preview
   open does not steal focus); `F2` rename; `Delete` / `Backspace` → OS
   Trash. Double-click focuses the editor.
 - **Tabs:** Kit `Tab`s in `h_flex` (not `TabBar` — needed for per-tab

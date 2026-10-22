@@ -101,8 +101,8 @@ pub(super) use crate::terminal::TerminalPanel;
 pub(super) use crate::theme;
 pub(super) use crate::ui::components::{center_dialog, notify_error, notify_success, notify_warning};
 pub(super) use crate::ui::file_tree::{
-    DeletePath, FileTreePanel, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
-    TreeEditTarget,
+    DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn, RemoveWorkspaceFolder,
+    RenamePath, ReorderRoot, ToggleDir, TreeEditTarget,
 };
 pub(super) use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
 pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
