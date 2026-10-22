@@ -5463,7 +5463,7 @@ impl AgentPanel {
         let improve = Button::new("agent-improve")
             .ghost()
             .small()
-            .icon(LucideIcon::Sparkles)
+            .icon(LucideIcon::PencilSparkles)
             .tooltip("Improve prompt")
             .loading(improving)
             .disabled(!can_improve && !improving)

@@ -70,6 +70,7 @@ gpui_kit::assets::icon_assets!(
         Shield,
         ShieldQuestionMark,
         Sparkles,
+        PencilSparkles, // Improve prompt (distinct from Mode Auto's Sparkles)
         ListTodo,
         Cpu,
         Tag,
