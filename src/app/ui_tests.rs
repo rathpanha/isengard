@@ -1118,6 +1118,38 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn agent_auto_titles_after_first_turn(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+    h.ask("please fix the flaky test", cx);
+    h.wait_for(cx, "auto title replaces first-line placeholder", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
+        })
+    });
+    // Manual rename cancels further auto-title attempts.
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.rename_chat("s1", "Keep me", cx);
+        });
+    });
+    h.ask("follow up", cx);
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_title()),
+        Some("Keep me".into()),
+        "user rename must not be overwritten on later turns"
+    );
+}
+
+#[gpui_kit::test]
 fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
@@ -1127,12 +1159,19 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     h.ask("hello", cx);
+    // First turn auto-titles (Claude sends no session_info_update title).
+    h.wait_for(cx, "auto chat title", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
+        })
+    });
 
     // Rename is local (persisted with the chat index).
     cx.update(|cx| {
         let panel = h.app.read(cx).agent.clone().unwrap();
         panel.update(cx, |panel, cx| {
-            assert_eq!(panel.active_chat_title().as_deref(), Some("hello"));
             panel.rename_chat("s1", "My notes", cx);
             assert_eq!(panel.active_chat_title().as_deref(), Some("My notes"));
         });

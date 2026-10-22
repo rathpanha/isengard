@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent chats auto-title after the first turn (silent ACP
+  turn; Claude sends no `session_info_update`); rename / Generate unchanged.
+
 - **2026-10-22** — Agent toggle is `Ctrl+Shift+B` / `⌘⇧B` (dropped Ctrl+Alt);
   status-bar Sidebar / Terminal / Agent tooltips show the shortcut.
 

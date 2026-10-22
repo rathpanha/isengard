@@ -7,7 +7,7 @@
 //! a replay. Anything that touches editor state (file reads/writes, login in
 //! the terminal, hiding, persisting the chat index) is an [`AgentPanelEvent`].
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -445,6 +445,9 @@ pub struct AgentPanel {
     title_transcripts: HashMap<String, String>,
     /// After loading a non-active chat, run Generate once entries land.
     pending_title: Option<String>,
+    /// New chats get a first-prompt placeholder title; after the first real
+    /// turn we run a silent title turn once (cleared on rename / success).
+    needs_auto_title: HashSet<String>,
     /// Re-splice **N Files** cards as ACP history arrives (SessionOpened can
     /// race ahead of replay `Update`s on cold start).
     pending_file_change_restore: bool,
@@ -494,7 +497,12 @@ struct ContextUsage {
 /// One-shot prompt that accumulates assistant text without chat bubbles.
 enum SilentTurn {
     Commit { root: PathBuf, text: String },
-    Title { chat_id: String, text: String },
+    /// `notify`: show toasts when Generate was user-requested (not auto).
+    Title {
+        chat_id: String,
+        text: String,
+        notify: bool,
+    },
 }
 
 /// A user prompt waiting for the current turn to finish.
@@ -762,6 +770,7 @@ impl AgentPanel {
             transcript_of: None,
             title_transcripts: HashMap::new(),
             pending_title: None,
+            needs_auto_title: HashSet::new(),
             pending_file_change_restore: false,
             entries: Vec::new(),
             attachments: Vec::new(),
@@ -1541,19 +1550,42 @@ impl AgentPanel {
     /// Returns `false` if busy / no text (caller may load then retry via
     /// [`Self::begin_chat_title`]).
     pub fn request_chat_title(&mut self, chat_id: String, cx: &mut Context<Self>) -> bool {
+        self.request_chat_title_inner(chat_id, true, cx)
+    }
+
+    fn request_chat_title_inner(
+        &mut self,
+        chat_id: String,
+        notify: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(transcript) = self.title_source(&chat_id, cx) else {
             return false;
         };
         self.title_transcripts
             .insert(chat_id.clone(), transcript.clone());
+        self.needs_auto_title.remove(&chat_id);
         self.start_silent(
             build_chat_title_prompt(&transcript),
             SilentTurn::Title {
                 chat_id,
                 text: String::new(),
+                notify,
             },
             cx,
         )
+    }
+
+    /// After the first real turn on a new chat, replace the first-line
+    /// placeholder with an AI title (Claude sends no `session_info_update`).
+    fn maybe_auto_title_after_turn(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.active.clone() else {
+            return;
+        };
+        if !self.needs_auto_title.contains(&id) {
+            return;
+        }
+        let _ = self.request_chat_title_inner(id, false, cx);
     }
 
     /// Generate a title for any chat: silent turn if we have text, else load
@@ -1658,15 +1690,19 @@ impl AgentPanel {
                     cx.emit(AgentPanelEvent::CommitSuggestFailed { root });
                 }
             }
-            SilentTurn::Title { chat_id, text } => {
+            SilentTurn::Title {
+                chat_id,
+                text,
+                notify,
+            } => {
                 if ok {
                     let title = scrub_chat_title(&text);
                     if !title.is_empty() {
                         self.rename_chat(&chat_id, &title, cx);
-                    } else {
+                    } else if notify {
                         self.push_notice("Could not generate a title.", true, cx);
                     }
-                } else {
+                } else if notify {
                     self.push_notice("Title generation stopped.", false, cx);
                 }
             }
@@ -2009,6 +2045,7 @@ impl AgentPanel {
         }
         chat.title = title.to_owned();
         chat.updated = now_secs();
+        self.needs_auto_title.remove(id);
         cx.emit(AgentPanelEvent::ChatsChanged);
         cx.notify();
     }
@@ -2399,11 +2436,15 @@ impl AgentPanel {
     fn touch_chat(&mut self, id: &str, first_prompt: Option<&str>) {
         let mut chat = match self.chats.iter().position(|c| c.id == id) {
             Some(ix) => self.chats.remove(ix),
-            None => AgentChat {
-                id: id.to_owned(),
-                title: chat_title(first_prompt.unwrap_or("")),
-                ..Default::default()
-            },
+            None => {
+                // Placeholder until the first turn finishes → auto title.
+                self.needs_auto_title.insert(id.to_owned());
+                AgentChat {
+                    id: id.to_owned(),
+                    title: chat_title(first_prompt.unwrap_or("")),
+                    ..Default::default()
+                }
+            }
         };
         chat.updated = now_secs();
         self.chats.insert(0, chat);
@@ -2451,8 +2492,9 @@ impl AgentPanel {
 
     fn turn_finished(&mut self, suggest_ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
+        let finishing_silent = self.silent.is_some();
         // Resolve before reconnect/suspend so Git still gets a Suggest result.
-        if self.silent.is_some() {
+        if finishing_silent {
             self.finish_silent(suggest_ok, cx);
         } else {
             self.flush_turn_file_changes(cx);
@@ -2467,6 +2509,9 @@ impl AgentPanel {
         } else {
             self.cache_active_transcript(cx);
             self.drain_outbound_queue(cx);
+            if !finishing_silent && suggest_ok {
+                self.maybe_auto_title_after_turn(cx);
+            }
         }
     }
 

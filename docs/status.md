@@ -156,9 +156,11 @@ tabs, highlighted editor, status bar):
   **Chats per folder/workspace:** each folder/workspace has its own panel and
   chat index (`sessions.<key>.agent_chats` / `agent_active`; only chats
   started in Isengard — not `claude` CLI chats). Header chat list
-  (`MessagesSquare`): title (first prompt line) + relative time, click to
-  open, pencil rename (manual or AI Generate for any chat — live,
-  cached, or load-then-generate), delete with confirm.   Header: session title + context used/size (`— / {window}` on open /
+  (`MessagesSquare`): title (first-prompt placeholder, then silent AI title
+  after the first turn; Claude sends no `session_info_update`) + relative
+  time, click to open, pencil rename (manual or AI Generate for any chat —
+  live, cached, or load-then-generate), delete with confirm. Header: session
+  title + context used/size (`— / {window}` on open /
   switch until ACP `usage_update`, then live fill) + ghost `Plus` New Chat
   (`⌘N` / `Ctrl+N` while the Agent composer is focused; elsewhere still New File).
   Under the header, Claude plan usage bars (5h session + Week; muted gray
@@ -256,9 +258,8 @@ shortcuts. Check these first if something is off.
 ## Roadmap — Agent panel after v1
 
 - Process-level agent switch in the panel (today: `config.json` /
-  Open Config File… only). Mode/model pickers + chat rename shipped.
-- Agent titles: the Claude adapter sends no `session_info_update` title, so
-  titles are the first prompt line (rename overrides locally).
+  Open Config File… only). Mode/model pickers + chat rename + auto titles
+  shipped.
 - Interactive QA: FakeAgent UI tests cover permission answer, chat delete,
   Install/Login empty-state buttons, rename, and prompt send. Live smoke
   (once per machine / after adapter bumps): (1) Install or PATH agent,

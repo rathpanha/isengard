@@ -235,8 +235,9 @@ Add a row here whenever a new shared component is created.
   hidden until data arrives. Background
   `theme.sidebar` like the other panels. Header also has a ghost
   `MessagesSquare` chat list (Popover, 300px): rows are Kit `ListItem`s —
-  title (`text_sm`, truncated) over relative time (`text_xs` muted), active
-  row `.selected`, ghost `Pencil` rename (dialog + `Input`; outline
+  title (`text_sm`, truncated; first-prompt placeholder until a silent AI
+  title runs after the first turn) over relative time (`text_xs` muted),
+  active row `.selected`, ghost `Pencil` rename (dialog + `Input`; outline
   **Generate** runs a silent ACP turn for a title for **any** chat when
   Ready (uses the open transcript, a per-session cache from chats opened
   earlier, or loads that chat then generates) — Cancel outline · Generate
