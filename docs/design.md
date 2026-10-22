@@ -260,9 +260,10 @@ Add a row here whenever a new shared component is created.
   allow-once `.primary()`, allow-always `.outline()`, reject
   `.danger().outline()`.   Composer: optional wrap-row of attachment chips
   (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
-  `@` on chip text) with ghost `CircleX` remove — chips are **only** from
-  the Attach (`Paperclip`) button, paste, or (future) drag-drop, never from
-  `@` mentions; `@` in
+  `@` on chip text) with ghost `CircleX` remove — chips are from the Attach
+  (`Paperclip`) button, paste, or **drag-drop** onto the prompt (file-tree
+  row, editor tab, or OS file explorer — `drop_target` highlight); never
+  from `@` mentions; `@` in
   the textarea opens a slim bordered mention menu (`text_xs`, scrollable
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);

@@ -16,9 +16,12 @@ status, architecture, or design. See [README.md](README.md).
 - **2026-10-22** — File tree: drag files/folders onto a folder (or blank
   space → root) to move them; open tabs are remapped.
 
+- **2026-10-22** — Agent prompt accepts drag-drop attach from the file tree,
+  an editor tab, or the OS file explorer (chips; same path as Paperclip).
+
 - **2026-10-22** — Agent `@` mentions are Kit inline tokens **inside** the
   prompt Textarea (folder/file icon + basename, or image thumb); paperclip
-  chip row stays Attach / paste only.
+  chip row stays Attach / paste / drag-drop.
 
 - **2026-10-22** — Agent **N Files** pins above the composer as a full-width
   layout strip (`border_t`, edge-to-edge — not an inset card); still drops

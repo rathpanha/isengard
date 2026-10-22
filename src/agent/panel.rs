@@ -62,6 +62,8 @@ use crate::git::{line_change_counts, snapshot_dirty_contents, worktree_deltas_si
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
 use crate::ui::components::center_dialog;
+use crate::ui::file_tree::TreeEntryDrag;
+use crate::ui::tab_drag::EditorTabDrag;
 
 /// Side effects the app performs for the panel.
 pub enum AgentPanelEvent {
@@ -71,9 +73,8 @@ pub enum AgentPanelEvent {
     Login { title: String, command: TerminalCommand },
     /// Open the OS file picker and attach the chosen paths.
     AttachFromDisk,
-    /// Attach a path as a chip (paperclip / tests). `@` mentions stay in the
-    /// prompt and are resolved on send instead.
-    #[allow(dead_code)]
+    /// Attach a path as a chip (paperclip, paste, or drag-drop from tree /
+    /// editor tab / OS explorer). `@` mentions stay inline in the prompt.
     AttachPath(PathBuf),
     /// Open these paths in editor tabs (file-change summary row click).
     OpenPaths(Vec<PathBuf>),
@@ -4982,24 +4983,61 @@ impl AgentPanel {
         let chips = (!self.attachments.is_empty()).then(|| self.render_attachment_chips(cx));
         let mention = self.mention.as_ref().map(|m| self.render_mention_menu(m, cx));
         let roots = self.roots.clone();
+        // Drop target for tree / editor-tab / OS file drags → attach chips.
+        // Outer composer + prompt wrapper: GPUI hits the deepest matching
+        // listener, so the Textarea area still attaches.
         v_flex()
+            .id("agent-composer")
             .w_full()
             .flex_shrink_0()
             .gap_2()
             .p_2()
             .border_t_1()
             .border_color(border)
+            .drag_over::<TreeEntryDrag>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+            .on_drop(cx.listener(|_, d: &TreeEntryDrag, _, cx| {
+                cx.emit(AgentPanelEvent::AttachPath(d.path.clone()));
+            }))
+            .drag_over::<EditorTabDrag>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+            .on_drop(cx.listener(|_, d: &EditorTabDrag, _, cx| {
+                cx.emit(AgentPanelEvent::AttachPath(d.path.clone()));
+            }))
+            .drag_over::<ExternalPaths>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                for path in paths.paths() {
+                    cx.emit(AgentPanelEvent::AttachPath(path.clone()));
+                }
+            }))
             .children(chips)
             .children(mention)
             .child(
-                // `@` mentions are Kit inline tokens inside the prompt Textarea.
-                Textarea::new(&self.input)
-                    .token(move |ctx, _, cx| render_mention_token(ctx, &roots, cx))
-                    .on_paste(move |item, _window, cx| {
-                        panel
-                            .update(cx, |panel, cx| panel.handle_composer_paste(item, cx))
-                            .unwrap_or(false)
-                    }),
+                div()
+                    .id("agent-prompt-drop")
+                    .w_full()
+                    .drag_over::<TreeEntryDrag>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+                    .on_drop(cx.listener(|_, d: &TreeEntryDrag, _, cx| {
+                        cx.emit(AgentPanelEvent::AttachPath(d.path.clone()));
+                    }))
+                    .drag_over::<EditorTabDrag>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+                    .on_drop(cx.listener(|_, d: &EditorTabDrag, _, cx| {
+                        cx.emit(AgentPanelEvent::AttachPath(d.path.clone()));
+                    }))
+                    .drag_over::<ExternalPaths>(|this, _, _, cx| this.bg(cx.theme().drop_target))
+                    .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                        for path in paths.paths() {
+                            cx.emit(AgentPanelEvent::AttachPath(path.clone()));
+                        }
+                    }))
+                    .child(
+                        // `@` mentions are Kit inline tokens inside the prompt Textarea.
+                        Textarea::new(&self.input)
+                            .token(move |ctx, _, cx| render_mention_token(ctx, &roots, cx))
+                            .on_paste(move |item, _window, cx| {
+                                panel
+                                    .update(cx, |panel, cx| panel.handle_composer_paste(item, cx))
+                                    .unwrap_or(false)
+                            }),
+                    ),
             )
             // Config band then attach/hint/Send. Always reserve one control-row
             // height so first options / session open do not shove the textarea.
@@ -5033,7 +5071,7 @@ impl AgentPanel {
                                             .ghost()
                                             .small()
                                             .icon(LucideIcon::Paperclip)
-                                            .tooltip("Attach files from disk… (@ for folders)")
+                                            .tooltip("Attach files… (or drop from tree / tab / OS)")
                                             .disabled(busy)
                                             .when(!busy, |b| b.cursor_pointer())
                                             .on_click(cx.listener(|_, _, _, cx| {
