@@ -77,6 +77,7 @@ short_description = "The already configured editor"
 opt-level = 2
 
 # Kit completion docs used a fixed width and measured against relative X (wrong
-# with a sidebar), so the pane walked off-screen. Patch until upstream lands.
+# with a sidebar), so the pane walked off-screen. Also: Dialog enter motion
+# stripped (Isengard wants instant modals). Patch until upstream lands options.
 [patch.crates-io]
 gpui-component = { path = "vendor/gpui-component" }

@@ -3,24 +3,24 @@ use gpui_base::TestSupportExt as _;
 use std::{rc::Rc, sync::LazyLock, time::Duration};
 
 use gpui::{
-    Action, Anchor, Animation, AnimationExt as _, AnyElement, App, BoxShadow, ClickEvent, Edges,
-    FocusHandle, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
-    SharedString, StyleRefinement, Styled, Window, WindowControlArea, anchored, div, hsla, point,
-    prelude::FluentBuilder, px,
+    Action, Anchor, AnyElement, App, ClickEvent, Edges, FocusHandle, Hsla, InteractiveElement,
+    IntoElement, ParentElement, Pixels, RenderOnce, SharedString, StyleRefinement, Styled, Window,
+    WindowControlArea, anchored, div, hsla, point, prelude::FluentBuilder, px,
 };
 use gpui_base::{ElementExt as _, TextSelectionScopeId};
 use rust_i18n::t;
 
 use crate::{
     ActiveTheme as _, IconName, Sizable as _, StyledExt, TITLE_BAR_HEIGHT, WindowExt as _,
-    animation::cubic_bezier,
     button::{Button, ButtonVariant, ButtonVariants as _},
     dialog::{DialogContent, DialogDispatchAnchor, DialogTitle},
     scroll::ScrollableElement as _,
     v_flex,
 };
 
-pub static ANIMATION_DURATION: LazyLock<Duration> = LazyLock::new(|| Duration::from_secs_f64(0.25));
+/// Close-focus restore delay in `Root::defer_close_dialog`. Zero: Isengard
+/// patches out dialog enter motion, so waiting would only add latency.
+pub static ANIMATION_DURATION: LazyLock<Duration> = LazyLock::new(|| Duration::ZERO);
 pub use gpui_base::actions::{Cancel, Confirm};
 
 type OkHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static>;
@@ -291,6 +291,15 @@ impl IntoElement for BaseDialogRoot {
         match self {
             Self::Dialog(root) => root.into_element(),
             Self::AlertDialog(root) => root.into_element(),
+        }
+    }
+}
+
+impl Styled for BaseDialogRoot {
+    fn style(&mut self) -> &mut StyleRefinement {
+        match self {
+            Self::Dialog(root) => root.style(),
+            Self::AlertDialog(root) => root.style(),
         }
     }
 }
@@ -600,17 +609,10 @@ impl RenderOnce for Dialog {
             paddings.bottom = pb.to_pixels(base_size, rem_size);
         }
 
-        // x1 = 1/3, x2 = 2/3 make the bezier's time mapping the identity,
-        // preserving the trajectory this dialog was tuned with before
-        // `cubic_bezier` solved for x; vaul's (0.32, 0.72, 0., 1.) is far
-        // more front-loaded under the CSS-correct solver.
-        let animation = Animation::new(*ANIMATION_DURATION).with_easing(cubic_bezier(
-            1. / 3.,
-            0.72,
-            2. / 3.,
-            1.,
-        ));
-
+        // Isengard: no dialog enter motion / panel drop shadow. Also pin the
+        // gpui_base host to the content frame — it defaults to full viewport at
+        // (0,0), which on Linux CSD paints the dim overlay into the transparent
+        // window-shadow padding (looks like a slab past the chrome).
         anchored()
             .position(point(window_paddings.left, window_paddings.top))
             .snap_to_window()
@@ -619,12 +621,19 @@ impl RenderOnce for Dialog {
                     .id("dialog")
                     .test_support()
                     .occlude()
+                    .overflow_hidden()
                     .w(view_size.width)
                     .h(view_size.height)
                     .child(
                         self.base
                             .take()
                             .expect("Dialog base host is always present")
+                            // Override gpui_base::Dialog's full-viewport host box.
+                            .left(window_paddings.left)
+                            .top(window_paddings.top)
+                            .w(view_size.width)
+                            .h(view_size.height)
+                            .overflow_hidden()
                             .layer(
                                 layer_ix,
                                 (self.layer_ix + 1)
@@ -749,45 +758,10 @@ impl RenderOnce for Dialog {
                                                         .icon(IconName::Close)
                                                 })
                                         }))
-                                        .with_animation(
-                                            "slide-down-shadow",
-                                            animation.clone(),
-                                            move |this, delta| {
-                                                // This is equivalent to `shadow_xl` with an extra opacity.
-                                                let shadow = vec![
-                                                    BoxShadow {
-                                                        color: hsla(0., 0., 0., 0.1 * delta),
-                                                        offset: point(px(0.), px(20.)),
-                                                        blur_radius: px(25.),
-                                                        spread_radius: px(-5.),
-                                                        inset: false,
-                                                    },
-                                                    BoxShadow {
-                                                        color: hsla(0., 0., 0., 0.1 * delta),
-                                                        offset: point(px(0.), px(8.)),
-                                                        blur_radius: px(10.),
-                                                        spread_radius: px(-6.),
-                                                        inset: false,
-                                                    },
-                                                ];
-                                                this.shadow(shadow)
-                                            },
-                                        )
                                         .text_selection_scope(selection_scope),
-                                )
-                                .with_animation(
-                                    "slide-down",
-                                    animation.clone(),
-                                    move |this, delta| {
-                                        this.position(point(
-                                            window_paddings.left + x,
-                                            window_paddings.top + y * delta,
-                                        ))
-                                    },
                                 ),
                             ),
-                    )
-                    .with_animation("fade-in", animation, move |this, delta| this.opacity(delta)),
+                    ),
             )
             .into_any_element()
     }
@@ -806,15 +780,13 @@ pub(crate) mod tests {
         }
     }
 
-    /// A window of `window_size` whose root renders the dialog layer, with
-    /// motion reduced so the entrance animation settles on its first frame.
+    /// A window of `window_size` whose root renders the dialog layer.
     pub(crate) fn window(
         cx: &mut TestAppContext,
         window_size: gpui::Size<Pixels>,
     ) -> &mut VisualTestContext {
         cx.update(|cx| {
             crate::init(cx);
-            cx.set_reduce_motion(true);
         });
         let (_, cx) = cx.add_window_view(|window, cx| {
             let view = cx.new(|_| DialogHost);

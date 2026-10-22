@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Modal dialogs: no enter animation / panel shadow, and the
+  host is clipped to the Linux CSD content frame so the dim overlay no longer
+  paints into the transparent window-shadow padding (looked like a slab under
+  the chrome). Toasts keep motion.
+
 - **2026-10-21** — Agent panel shows Claude plan usage (5-hour session +
   weekly) as two green/yellow/red bars under the header, polled every 2 min
   from Anthropic's OAuth usage endpoint with the existing Claude Code login.

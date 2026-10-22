@@ -340,7 +340,10 @@ src/
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close
   × buttons (tabs, recent rows, dialogs, toasts) use Kit's default ghost style
-  — no custom red hover.
+  — no custom red hover. Vendored `gpui-component` Dialog patch: no enter
+  motion (`ANIMATION_DURATION = 0`), no panel drop shadow, and the host box is
+  sized/positioned to the CSD content frame so the dim overlay cannot fill the
+  transparent window-shadow padding on Linux.
 - **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
   `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so

@@ -71,7 +71,11 @@ section here.
     `top: 18px`, which does not vertically centre with one-line text.
 - **Modal dialogs** sit in the middle of the window — wrap every
   `open_dialog` with `components::center_dialog`. Context menus stay
-  click-anchored.
+  click-anchored. **No enter/exit motion and no panel drop shadow.** The
+  dialog host is clipped to the Linux CSD content frame (not the full
+  viewport) so the dim overlay cannot paint into the transparent
+  window-shadow padding. Patch lives in `vendor/gpui-component`. Toasts keep
+  their motion.
 - **Pointer cursor** on everything clickable (buttons, tabs, tree/list rows,
   checkboxes, links); disabled items and plain text keep the default arrow,
   text areas the I-beam. GPUI Kit only does this itself for `link()`/`text()`
