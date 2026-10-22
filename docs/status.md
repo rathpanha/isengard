@@ -106,7 +106,7 @@ tabs, highlighted editor, status bar):
   keeps going past a failed file, lists every failure in one toast, and then
   cancels the pending close / quit / switch.
 - **Agent panel (v1):** right-hand panel (View > Toggle Agent Panel /
-  `⌘⌥B` / `Ctrl+Alt+B` / status-bar `Bot`) chatting with an external agent
+  `⌘⇧B` / `Ctrl+Shift+B` / status-bar `Bot`) chatting with an external agent.
   over the Agent Client Protocol, like Zed's external agents. Default is
   Claude Agent (`@agentclientprotocol/claude-agent-acp`, pinned 0.94.0):
   **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
@@ -259,7 +259,8 @@ shortcuts. Check these first if something is off.
   Open Config File… only). Mode/model pickers + chat rename shipped.
 - Agent titles: the Claude adapter sends no `session_info_update` title, so
   titles are the first prompt line (rename overrides locally).
-- Interactive checks still owed: permission buttons against the real adapter
-  (its default mode did not ask), Install button, login flow, typing in the
-  prompt box, and the chat list popover / rename / delete dialog (the
-  automated run could not inject keystrokes or clicks).
+- Interactive QA: FakeAgent UI tests cover permission answer, chat delete,
+  Install/Login empty-state buttons, rename, and prompt send. Live smoke
+  (once per machine / after adapter bumps): (1) Install or PATH agent,
+  (2) Login → Retry, (3) one prompt reply, (4) one real permission Ask,
+  (5) rename + delete chat.

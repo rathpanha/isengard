@@ -219,8 +219,9 @@ Add a row here whenever a new shared component is created.
   editor + terminal. Only while a folder/workspace is open; omitted
   entirely when hidden (no empty strip). Width + visibility per workspace in
   `sessions` (default hidden, 380px). Toggle: status-bar `Bot` (`.selected`
-  while shown), View > Toggle Agent Panel, `⌘⌥B` / `Ctrl+Alt+B`; header
-  `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
+  while shown), View > Toggle Agent Panel, `⌘⇧B` / `Ctrl+Shift+B`.
+  Status-bar Sidebar / Terminal / Agent tooltips include the shortcut.
+  Header `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
   status square (success ready, warning starting/working, danger failed,
   muted otherwise) + **session title** (active chat title, or `New chat`;
   activity suffix while busy; Compacting… during agent compaction) +

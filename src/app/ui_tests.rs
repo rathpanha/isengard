@@ -337,7 +337,7 @@ fn agent_panel_toggles_and_is_remembered_per_folder(cx: &mut TestAppContext) {
     h.open_folder(&a, cx);
     assert!(!h.agent_visible(cx), "hidden by default");
 
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     assert!(h.agent_visible(cx));
     assert!(h.has("agent-hide", cx));
 
@@ -348,7 +348,7 @@ fn agent_panel_toggles_and_is_remembered_per_folder(cx: &mut TestAppContext) {
     h.open_folder(&a, cx);
     assert!(h.agent_visible(cx), "restored with the folder's session");
 
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     assert!(!h.agent_visible(cx));
 }
 
@@ -461,7 +461,7 @@ fn agent_writes_show_file_change_summary(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("notes.txt", "alpha\nbeta\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
 
     let (reply, answer) = flume::bounded(1);
     h.agent_event(
@@ -485,7 +485,7 @@ fn agent_file_change_cards_survive_transcript_reload(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("notes.txt", "alpha\nbeta\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
 
     let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
     panel.update(cx, |panel, cx| {
@@ -534,7 +534,7 @@ fn agent_file_change_card_drops_discarded_paths(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("notes.txt", "alpha\nbeta\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
 
     let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
     panel.update(cx, |panel, cx| {
@@ -574,7 +574,7 @@ fn agent_edit_tool_without_write_rpc_shows_file_summary(cx: &mut TestAppContext)
     let h = Harness::new(cx);
     let path = h.file("readme.md", "hello\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
 
     let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
     // Pending snapshots baseline before the agent writes on disk.
@@ -631,7 +631,7 @@ fn agent_shell_style_git_edits_show_file_summary(cx: &mut TestAppContext) {
     );
 
     h.open_folder(&root, cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
     panel.update(cx, |panel, _cx| panel.begin_turn_file_tracking_for_test());
 
@@ -655,7 +655,7 @@ fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
     h.file("alpha.rs", "a\n");
     h.file("beta.rs", "b\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     h.agent_composer("@", cx);
@@ -692,7 +692,7 @@ fn agent_at_mention_finds_nested_folders(cx: &mut TestAppContext) {
     h.file("src/agent/mod.rs", "// agent\n");
     h.file("README.md", "hi\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     h.agent_composer("@", cx);
@@ -734,7 +734,7 @@ fn agent_at_mention_matches_multi_root_folder(cx: &mut TestAppContext) {
     h.with_app(cx, |app, window, cx| {
         app.add_folders(std::slice::from_ref(&system), window, cx);
     });
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     h.agent_composer("@", cx);
@@ -770,7 +770,7 @@ fn reordering_roots_changes_the_agents_primary_folder(cx: &mut TestAppContext) {
     h.with_app(cx, |app, window, cx| {
         app.add_folders(std::slice::from_ref(&second), window, cx);
     });
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     let agent_roots = |h: &Harness, cx: &mut TestAppContext| -> Vec<PathBuf> {
@@ -796,7 +796,7 @@ fn agent_at_mention_is_visual_token_not_path_or_attach_chip(cx: &mut TestAppCont
     let h = Harness::new(cx);
     h.file("note.rs", "fn main() {}\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     h.agent_composer("@note", cx);
@@ -828,7 +828,7 @@ fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext)
     let h = Harness::new(cx);
     let path = h.file("note.rs", "fn main() {}\n");
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     assert!(h.has("agent-attach-file", cx), "disk picker button");
@@ -897,7 +897,7 @@ fn agent_attach_image_path_is_image_chip_not_file(cx: &mut TestAppContext) {
     std::fs::write(&a, png).unwrap();
     std::fs::write(&b, png).unwrap();
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     h.agent_event(AgentPanelEvent::AttachPath(a), cx);
@@ -920,7 +920,7 @@ fn agent_ctrl_n_starts_new_chat(cx: &mut TestAppContext) {
     crate::acp::testing::install(&agent);
     let h = Harness::new(cx);
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     h.ask("hello", cx);
     assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
@@ -951,7 +951,7 @@ fn agent_config_row_survives_new_chat_open(cx: &mut TestAppContext) {
     crate::acp::testing::install(&agent);
     let h = Harness::new(cx);
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     assert!(cx.read(|cx| {
         h.app
@@ -991,7 +991,7 @@ fn agent_shows_context_placeholder_before_prompt(cx: &mut TestAppContext) {
     crate::acp::testing::install(&agent);
     let h = Harness::new(cx);
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     // No turn yet — Claude would not have sent usage_update; we seed size.
     h.wait_for(cx, "context placeholder", |cx| {
@@ -1009,7 +1009,7 @@ fn agent_mode_hides_auto_when_model_too_old(cx: &mut TestAppContext) {
     crate::acp::testing::install(&agent);
     let h = Harness::new(cx);
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     // Default fake model is Sonnet 4.5 — Claude Auto needs 4.6+.
     let ids = cx.read(|cx| {
@@ -1064,7 +1064,7 @@ fn agent_shows_context_usage_after_prompt(cx: &mut TestAppContext) {
     crate::acp::testing::install(&agent);
     let h = Harness::new(cx);
     h.open_folder(h.dir.path(), cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     h.ask("hello", cx);
     // Fake agent: 10K + 2 msgs × 5K = 20K of 200K after one turn.
@@ -1086,7 +1086,7 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
     let b = h.folder("b");
 
     h.open_folder(&a, cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     h.ask("hello", cx);
     assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
@@ -1095,7 +1095,7 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
     // Folder B gets its own, empty chat.
     h.open_folder(&b, cx);
     assert!(!h.agent_visible(cx), "B has its own (hidden) panel state");
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     assert!(h.transcript(cx).is_empty());
     assert_eq!(h.saved_chats(&b, cx).0, Vec::<String>::new());
@@ -1124,7 +1124,7 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let folder = h.folder("proj");
     h.open_folder(&folder, cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     h.ask("hello", cx);
 
@@ -1341,7 +1341,7 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let folder = h.folder("q");
     h.open_folder(&folder, cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
     let release = agent.arm_hold();
@@ -1431,7 +1431,7 @@ fn switching_away_mid_turn_lets_it_finish_then_stops_the_agent(cx: &mut TestAppC
     let a = h.folder("a");
     let b = h.folder("b");
     h.open_folder(&a, cx);
-    h.press("secondary-alt-b", cx);
+    h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     let panel_a = cx.read(|cx| h.app.read(cx).agent.clone().unwrap());
 
@@ -1447,4 +1447,105 @@ fn switching_away_mid_turn_lets_it_finish_then_stops_the_agent(cx: &mut TestAppC
     });
     let transcript = cx.read(|cx| panel_a.read(cx).transcript(cx));
     assert_eq!(transcript.first().map(String::as_str), Some("you: shout"));
+}
+
+#[gpui_kit::test]
+fn agent_answers_pending_permission(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let reply = cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.inject_pending_permission_for_test(cx))
+    });
+    assert!(cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .has_pending_permission_for_test()
+    }));
+    assert!(
+        h.has("agent-perm-t-perm-allow", cx),
+        "Allow permission button is in the tree"
+    );
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.answer_permission_for_test("allow", cx);
+        });
+    });
+    assert!(!cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .has_pending_permission_for_test()
+    }));
+    let answered = reply.try_recv().expect("permission reply");
+    assert_eq!(
+        answered.map(|id| id.to_string()),
+        Some("allow".into()),
+        "panel forwarded Allow to the ACP reply channel"
+    );
+}
+
+#[gpui_kit::test]
+fn agent_deletes_chat(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+    h.ask("hello", cx);
+    assert_eq!(h.saved_chats(&folder, cx).0, vec!["s1".to_string()]);
+
+    h.with_app(cx, |app, window, cx| {
+        let panel = app.agent.clone().expect("agent");
+        panel.update(cx, |panel, cx| {
+            panel.delete_chat_for_test("s1", window, cx);
+        });
+    });
+
+    let ids = h.saved_chats(&folder, cx).0;
+    assert!(!ids.contains(&"s1".to_string()), "s1 removed from index: {ids:?}");
+    let calls = agent.calls();
+    assert!(
+        calls.iter().any(|c| c == "delete s1"),
+        "fake agent got delete: {calls:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn agent_install_and_login_screens(cx: &mut TestAppContext) {
+    // No FakeAgent: we only assert empty-state chrome, never npm / auth.
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.force_not_installed_for_test(cx));
+    });
+    assert!(h.has("agent-install", cx), "Install button");
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.force_login_required_for_test(cx));
+    });
+    assert!(h.has("agent-retry", cx), "Retry after login");
+    assert!(h.has("agent-login-0", cx), "login method button");
 }

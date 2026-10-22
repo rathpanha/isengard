@@ -694,11 +694,15 @@ impl IsengardApp {
                         } else {
                             Icon::new(IconName::PanelLeftOpen)
                         })
-                        .tooltip(if sidebar_visible {
-                            "Hide Sidebar"
-                        } else {
-                            "Show Sidebar"
-                        })
+                        .tooltip_with_action(
+                            if sidebar_visible {
+                                "Hide Sidebar"
+                            } else {
+                                "Show Sidebar"
+                            },
+                            &ToggleSidebar,
+                            None,
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_toggle_sidebar(&ToggleSidebar, window, cx)
                         })),
@@ -922,11 +926,15 @@ impl IsengardApp {
                         } else {
                             Icon::new(IconName::SquareTerminal)
                         })
-                        .tooltip(if term_visible {
-                            "Minimize Terminal"
-                        } else {
-                            "Show Terminal"
-                        })
+                        .tooltip_with_action(
+                            if term_visible {
+                                "Minimize Terminal"
+                            } else {
+                                "Show Terminal"
+                            },
+                            &ToggleTerminal,
+                            None,
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_toggle_terminal(&ToggleTerminal, window, cx)
                         })),
@@ -941,11 +949,15 @@ impl IsengardApp {
                         } else {
                             Icon::new(LucideIcon::Bot)
                         })
-                        .tooltip(if self.agent_visible {
-                            "Hide Agent Panel"
-                        } else {
-                            "Show Agent Panel"
-                        })
+                        .tooltip_with_action(
+                            if self.agent_visible {
+                                "Hide Agent Panel"
+                            } else {
+                                "Show Agent Panel"
+                            },
+                            &ToggleAgentPanel,
+                            None,
+                        )
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_toggle_agent_panel(&ToggleAgentPanel, window, cx)
                         })),

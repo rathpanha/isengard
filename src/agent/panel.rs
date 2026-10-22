@@ -40,7 +40,8 @@ use crate::acp::schema::{
     CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
     PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOptions, SessionModeState, SessionUpdate,
-    StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolKind,
+    StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolCallUpdateFields, ToolKind,
 };
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
@@ -1394,6 +1395,80 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn is_turn_running(&self) -> bool {
         self.turn_running
+    }
+
+    /// Seed a tool row with Allow/Reject pending permission (tests).
+    #[cfg(test)]
+    pub fn inject_pending_permission_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> flume::Receiver<Option<PermissionOptionId>> {
+        let (tx, rx) = flume::bounded(1);
+        self.ask_permission(
+            PermissionAsk {
+                tool_call: ToolCallUpdate::new(
+                    "t-perm",
+                    ToolCallUpdateFields::new().title("Edit notes.txt"),
+                ),
+                options: vec![
+                    PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
+                    PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+                ],
+                reply: tx,
+            },
+            cx,
+        );
+        rx
+    }
+
+    /// Answer the pending permission on tool `t-perm` (tests).
+    #[cfg(test)]
+    pub fn answer_permission_for_test(&mut self, option_id: &str, cx: &mut Context<Self>) {
+        self.answer_permission(
+            &ToolCallId::new("t-perm"),
+            PermissionOptionId::new(option_id.to_owned()),
+            cx,
+        );
+    }
+
+    /// True when tool `t-perm` still has a pending permission (tests).
+    #[cfg(test)]
+    pub fn has_pending_permission_for_test(&self) -> bool {
+        let id = ToolCallId::new("t-perm");
+        self.tool_index(&id).is_some_and(|ix| {
+            matches!(&self.entries[ix], Entry::Tool(t) if t.permission.is_some())
+        })
+    }
+
+    /// Delete a chat from tests (same path as the confirm dialog).
+    #[cfg(test)]
+    pub fn delete_chat_for_test(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_chat(id.to_owned(), window, cx);
+    }
+
+    /// Force the Install empty-state (tests; does not run npm).
+    #[cfg(test)]
+    pub fn force_not_installed_for_test(&mut self, cx: &mut Context<Self>) {
+        self.status = Status::NotInstalled;
+        self.install_error = None;
+        cx.notify();
+    }
+
+    /// Force the Login empty-state (tests; does not open a terminal).
+    #[cfg(test)]
+    pub fn force_login_required_for_test(&mut self, cx: &mut Context<Self>) {
+        self.status = Status::LoginRequired(vec![LoginMethod {
+            name: "Claude.ai".into(),
+            description: Some("Sign in with Claude.ai".into()),
+            args: vec!["--cli".into(), "auth".into(), "login".into()],
+            env: std::collections::HashMap::new(),
+        }]);
+        cx.notify();
     }
 
     fn start_silent(&mut self, prompt: String, kind: SilentTurn, cx: &mut Context<Self>) -> bool {
@@ -4850,7 +4925,7 @@ impl AgentPanel {
                     h_flex().flex_wrap().justify_center().gap_2().children(
                         methods.iter().enumerate().map(|(i, method)| {
                             let method = method.clone();
-                            let button = Button::new(("agent-login", i))
+                            let button = Button::new(SharedString::from(format!("agent-login-{i}")))
                                 .cursor_pointer()
                                 .icon(LucideIcon::LogIn)
                                 .label(method.name.clone())

@@ -3,6 +3,13 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent toggle is `Ctrl+Shift+B` / `⌘⇧B` (dropped Ctrl+Alt);
+  status-bar Sidebar / Terminal / Agent tooltips show the shortcut.
+
+- **2026-10-22** — Agent interactive QA: FakeAgent UI tests for permission
+  answer, chat delete, and Install/Login screens; live Claude smoke checklist
+  in status.
+
 - **2026-10-22** — Chat/Markdown code blocks: Ayu Darker tokens on muted gray
   background; Linux NativeMenu fallback no longer steals editor focus (selection
   highlight stays on right-click → Add Selection to Agent).

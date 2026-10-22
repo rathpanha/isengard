@@ -31,7 +31,7 @@ actions!(
         ShowGit,
         ToggleTerminal,
         NewTerminal,
-        /// Show/hide the right-hand Agent panel (`⌘⌥B` / `Ctrl+Alt+B`).
+        /// Show/hide the right-hand Agent panel (`⌘⇧B` / `Ctrl+Shift+B`).
         ToggleAgentPanel,
         /// New agent chat when the Agent panel has focus (`⌘N` / `Ctrl+N`).
         NewAgentChat,
@@ -115,7 +115,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-shift-f", FindInFiles, None),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
-        KeyBinding::new("secondary-alt-b", ToggleAgentPanel, None),
+        // Agent panel: `Ctrl+Shift+B` / `⌘⇧B` (Ctrl+Alt+B is unreliable on Linux).
+        KeyBinding::new("secondary-shift-b", ToggleAgentPanel, None),
         // Editor / terminal → Agent: selection (editor: or whole file) as a chip.
         KeyBinding::new("secondary-l", AddSelectionToAgent, None),
         // Tree selection only — do not steal Delete/F2 from the editor.
