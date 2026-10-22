@@ -98,12 +98,12 @@ impl Editor {
         self
     }
 
-    /// Replace the built-in context menu shown on right-click.
+    /// Extend (or replace) the built-in context menu shown on right-click.
     ///
-    /// The closure receives an empty menu and returns the one to show, so it
-    /// decides entirely what appears — the default items are not added. It
-    /// shows only while the state's context menu is enabled, which is the
-    /// default.
+    /// The closure receives the default Cut/Copy/Paste/… menu and returns the
+    /// one to show — append items, or ignore the argument and build from
+    /// scratch. It shows only while the state's context menu is enabled,
+    /// which is the default.
     pub fn context_menu(
         mut self,
         f: impl Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu + 'static,

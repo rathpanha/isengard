@@ -489,6 +489,12 @@ impl IsengardApp {
                 .h_full()
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_size(cx.theme().mono_font_size)
+                .context_menu(|menu, _, _| {
+                    menu.separator().menu(
+                        "Add Selection to Agent",
+                        Box::new(AddSelectionToAgent),
+                    )
+                })
                 .into_any_element()
         };
 
@@ -1129,6 +1135,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_terminal_tabs_changed))
             .on_action(cx.listener(Self::on_toggle_agent_panel))
             .on_action(cx.listener(Self::on_new_agent_chat))
+            .on_action(cx.listener(Self::on_add_selection_to_agent))
             .on_action(cx.listener(Self::on_about))
             .on_action(cx.listener(Self::on_open_config_file))
             .on_action(cx.listener(Self::on_quit))

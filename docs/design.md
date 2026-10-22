@@ -125,6 +125,9 @@ Add a row here whenever a new shared component is created.
   **keeps Tree focus** so Delete / F2 still hit the selection. Double-click
   the file or the tab, or edit the buffer → permanent and focus moves to the
   editor. File > Open File / CLI opens permanent (editor focused).
+- **Editor context menu:** right-click in a text editor → Kit defaults
+  (Cut/Copy/Paste/Select All, plus Go to Definition / Code Actions when
+  available) plus **Add Selection to Agent** (same as `⌘L` / Edit menu).
 - **Tab context menu:** right-click a tab → Close, Close Others (disabled when
   only one tab), Close All. Dirty tabs get one Save All / Don't Save dialog
   for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not
@@ -261,9 +264,11 @@ Add a row here whenever a new shared component is created.
   `.danger().outline()`.   Composer: optional wrap-row of attachment chips
   (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
   `@` on chip text) with ghost `CircleX` remove — chips are from the Attach
-  (`Paperclip`) button, paste, or **drag-drop** onto the prompt (file-tree
-  row, editor tab, or OS file explorer — `drop_target` highlight); never
-  from `@` mentions; `@` in
+  (`Paperclip`) button, paste, **drag-drop** onto the prompt (file-tree
+  row, editor tab, or OS file explorer — `drop_target` highlight), or
+  **`⌘L` / `Ctrl+L`** / Edit > Add Selection to Agent / editor right-click
+  **Add Selection to Agent** (selection → `file:N-M` chip, or whole file if
+  the caret has no range); never from `@` mentions; `@` in
   the textarea opens a slim bordered mention menu (`text_xs`, scrollable
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);

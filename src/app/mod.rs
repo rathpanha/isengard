@@ -117,13 +117,12 @@ pub(super) type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Con
 // Action types live in `actions` but must stay at `crate::app::*` for menus/UI.
 pub use actions::init;
 pub use actions::{
-    About, AddFolderToWorkspace, CloseAllTabs, CloseOtherTabs, CloseTab, CloseTabAt,
-    CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
-    IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace,
-    OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit,
-    RenameSelectedTreeItem, ResetFontSize, Save, SaveAll, SaveWorkspaceAs,
-    NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel, TogglePreview,
-    ToggleSidebar, ToggleTerminal,
+    About, AddFolderToWorkspace, AddSelectionToAgent, CloseAllTabs, CloseOtherTabs, CloseTab,
+    CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
+    IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
+    OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, ResetFontSize, Save, SaveAll,
+    SaveWorkspaceAs, NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel,
+    TogglePreview, ToggleSidebar, ToggleTerminal,
 };
 
 #[derive(Clone, Copy)]

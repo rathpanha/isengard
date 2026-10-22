@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Editor right-click → Add Selection to Agent (same as
+  `⌘L` / `Ctrl+L`); Kit `Editor::context_menu` now receives the default
+  menu so apps can append without rebuilding Cut/Copy/Paste.
+
 - **2026-10-22** — File tree drag: dropping on an invalid target (e.g. itself)
   clears the hover and can no longer fall through and move the item to the root.
 
@@ -15,6 +19,10 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-22** — File tree: drag files/folders onto a folder (or blank
   space → root) to move them; open tabs are remapped.
+
+- **2026-10-22** — `⌘L` / `Ctrl+L` (Edit > Add Selection to Agent) attaches
+  the editor selection — or the whole file if nothing is selected — as a
+  prompt chip and shows the Agent panel.
 
 - **2026-10-22** — Agent prompt accepts drag-drop attach from the file tree,
   an editor tab, or the OS file explorer (chips; same path as Paperclip).

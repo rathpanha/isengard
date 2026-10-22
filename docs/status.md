@@ -131,12 +131,14 @@ tabs, highlighted editor, status bar):
   icon + basename, or image thumb; send resolves to ACP blocks; →/Tab
   dives; empty `@` / filters see workspace roots + nested folders via a
   plain FS walk). Chip row is Attach / paste / drag-drop (tree row, editor
-  tab, or OS explorer onto the prompt) only — bottom-aligned; raster paths
-  and pastes show thumbnails; Paperclip opens the OS multi-file picker.
-  Mention tokens and paperclip chips also show as icon/name or thumbs in
-  the user bubble. Composer is shown while history loads / session opens
-  (Send disabled until Ready) to avoid layout jump. Files embed when
-  allowed; folders are resource links;
+  tab, or OS explorer onto the prompt) / `⌘L`·`Ctrl+L` / editor right-click
+  Add Selection to Agent (selection or whole file) only — bottom-aligned;
+  raster paths and pastes show thumbnails; Paperclip opens the OS
+  multi-file picker. Mention tokens and paperclip chips also show as
+  icon/name or thumbs in the user bubble.
+  Composer is shown while history loads / session opens (Send disabled
+  until Ready) to avoid layout jump. Files embed when allowed; folders are
+  resource links;
   images go as ACP `image` when the agent allows (ICO/BMP/TIFF re-encoded to
   PNG for Claude). Agent file reads use the open buffer
   (unsaved text) before disk; writes go to disk and reload the open tab as

@@ -35,6 +35,9 @@ actions!(
         ToggleAgentPanel,
         /// New agent chat when the Agent panel has focus (`⌘N` / `Ctrl+N`).
         NewAgentChat,
+        /// Add the editor selection (or current file) to the Agent prompt
+        /// (`⌘L` / `Ctrl+L`).
+        AddSelectionToAgent,
         /// Fired by the terminal panel after tabs change (close / need persist).
         TerminalTabsChanged,
         /// Rename the tree selection (F2 while Tree focused).
@@ -113,6 +116,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         KeyBinding::new("secondary-alt-b", ToggleAgentPanel, None),
+        // Editor → Agent: selection (or whole file) as an attach chip.
+        KeyBinding::new("secondary-l", AddSelectionToAgent, Some("!Terminal")),
         // Tree selection only — do not steal Delete/F2 from the editor.
         KeyBinding::new("f2", RenameSelectedTreeItem, Some("Tree")),
         KeyBinding::new("delete", DeleteSelectedTreeItem, Some("Tree")),
@@ -204,6 +209,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &NewAgentChat, cx| {
         with_active_app(cx, |app, window, cx| {
             app.on_new_agent_chat(&NewAgentChat, window, cx);
+        });
+    });
+    cx.on_action(|_: &AddSelectionToAgent, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_add_selection_to_agent(&AddSelectionToAgent, window, cx);
         });
     });
     cx.on_action(|_: &TogglePreview, cx| {

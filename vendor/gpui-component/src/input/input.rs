@@ -364,10 +364,12 @@ impl Input {
         self
     }
 
-    /// Sets a custom context menu builder for the input, shown as a native OS menu.
+    /// Extend (or replace) the built-in right-click context menu.
     ///
-    /// If set, this overrides the built-in right-click context menu. It shows
-    /// only while the state's context menu is enabled, which is the default.
+    /// The closure receives the default Cut/Copy/Paste/… menu and returns the
+    /// one to show — append items, or ignore the argument and build from
+    /// scratch. It shows only while the state's context menu is enabled,
+    /// which is the default.
     pub fn context_menu(
         mut self,
         f: impl Fn(NativeMenu, &mut Window, &mut App) -> NativeMenu + 'static,
@@ -611,29 +613,27 @@ impl RenderOnce for Input {
         let custom = self.context_menu_builder.clone();
         state.on_context_menu(
             Rc::new(move |_, capabilities, position, window, cx| {
-                let menu = if let Some(custom) = custom.as_ref() {
-                    custom(NativeMenu::new(), window, cx)
-                } else {
-                    let enabled = !capabilities.is_disabled();
-                    // A read-only input can still navigate the code, it only
-                    // rejects the items that would change the text.
-                    let editable = enabled && !capabilities.is_readonly();
-                    let mut menu = NativeMenu::new();
-                    if capabilities.is_code_editor() {
-                        menu = menu
-                            .menu_with_disabled(
-                                t!("Input.Go to Definition"),
-                                !(enabled && capabilities.has_definition()),
-                                Box::new(gpui_base::input::GoToDefinition),
-                            )
-                            .menu_with_disabled(
-                                t!("Input.Show Code Actions"),
-                                !(editable && capabilities.has_code_actions()),
-                                Box::new(gpui_base::input::ToggleCodeActions),
-                            )
-                            .separator();
-                    }
-                    menu.menu_with_disabled(
+                let enabled = !capabilities.is_disabled();
+                // A read-only input can still navigate the code, it only
+                // rejects the items that would change the text.
+                let editable = enabled && !capabilities.is_readonly();
+                let mut menu = NativeMenu::new();
+                if capabilities.is_code_editor() {
+                    menu = menu
+                        .menu_with_disabled(
+                            t!("Input.Go to Definition"),
+                            !(enabled && capabilities.has_definition()),
+                            Box::new(gpui_base::input::GoToDefinition),
+                        )
+                        .menu_with_disabled(
+                            t!("Input.Show Code Actions"),
+                            !(editable && capabilities.has_code_actions()),
+                            Box::new(gpui_base::input::ToggleCodeActions),
+                        )
+                        .separator();
+                }
+                menu = menu
+                    .menu_with_disabled(
                         t!("Input.Cut"),
                         !(editable && capabilities.is_copyable()),
                         Box::new(gpui_base::input::Cut),
@@ -655,7 +655,10 @@ impl RenderOnce for Input {
                     .menu(
                         t!("Input.Select All"),
                         Box::new(gpui_base::input::SelectAll),
-                    )
+                    );
+                let menu = match custom.as_ref() {
+                    Some(custom) => custom(menu, window, cx),
+                    None => menu,
                 };
                 menu.show(position, window, cx);
             }),

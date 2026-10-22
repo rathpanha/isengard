@@ -2,7 +2,7 @@
 use super::*;
 use super::tab::TabBody;
 use crate::acp::slice_lines;
-use crate::agent::Attachment;
+use crate::agent::{Attachment, LineRange, line_at_offset};
 use crate::terminal::pty::TerminalCommand;
 
 impl IsengardApp {
@@ -20,6 +20,62 @@ impl IsengardApp {
             return;
         };
         agent.update(cx, |agent, cx| agent.new_chat(window, cx));
+    }
+
+    /// `⌘L` / `Ctrl+L`: attach the editor selection (or whole file) to the Agent.
+    pub(super) fn on_add_selection_to_agent(
+        &mut self,
+        _: &AddSelectionToAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.active() else {
+            return notify_error("Open a file before adding to the agent", window, cx);
+        };
+        let Some(state) = tab.editor_state().cloned() else {
+            return notify_error("Only text editors can be added to the agent", window, cx);
+        };
+        let path = tab.path.clone();
+        if document::is_untitled(&path) {
+            return notify_error("Save the file before adding it to the agent", window, cx);
+        }
+
+        let (selected, range, full) = state.read_with(cx, |editor, _| {
+            (
+                editor.selected_text().to_string(),
+                editor.selected_range(),
+                editor.text().to_string(),
+            )
+        });
+        let attachment = if range.is_empty() || selected.is_empty() {
+            Attachment::File {
+                path,
+                text: Some(full),
+                selection: None,
+            }
+        } else {
+            let start = line_at_offset(&full, range.start);
+            let end = line_at_offset(&full, range.end.saturating_sub(1).max(range.start));
+            Attachment::File {
+                path,
+                text: Some(selected),
+                selection: Some(LineRange { start, end }),
+            }
+        };
+
+        let Some(agent) = self.agent.clone() else {
+            return notify_error("Open a folder before using the agent", window, cx);
+        };
+        if !self.agent_visible {
+            self.agent_visible = true;
+            self.persist_session(cx);
+        }
+        agent.update(cx, |agent, cx| {
+            agent.ensure_started(cx);
+            agent.attach_context(attachment, cx);
+            agent.input().update(cx, |input, cx| input.focus(window, cx));
+        });
+        cx.notify();
     }
 
     pub(super) fn on_toggle_agent_panel(

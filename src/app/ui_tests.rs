@@ -846,6 +846,41 @@ fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn agent_ctrl_l_attaches_editor_selection(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let path = h.file("note.rs", "line one\nline two\nline three\n");
+    h.open_folder(h.dir.path(), cx);
+    h.open(&path, cx);
+    h.with_app(cx, |app, _window, cx| {
+        let state = app
+            .tabs
+            .active()
+            .and_then(|t| t.editor_state())
+            .expect("editor")
+            .clone();
+        // Select "line two\n" (bytes after first newline through second).
+        let start = "line one\n".len();
+        let end = "line one\nline two\n".len();
+        state.update(cx, |editor, cx| {
+            editor.set_selected_range(start..end, cx);
+        });
+    });
+    h.press("secondary-l", cx);
+    let labels = cx.read(|cx| {
+        let app = h.app.read(cx);
+        assert!(app.agent_visible, "agent panel opens");
+        app.agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .attachment_labels()
+    });
+    assert_eq!(labels, ["note.rs:2"]);
+}
+
+#[gpui_kit::test]
 fn agent_attach_image_path_is_image_chip_not_file(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

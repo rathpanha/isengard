@@ -315,7 +315,10 @@ src/
   `image_from_path` → ACP `image` + thumbnail; ICO/BMP/TIFF re-encoded to
   PNG for the wire). Paperclip →
   `prompt_for_paths` (OS multi-file; `directories: false` — folders via `@`)
-  → same attach path (each image is a separate chip). Composer mounts during
+  → same attach path (each image is a separate chip). Drag-drop onto the
+  prompt (`TreeEntryDrag` / `EditorTabDrag` / external paths) and
+  `⌘L`/`Ctrl+L` (`AddSelectionToAgent`: selection → `File` + `LineRange`,
+  or whole buffer if empty) use the same chip path. Composer mounts during
   `Starting`/`Opening` when a transcript exists (Send gated on `Ready`).
   Paste image/paths also become chips. `session/prompt`
   sends `Vec<ContentBlock>` (`resource` when `embeddedContext`, else
@@ -345,7 +348,9 @@ src/
   — no custom red hover. Vendored `gpui-component` Dialog patch: no enter
   motion (`ANIMATION_DURATION = 0`), no panel drop shadow, and the host box is
   sized/positioned to the CSD content frame so the dim overlay cannot fill the
-  transparent window-shadow padding on Linux.
+  transparent window-shadow padding on Linux. Same vendor: `Input` /
+  `Editor::context_menu` receives the default Cut/Copy/… menu so callers can
+  append (editor adds Add Selection to Agent) without rebuilding it.
 - **Theme**: `theme::apply` always uses `ThemeMode::Dark` (it reloads the
   theme config) and then overrides fonts, sizes, `radius`/`radius_lg = 0`, and
   `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so

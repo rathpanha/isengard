@@ -2,10 +2,10 @@ use gpui_kit::component::{GlobalState, input, menu::AppMenuBar};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::app::{
-    About, AddFolderToWorkspace, CloseTab, CloseWorkspace, DecreaseFontSize, FindInFiles,
-    IncreaseFontSize, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile, OpenFolder,
-    OpenWorkspace, Quit, ResetFontSize, Save, SaveAll, SaveWorkspaceAs, ShowFileTree, ShowGit,
-    ToggleAgentPanel, TogglePreview, ToggleSidebar, ToggleTerminal,
+    About, AddFolderToWorkspace, AddSelectionToAgent, CloseTab, CloseWorkspace, DecreaseFontSize,
+    FindInFiles, IncreaseFontSize, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
+    OpenFolder, OpenWorkspace, Quit, ResetFontSize, Save, SaveAll, SaveWorkspaceAs, ShowFileTree,
+    ShowGit, ToggleAgentPanel, TogglePreview, ToggleSidebar, ToggleTerminal,
 };
 
 /// What the window currently has open — drives which menu items exist.
@@ -144,6 +144,8 @@ fn edit_items(ctx: MenuContext) -> Vec<MenuItem> {
             MenuItem::separator(),
             MenuItem::action("Find", input::Search),
             MenuItem::action("Select All", input::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Add Selection to Agent", AddSelectionToAgent),
         ]);
     }
 

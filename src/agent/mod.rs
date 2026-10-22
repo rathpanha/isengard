@@ -7,4 +7,4 @@ mod panel;
 mod prompt;
 
 pub use panel::{AgentPanel, AgentPanelEvent};
-pub use prompt::{Attachment, image_from_path};
+pub use prompt::{Attachment, LineRange, image_from_path, line_at_offset};

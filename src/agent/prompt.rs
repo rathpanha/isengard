@@ -79,7 +79,6 @@ pub fn file_uri(path: &Path) -> String {
 }
 
 /// 1-based line of a byte offset in `text` (clamped).
-#[cfg(test)]
 pub fn line_at_offset(text: &str, offset: usize) -> u32 {
     let offset = offset.min(text.len());
     let line = text[..offset].bytes().filter(|&b| b == b'\n').count() + 1;
