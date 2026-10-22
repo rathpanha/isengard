@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Silent agent jobs (Improve, chat title, Git Suggest) run
+  on a throwaway ACP session so the open chat’s context is not polluted.
+
 - **2026-10-22** — Agent Improve icon is `PencilSparkles` (was `Sparkles`,
   same as Claude Auto mode); opted into `ExtraIcons` so it actually loads.
 

@@ -84,7 +84,8 @@ tabs, highlighted editor, status bar):
   (debounced; skipped for buffers >512 KiB).
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
-  + per-file); Suggest (AI via Ready ACP agent, else path heuristic) /
+  + per-file); Suggest (AI via Ready ACP agent on a throwaway session so
+  the open chat is not polluted, else path heuristic) /
   Commit from selection; Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
@@ -158,12 +159,13 @@ tabs, highlighted editor, status bar):
   chat index (`sessions.<key>.agent_chats` / `agent_active`; only chats
   started in Isengard — not `claude` CLI chats). Header chat list
   (`MessagesSquare`): title (first-prompt placeholder, then silent AI title
-  after the first turn; Claude sends no `session_info_update`) + relative
-  time, click to open, pencil rename (manual or AI Generate for any chat —
-  live, cached, or load-then-generate), delete with confirm. Header: session
-  title + context used/size (`— / {window}` on open /
-  switch until ACP `usage_update`, then live fill) + ghost `Plus` New Chat
-  (`⌘N` / `Ctrl+N` while the Agent composer is focused; elsewhere still New File).
+  on a throwaway session after the first turn; Claude sends no
+  `session_info_update`) + relative time, click to open, pencil rename
+  (manual or AI Generate for any chat — live, cached, or load-then-generate),
+  delete with confirm. Header: session title + context used/size
+  (`— / {window}` on open / switch until ACP `usage_update`, then live fill)
+  + ghost `Plus` New Chat (`⌘N` / `Ctrl+N` while the Agent composer is
+  focused; elsewhere still New File).
   Under the header, Claude plan usage accordion (chevron + 5h/Week; expand
   overlays the transcript for plan name, resets, optional Opus/Sonnet,
   product breakdown) from Anthropic's undocumented OAuth usage endpoint
@@ -181,9 +183,10 @@ tabs, highlighted editor, status bar):
   accept-edits — Auto omitted for Claude models older than 4.6; Model `Cpu` /
   Version/Context; Fast Switch; Effort/agent/…)
   sits in a fixed-height band above Attach / Improve (`PencilSparkles`
-  silent rewrite of plain text into the draft — `@` chips + paperclip
-  chips kept; review then Send) / Queue+Stop (horizontal scroll; disabled
-  until Ready). Picks are remembered per folder/workspace
+  silent rewrite on a throwaway session — open chat context untouched;
+  `@` chips + paperclip chips kept; review then Send) / Queue+Stop
+  (horizontal scroll; disabled until Ready). Picks are remembered per
+  folder/workspace
   (`sessions.<key>.agent_prefs`, seeded from global last-used `agent_prefs`)
   and re-applied to every chat opened — new, loaded, or after a restart.
   Follow-ups while a turn runs go into an outbound FIFO queue (strip

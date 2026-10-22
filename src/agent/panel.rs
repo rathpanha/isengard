@@ -45,7 +45,7 @@ use crate::acp::schema::{
 use crate::acp::schema::ToolCallUpdateFields;
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
-    FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
+    FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen, SilentConfigValue,
 };
 use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
 use crate::agent::prompt::{
@@ -1510,6 +1510,34 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Current Mode + config picks for a throwaway silent session.
+    fn silent_session_prefs(&self) -> (Option<String>, Vec<(String, SilentConfigValue)>) {
+        let mode = self
+            .modes
+            .as_ref()
+            .map(|m| m.current_mode_id.0.to_string())
+            .or_else(|| self.prefs.mode.clone());
+        let mut configs = Vec::new();
+        if let Some(options) = &self.config_options {
+            for opt in options {
+                let id = opt.id.to_string();
+                match &opt.kind {
+                    SessionConfigKind::Boolean(b) => {
+                        configs.push((id, SilentConfigValue::Bool(b.current_value)));
+                    }
+                    SessionConfigKind::Select(select) => {
+                        configs.push((
+                            id,
+                            SilentConfigValue::Select(select.current_value.to_string()),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (mode, configs)
+    }
+
     fn start_silent(&mut self, prompt: String, kind: SilentTurn, cx: &mut Context<Self>) -> bool {
         if !self.can_prompt() {
             return false;
@@ -1517,7 +1545,12 @@ impl AgentPanel {
         let Some(connection) = &self.connection else {
             return false;
         };
-        connection.prompt(vec![ContentBlock::Text(TextContent::new(prompt))]);
+        let (mode, configs) = self.silent_session_prefs();
+        connection.silent_prompt(
+            vec![ContentBlock::Text(TextContent::new(prompt))],
+            mode,
+            configs,
+        );
         self.turn_running = true;
         // Silent turns never show a file card.
         self.turn_file_changes.clear();
@@ -3020,6 +3053,12 @@ impl AgentPanel {
                     }
                 }
                 self.turn_finished(suggest_ok, cx);
+            }
+            AgentEvent::SilentTurnEnded { ok, text } => {
+                if let Some(pending) = &mut self.silent {
+                    *pending.text_mut() = text;
+                }
+                self.turn_finished(ok, cx);
             }
             AgentEvent::TurnFailed(message) => {
                 if self.silent.is_none() {

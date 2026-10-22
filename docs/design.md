@@ -242,10 +242,11 @@ Add a row here whenever a new shared component is created.
   title (`text_sm`, truncated; first-prompt placeholder until a silent AI
   title runs after the first turn) over relative time (`text_xs` muted),
   active row `.selected`, ghost `Pencil` rename (dialog + `Input`; outline
-  **Generate** runs a silent ACP turn for a title for **any** chat when
-  Ready (uses the open transcript, a per-session cache from chats opened
-  earlier, or loads that chat then generates) — Cancel outline · Generate
-  outline · Rename primary) + ghost
+  **Generate** runs a silent ACP turn on a **throwaway session** (open chat
+  context untouched) for a title for **any** chat when Ready (uses the open
+  transcript, a per-session cache from chats opened earlier, or loads that
+  chat then generates) — Cancel outline · Generate outline · Rename
+  primary) + ghost
   `Trash` (confirm: Cancel outline · Delete danger); rows and New Chat
   disabled while a turn runs. Empty list: muted "No chats in this
   workspace yet." Loading a saved chat shows Spinner + "Loading chat…"
@@ -316,10 +317,10 @@ Add a row here whenever a new shared component is created.
   row: ghost `.small()` Attach (`Paperclip` — OS multi-file picker;
   folders via `@`) + muted hint (`Enter to send`, or `Enter to queue` /
   `N queued · Enter to queue` while busy) + ghost Improve
-  (`PencilSparkles` — not Mode Auto's `Sparkles`) — silent ACP rewrite of
-  plain composer text into the draft; never auto-sends; strips `@` chips
-  only for the rewrite request, then puts them back in front of the
-  improved prose; paperclip chips untouched; `.loading` while rewriting)
+  (`PencilSparkles` — not Mode Auto's `Sparkles`) — silent ACP rewrite on a
+  throwaway session (open chat context untouched); never auto-sends; strips
+  `@` chips only for the rewrite request, then puts them back in front of
+  the improved prose; paperclip chips untouched; `.loading` while rewriting)
   left of primary Send (`ArrowUp`,
   label **Queue** while a user turn runs — always enqueues when busy) and,
   while busy, a sibling `.danger()` Stop (solid square block, not Lucide
@@ -384,11 +385,12 @@ Add a row here whenever a new shared component is created.
   or nothing selected), collapsible changes list with select-all +
   per-file checkboxes (default none selected; Commit/`Suggest` use
   selection only; `git add -- <paths>` then commit). Suggest: when the
-  workspace Agent panel has a Ready ACP session, one-shot prompt (any
-  connected agent — not Claude-only) fills the box from selected-path
-  diff + recent subjects; otherwise the path heuristic draft. Suggest
-  spins while the turn runs; never auto-commits; tools/cancel fall back
-  to the heuristic. Change rows:
+  workspace Agent panel has a Ready ACP session, one-shot prompt on a
+  throwaway session (open chat context untouched; any connected agent —
+  not Claude-only) fills the box from selected-path diff + recent
+  subjects; otherwise the path heuristic draft. Suggest spins while the
+  turn runs; never auto-commits; tools/cancel fall back to the heuristic.
+  Change rows:
   checkbox + Material `tree_icon` + path, status letter on the right,
   ghost Open File + Undo discard (confirms). The change whose
   diff/conflict tab is active is highlighted (`ListItem::selected` +

@@ -13,7 +13,7 @@ pub mod testing;
 pub use agent_client_protocol::schema::v1 as schema;
 pub use client::{
     AgentConnection, AgentEvent, AgentInfo, FileRead, FileWrite, LoginMethod, PermissionAsk,
-    SessionOpen,
+    SessionOpen, SilentConfigValue,
 };
 pub use files::slice_lines;
 pub use install::install_claude;

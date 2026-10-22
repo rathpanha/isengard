@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
@@ -29,10 +30,32 @@ use agent_client_protocol::{
 
 use crate::acp::registry::AgentLaunch;
 
+/// Select or boolean config to apply on a throwaway silent session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SilentConfigValue {
+    Select(String),
+    Bool(bool),
+}
+
+/// In-flight throwaway silent job (Improve / title / Suggest).
+struct SilentJob {
+    session_id: SessionId,
+    text: String,
+    aborted: bool,
+}
+
+type SilentSlot = Arc<Mutex<Option<SilentJob>>>;
+
 /// UI → agent.
 enum AgentCommand {
     Open(SessionOpen),
     Prompt(Vec<ContentBlock>),
+    /// One-shot on a throwaway session; does not touch the open chat.
+    SilentPrompt {
+        blocks: Vec<ContentBlock>,
+        mode: Option<String>,
+        configs: Vec<(String, SilentConfigValue)>,
+    },
     Cancel,
     Delete(String),
     SetMode(String),
@@ -111,6 +134,8 @@ pub enum AgentEvent {
     ConfigOptions(Vec<SessionConfigOption>),
     TurnEnded(StopReason),
     TurnFailed(String),
+    /// Throwaway silent job finished (`ok` = EndTurn and not aborted).
+    SilentTurnEnded { ok: bool, text: String },
     /// Not signed in. The connection is finished; restart it after login.
     AuthRequired(Vec<LoginMethod>),
     Permission(PermissionAsk),
@@ -169,6 +194,23 @@ impl AgentConnection {
 
     pub fn prompt(&self, blocks: Vec<ContentBlock>) {
         let _ = self.commands.send(AgentCommand::Prompt(blocks));
+    }
+
+    /// Prompt on a fresh throwaway session (Improve / title / Suggest).
+    ///
+    /// The open chat's `session_id` is not used; the scratch session is
+    /// deleted (or closed) when the turn ends.
+    pub fn silent_prompt(
+        &self,
+        blocks: Vec<ContentBlock>,
+        mode: Option<String>,
+        configs: Vec<(String, SilentConfigValue)>,
+    ) {
+        let _ = self.commands.send(AgentCommand::SilentPrompt {
+            blocks,
+            mode,
+            configs,
+        });
     }
 
     pub fn cancel(&self) {
@@ -230,15 +272,42 @@ async fn run(
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
 ) -> Result<(), Error> {
+    let silent: SilentSlot = Arc::new(Mutex::new(None));
     let on_update = events.clone();
+    let on_update_silent = silent.clone();
     let on_permission = events.clone();
+    let on_permission_silent = silent.clone();
     let on_read = events.clone();
     let on_write = events.clone();
     Client
         .builder()
         .name("isengard")
         .on_receive_notification(
-            async move |n: SessionNotification, _cx| {
+            async move |n: SessionNotification, cx: ConnectionTo<Agent>| {
+                // Throwaway silent session: collect text, abort on tools, never
+                // forward into the open-chat UI stream.
+                {
+                    let mut slot = on_update_silent.lock().unwrap();
+                    if let Some(job) = slot.as_mut()
+                        && job.session_id == n.session_id
+                    {
+                        match &n.update {
+                            SessionUpdate::AgentMessageChunk(chunk) => {
+                                if let ContentBlock::Text(t) = &chunk.content {
+                                    job.text.push_str(&t.text);
+                                }
+                            }
+                            SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_) => {
+                                job.aborted = true;
+                                let _ = cx.send_notification(CancelNotification::new(
+                                    job.session_id.clone(),
+                                ));
+                            }
+                            _ => {}
+                        }
+                        return Ok(());
+                    }
+                }
                 let _ = on_update.send(AgentEvent::Update {
                     session: n.session_id.to_string(),
                     update: n.update,
@@ -249,6 +318,20 @@ async fn run(
         )
         .on_receive_request(
             async move |req: RequestPermissionRequest, responder, cx: ConnectionTo<Agent>| {
+                // Silent jobs must not open tools — cancel immediately.
+                {
+                    let mut slot = on_permission_silent.lock().unwrap();
+                    if let Some(job) = slot.as_mut()
+                        && job.session_id == req.session_id
+                    {
+                        job.aborted = true;
+                        let _ = cx
+                            .send_notification(CancelNotification::new(job.session_id.clone()));
+                        return responder.respond(RequestPermissionResponse::new(
+                            RequestPermissionOutcome::Cancelled,
+                        ));
+                    }
+                }
                 let (reply, answer) = flume::bounded(1);
                 let _ = on_permission.send(AgentEvent::Permission(PermissionAsk {
                     tool_call: req.tool_call,
@@ -309,7 +392,7 @@ async fn run(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async move |cx: ConnectionTo<Agent>| {
-            session(cx, roots, commands, events).await
+            session(cx, roots, commands, events, silent).await
         })
         .await
 }
@@ -319,6 +402,7 @@ async fn session(
     roots: Vec<PathBuf>,
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
+    silent: SilentSlot,
 ) -> Result<(), Error> {
     let mut roots = roots.into_iter();
     let cwd = roots.next().unwrap_or_else(std::env::temp_dir);
@@ -449,8 +533,115 @@ async fn session(
                     Ok(())
                 })?;
             }
+            AgentCommand::SilentPrompt {
+                blocks,
+                mode,
+                configs,
+            } => {
+                // Home `current` stays put — scratch session never becomes the UI chat.
+                let opened = cx
+                    .send_request(
+                        NewSessionRequest::new(cwd.clone())
+                            .additional_directories(extra_roots.clone()),
+                    )
+                    .block_task()
+                    .await;
+                let ephemeral = match opened {
+                    Ok(r) => r.session_id,
+                    Err(err) if err.code == ErrorCode::AuthRequired => {
+                        let _ = events.send(AgentEvent::AuthRequired(logins.clone()));
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        let _ = events.send(AgentEvent::SilentTurnEnded {
+                            ok: false,
+                            text: String::new(),
+                        });
+                        log::warn!(
+                            "agent: silent session/new failed: {}",
+                            describe_error(err)
+                        );
+                        continue;
+                    }
+                };
+                if let Some(mode_id) = mode {
+                    let _ = cx
+                        .send_request(SetSessionModeRequest::new(
+                            ephemeral.clone(),
+                            SessionModeId::new(mode_id),
+                        ))
+                        .block_task()
+                        .await;
+                }
+                for (config_id, value) in configs {
+                    let opt_value = match value {
+                        SilentConfigValue::Select(v) => SessionConfigOptionValue::value_id(v),
+                        SilentConfigValue::Bool(on) => SessionConfigOptionValue::boolean(on),
+                    };
+                    // Do not emit ConfigOptions — that snapshot is for the home chat.
+                    let _ = cx
+                        .send_request(SetSessionConfigOptionRequest::new(
+                            ephemeral.clone(),
+                            SessionConfigId::new(config_id),
+                            opt_value,
+                        ))
+                        .block_task()
+                        .await;
+                }
+                *silent.lock().unwrap() = Some(SilentJob {
+                    session_id: ephemeral.clone(),
+                    text: String::new(),
+                    aborted: false,
+                });
+                let turn = cx.send_request(PromptRequest::new(ephemeral.clone(), blocks));
+                let events = events.clone();
+                let logins = logins.clone();
+                let silent = silent.clone();
+                let can_delete = info.can_delete;
+                let can_close = can_close;
+                let cx2 = cx.clone();
+                cx.spawn(async move {
+                    let result = turn.block_task().await;
+                    let job = silent.lock().unwrap().take();
+                    let text = job.as_ref().map(|j| j.text.clone()).unwrap_or_default();
+                    let aborted = job.as_ref().is_some_and(|j| j.aborted);
+                    let event = match result {
+                        Err(err) if err.code == ErrorCode::AuthRequired => {
+                            AgentEvent::AuthRequired(logins)
+                        }
+                        Ok(reply) => AgentEvent::SilentTurnEnded {
+                            // Callers scrub empty text themselves (Improve / title).
+                            ok: !aborted && matches!(reply.stop_reason, StopReason::EndTurn),
+                            text,
+                        },
+                        Err(err) => {
+                            log::warn!("agent: silent prompt failed: {}", describe_error(err));
+                            AgentEvent::SilentTurnEnded { ok: false, text }
+                        }
+                    };
+                    // Drop the scratch session so it never pollutes chat lists.
+                    if can_delete {
+                        let _ = cx2
+                            .send_request(DeleteSessionRequest::new(ephemeral.to_string()))
+                            .block_task()
+                            .await;
+                    } else if can_close {
+                        let _ = cx2
+                            .send_request(CloseSessionRequest::new(ephemeral))
+                            .block_task()
+                            .await;
+                    }
+                    let _ = events.send(event);
+                    Ok(())
+                })?;
+            }
             AgentCommand::Cancel => {
-                if let Some(session_id) = current.clone() {
+                let silent_id = silent
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|j| j.session_id.clone());
+                if let Some(session_id) = silent_id.or_else(|| current.clone()) {
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
             }
@@ -705,5 +896,61 @@ mod tests {
             AgentEvent::Closed(Some(_)) => {}
             _ => panic!("expected Closed(Some(error))"),
         }
+    }
+
+    #[test]
+    fn silent_prompt_uses_throwaway_session_and_leaves_home_chat_clean() {
+        let agent = FakeAgent::new();
+        let conn = connected(&agent);
+        conn.open(SessionOpen::New);
+        let home = opened(&conn);
+        conn.prompt(vec![ContentBlock::Text(
+            agent_client_protocol::schema::v1::TextContent::new("keep me"),
+        )]);
+        assert_eq!(chunk_text(&conn), (false, "echo: keep me".into()));
+        let _ = turn_ended(&conn);
+
+        conn.silent_prompt(
+            vec![ContentBlock::Text(
+                agent_client_protocol::schema::v1::TextContent::new("silent secret"),
+            )],
+            None,
+            vec![],
+        );
+        match next(&conn) {
+            AgentEvent::SilentTurnEnded { ok, text } => {
+                assert!(ok);
+                assert_eq!(text, "echo: silent secret");
+            }
+            _ => panic!("expected SilentTurnEnded"),
+        }
+        let home_chat = agent.chat(&home).expect("home chat");
+        assert_eq!(
+            home_chat,
+            vec![
+                (true, "keep me".into()),
+                (false, "echo: keep me".into()),
+            ]
+        );
+        // Scratch session was deleted (FakeAgent removes it).
+        assert!(
+            agent.calls().iter().any(|c| c.starts_with("delete ")),
+            "silent scratch should be deleted: {:?}",
+            agent.calls()
+        );
+        assert_eq!(
+            agent.calls().iter().filter(|c| c.starts_with("new ")).count(),
+            2,
+            "home + throwaway: {:?}",
+            agent.calls()
+        );
+        // Follow-up on home still works and stays isolated.
+        conn.prompt(vec![ContentBlock::Text(
+            agent_client_protocol::schema::v1::TextContent::new("again"),
+        )]);
+        assert_eq!(chunk_text(&conn), (false, "echo: again".into()));
+        let _ = turn_ended(&conn);
+        let home_chat = agent.chat(&home).expect("home chat");
+        assert!(!home_chat.iter().any(|(_, t)| t.contains("silent secret")));
     }
 }
