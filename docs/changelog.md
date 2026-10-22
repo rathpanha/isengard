@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Claude plan usage bars: normal band uses
+  `muted_foreground` instead of green; yellow (≥70%) and red (≥90%) unchanged.
+
 - **2026-10-22** — Gate `Command` import in `agent/limits.rs` to macOS so
   Linux `cargo run` is warning-free.
 

@@ -145,8 +145,8 @@ tabs, highlighted editor, status bar):
   cached, or load-then-generate), delete with confirm.   Header: session title + context used/size (`— / {window}` on open /
   switch until ACP `usage_update`, then live fill) + ghost `Plus` New Chat
   (`⌘N` / `Ctrl+N` while the Agent composer is focused; elsewhere still New File).
-  Under the header, Claude plan usage bars (5h session + Week; green <70%,
-  yellow 70–90%, red ≥90%; tooltip = reset time) come from Anthropic's
+  Under the header, Claude plan usage bars (5h session + Week; muted gray
+  <70%, yellow 70–90%, red ≥90%; tooltip = reset time) come from Anthropic's
   undocumented OAuth usage endpoint using the Claude Code token (macOS
   Keychain, else `~/.claude/.credentials.json`); best effort — hidden when
   the fetch fails or a custom `agent.command` is set.

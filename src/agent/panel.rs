@@ -3745,7 +3745,7 @@ impl AgentPanel {
             } else if pct >= 70.0 {
                 theme.warning
             } else {
-                theme.success
+                theme.muted_foreground
             };
             let tip: SharedString = match &w.resets_at {
                 Some(at) => format!("{label} limit {pct:.0}% used · resets {at}").into(),
