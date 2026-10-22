@@ -30,7 +30,6 @@ use gpui_kit::component::{
     scroll::ScrollableElement as _,
     spinner::Spinner,
     switch::Switch,
-    tooltip::Tooltip,
     text::{TextView, TextViewState},
     v_flex,
 };
@@ -476,6 +475,8 @@ pub struct AgentPanel {
     usage_by_chat: HashMap<String, ContextUsage>,
     /// Claude plan limits (5-hour session + week); `None` until fetched.
     plan_limits: Option<limits::PlanLimits>,
+    /// Usage strip expanded in place (details capped so transcript keeps height).
+    plan_usage_open: bool,
     /// Agent is mid-compaction (`CompactionUpdate` InProgress).
     compacting: bool,
     /// Files written/deleted during the current turn (flushed to a summary card).
@@ -652,26 +653,48 @@ impl AgentPanel {
         // and in tests (no network).
         if !cfg!(test) && settings.command.is_none() {
             cx.spawn(async move |this, cx| {
+                // Undocumented OAuth usage endpoint 429s if polled hard (or
+                // after a burst of other clients). On failure with no bars
+                // yet, back off 5→10→20→40→60s instead of waiting a full
+                // 120s so a restart mid-rate-limit does not hide the strip.
+                let mut retry_secs = 5u64;
                 loop {
                     let fetched = cx.background_spawn(async { limits::fetch() }).await;
-                    let alive = this
-                        .update(cx, |this, cx| {
-                            // Err → keep last. Empty/partial Ok → merge (API
-                            // often returns null windows without failing).
-                            if let Ok(l) = fetched {
+                    let (alive, have_bars) = match this.update(cx, |this, cx| {
+                        // Err → keep last. Empty/partial Ok → merge (API
+                        // often returns null windows without failing).
+                        match fetched {
+                            Ok(l) => {
                                 let next = limits::merge(this.plan_limits.clone(), l);
                                 if this.plan_limits != next {
                                     this.plan_limits = next;
                                     cx.notify();
                                 }
                             }
-                        })
-                        .is_ok();
+                            Err(err) => {
+                                log::debug!("agent plan limits: {err}");
+                            }
+                        }
+                        this.plan_limits
+                            .as_ref()
+                            .is_some_and(|l| l.session.is_some() || l.week.is_some())
+                    }) {
+                        Ok(have) => (true, have),
+                        Err(_) => (false, false),
+                    };
                     if !alive {
                         break;
                     }
+                    let wait = if have_bars {
+                        retry_secs = 5;
+                        120
+                    } else {
+                        let w = retry_secs;
+                        retry_secs = (retry_secs.saturating_mul(2)).min(60);
+                        w
+                    };
                     cx.background_executor()
-                        .timer(std::time::Duration::from_secs(120))
+                        .timer(std::time::Duration::from_secs(wait))
                         .await;
                 }
             })
@@ -787,6 +810,7 @@ impl AgentPanel {
             usage: None,
             usage_by_chat: HashMap::new(),
             plan_limits: None,
+            plan_usage_open: false,
             compacting: false,
             turn_file_changes: HashMap::new(),
             turn_git_baseline: None,
@@ -4303,37 +4327,35 @@ impl AgentPanel {
             .into_any_element()
     }
 
-    /// Slim strip under the header: 5-hour session + weekly plan usage.
+    /// Accordion under the header (N Files pattern — not Kit Accordion).
+    /// Collapsed = slim 5h/Week strip. Expanded = full details at content
+    /// height (`flex_shrink_0`, no scroll) so the transcript keeps `flex_1`.
     fn render_plan_limits(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let l = self.plan_limits.as_ref()?;
         if l.session.is_none() && l.week.is_none() {
             return None;
         }
         let theme = cx.theme();
-        let bar = |id: &'static str, label: &'static str, w: &limits::Window| {
-            let pct = w.percent.clamp(0.0, 100.0);
-            let color = if pct >= 90.0 {
+        let open = self.plan_usage_open;
+        let panel = cx.entity().downgrade();
+        let limit_color = |pct: f32| {
+            if pct >= 90.0 {
                 theme.danger
             } else if pct >= 70.0 {
                 theme.warning
             } else {
                 theme.muted_foreground
-            };
-            let tip: SharedString = match &w.resets_at {
-                Some(at) => format!(
-                    "{label} limit {pct:.0}% used · resets {}",
-                    limits::format_resets_local(at)
-                )
-                .into(),
-                None => format!("{label} limit {pct:.0}% used").into(),
-            };
+            }
+        };
+        let compact_bar = |id: &'static str, label: &'static str, w: &limits::Window| {
+            let pct = w.percent.clamp(0.0, 100.0);
+            let color = limit_color(pct);
             h_flex()
                 .id(id)
                 .flex_1()
                 .min_w_0()
                 .gap_2()
                 .items_center()
-                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                 .child(
                     div()
                         .flex_shrink_0()
@@ -4355,23 +4377,225 @@ impl AgentPanel {
                         .child(format!("{pct:.0}%")),
                 )
         };
+        let chevron = if open {
+            LucideIcon::ChevronDown
+        } else {
+            LucideIcon::ChevronRight
+        };
+
+        // Strip stays in-flow (always one row). Expanded detail is painted over
+        // the transcript via `render_plan_limits_overlay` — not as a sibling
+        // that steals `flex_1` from chat.
         Some(
             h_flex()
+                .id("agent-plan-usage-toggle")
                 .w_full()
                 .flex_shrink_0()
-                .gap_3()
                 .px_3()
                 .py_1()
+                .gap_2()
+                .items_center()
                 .border_b_1()
                 .border_color(theme.border)
+                .cursor_pointer()
+                .on_click({
+                    let panel = panel.clone();
+                    move |_, _, cx| {
+                        _ = panel.update(cx, |this, cx| {
+                            this.plan_usage_open = !this.plan_usage_open;
+                            cx.notify();
+                        });
+                    }
+                })
+                .child(
+                    Icon::new(chevron)
+                        .small()
+                        .flex_shrink_0()
+                        .text_color(theme.muted_foreground),
+                )
                 .when_some(l.session.as_ref(), |row, w| {
-                    row.child(bar("agent-limit-session", "5h", w))
+                    row.child(compact_bar("agent-limit-session", "5h", w))
                 })
                 .when_some(l.week.as_ref(), |row, w| {
-                    row.child(bar("agent-limit-week", "Week", w))
+                    row.child(compact_bar("agent-limit-week", "Week", w))
                 })
                 .into_any_element(),
         )
+    }
+
+    /// Expanded plan usage — absolute over the transcript, not in the column flow.
+    fn render_plan_limits_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.plan_usage_open {
+            return None;
+        }
+        let l = self.plan_limits.as_ref()?;
+        if l.session.is_none() && l.week.is_none() {
+            return None;
+        }
+        let theme = cx.theme();
+        let limit_color = |pct: f32| {
+            if pct >= 90.0 {
+                theme.danger
+            } else if pct >= 70.0 {
+                theme.warning
+            } else {
+                theme.muted_foreground
+            }
+        };
+        let detail_bar = |id: SharedString, label: SharedString, w: &limits::Window| {
+            let pct = w.percent.clamp(0.0, 100.0);
+            let color = limit_color(pct);
+            let resets = w
+                .resets_at
+                .as_ref()
+                .map(|at| format!("Resets {}", limits::format_resets_local(at)));
+            v_flex()
+                .w_full()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.foreground)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(color)
+                                .child(format!("{pct:.0}%")),
+                        ),
+                )
+                .when_some(resets, |col, text| {
+                    col.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(text),
+                    )
+                })
+                .child(
+                    Progress::new(SharedString::from(format!("{id}-detail")))
+                        .w_full()
+                        .color(color)
+                        .value(pct),
+                )
+        };
+        let plan_subtitle: SharedString = match l.subscription.as_deref() {
+            Some(plan) => format!("{plan} subscription usage").into(),
+            None => "Claude subscription usage".into(),
+        };
+
+        let mut body = v_flex()
+            .id("agent-plan-usage-detail")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .w_full()
+            .gap_3()
+            .px_3()
+            .pt_2()
+            .pb_2()
+            .bg(theme.sidebar)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(plan_subtitle),
+            );
+        if let Some(w) = l.session.as_ref() {
+            body = body.child(detail_bar(
+                "agent-limit-session".into(),
+                "5-hour limit".into(),
+                w,
+            ));
+        }
+        if let Some(w) = l.week.as_ref() {
+            body = body.child(detail_bar(
+                "agent-limit-week".into(),
+                "Weekly · all models".into(),
+                w,
+            ));
+        }
+        if let Some(w) = l.week_opus.as_ref() {
+            body = body.child(detail_bar(
+                "agent-limit-opus".into(),
+                "Weekly · Opus".into(),
+                w,
+            ));
+        }
+        if let Some(w) = l.week_sonnet.as_ref() {
+            body = body.child(detail_bar(
+                "agent-limit-sonnet".into(),
+                "Weekly · Sonnet".into(),
+                w,
+            ));
+        }
+        if !l.breakdown.is_empty() {
+            body = body.child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .pt_1()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("What's using your week"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("Approximate share of weekly usage by product"),
+                    )
+                    .children(l.breakdown.iter().map(|row| {
+                        let pct = row.percent.clamp(0.0, 100.0);
+                        let color = limit_color(pct);
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .child(row.display_name.clone()),
+                            )
+                            .child(
+                                Progress::new(SharedString::from(format!(
+                                    "agent-limit-bd-{}",
+                                    row.key
+                                )))
+                                .w(px(80.))
+                                .color(color)
+                                .value(pct),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(color)
+                                    .w(px(36.))
+                                    .child(format!("{pct:.0}%")),
+                            )
+                    })),
+            );
+        }
+        Some(body.into_any_element())
     }
 
     /// Mode: prefer ACP `configOptions` (category mode), else legacy `modes`.
@@ -5518,11 +5742,14 @@ impl Render for AgentPanel {
                     .flex_1()
                     .min_h_0()
                     .w_full()
+                    .relative()
                     .child(if show_transcript {
                         self.render_transcript(cx)
                     } else {
                         self.render_state(cx)
-                    }),
+                    })
+                    // After transcript so the expand paints on top of chat.
+                    .children(self.render_plan_limits_overlay(cx)),
             )
             // **N Files** sits on top of the composer (the chat input), not under usage.
             .children(self.render_sticky_file_changes(cx))

@@ -144,7 +144,9 @@ src/
 ├── agent/
 │   ├── panel.rs         `AgentPanel`: transcript (`MessageScroller` + half-pane bottom space),
 │   │                    tool rows, permission buttons, composer + `@` menu
-│   ├── limits.rs        Claude plan usage (5h/week) via OAuth; merge keeps last good
+│   ├── limits.rs        Claude plan usage (5h/week + optional Opus/Sonnet +
+│   │                    product breakdown + subscription label) via OAuth;
+│   │                    refreshes/persists Claude Code tokens; merge keeps last good
 │   ├── mention.rs       `@` query parse + workspace file/folder listing
 │   └── prompt.rs        `Attachment` → ACP `ContentBlock`s (`resource` /
 │                        `resource_link` / `image`) from agent prompt caps
@@ -280,7 +282,7 @@ src/
   (lazy `ensure_started` on first show / restore / return) and pumps its
   events with `cx.spawn` + `recv_async` (tests: `try_recv` + scheduler timer
   — GPUI's test scheduler rejects cross-thread wakeups); a `generation`
-  counter drops events from replaced connections. Chats: after `Connected`
+  counter drops events from replaced connections. Chats:   after `Connected`
   the panel sends `SessionOpen::Resume(id)` when `transcript_of` is still
   that chat, else `Load(id)` (agent replays it as updates, user chunks
   merged into one bubble; **N Files** cards are not in ACP history — they

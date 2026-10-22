@@ -163,13 +163,16 @@ tabs, highlighted editor, status bar):
   title + context used/size (`— / {window}` on open /
   switch until ACP `usage_update`, then live fill) + ghost `Plus` New Chat
   (`⌘N` / `Ctrl+N` while the Agent composer is focused; elsewhere still New File).
-  Under the header, Claude plan usage bars (5h session + Week; muted gray
-  <70%, yellow 70–90%, red ≥90%; tooltip = reset time in local wall clock)
-  come from Anthropic's
-  undocumented OAuth usage endpoint using the Claude Code token (macOS
-  Keychain, else `~/.claude/.credentials.json`); best effort — hidden until
-  the first good fetch (or when a custom `agent.command` is set). Empty or
-  partial API payloads keep the last good bars instead of blanking them.
+  Under the header, Claude plan usage accordion (chevron + 5h/Week; expand
+  overlays the transcript for plan name, resets, optional Opus/Sonnet,
+  product breakdown) from Anthropic's undocumented OAuth usage endpoint
+  using the Claude Code token (macOS Keychain, else
+  `~/.claude/.credentials.json`); access tokens are refreshed via
+  `platform.claude.com` when expired/401 and written back (refresh tokens
+  rotate). Best effort — hidden until the first good fetch (or when a custom
+  `agent.command` is set). Failed fetches with no bars yet retry on a
+  5→60s backoff; empty or partial API payloads keep the last good bars
+  instead of blanking them.
   Compaction is agent-side (Isengard advertises
   `ClientSessionCapabilities.compaction`); we show Compacting… / a short
   notice — we do not summarize or reset the window ourselves.

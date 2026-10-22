@@ -3,6 +3,17 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Plan usage accordion expands to full content height (no
+  inner scroll); transcript keeps the remaining `flex_1` space.
+
+- **2026-10-22** — Plan usage fetch refreshes the Claude OAuth access token
+  (and persists the rotated refresh token) before calling `/oauth/usage`, so
+  expired tokens no longer hide the bars until restart.
+
+- **2026-10-22** — Plan usage accordion under the Agent header (chevron +
+  5h/Week; expand capped at 240px so transcript height is preserved). Fetch
+  backs off 5→60s on OAuth 429 when no bars yet.
+
 - **2026-10-22** — Agent header shows session title only while busy (no
   activity suffix / Spinner); turn activity stays in the transcript footer.
 
@@ -30,6 +41,9 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-22** — Plan usage bar tooltips show reset time in local date/time
   (e.g. `Thu Oct 22, 2026 3:10 PM`) instead of raw UTC ISO-8601.
+
+- **2026-10-22** — Claude plan usage expand overlays the transcript instead of
+  pushing chat down (absolute under the slim 5h/Week strip).
 
 - **2026-10-22** — Claude plan usage bars no longer vanish when the OAuth
   usage endpoint returns HTTP 200 with null `five_hour` / `seven_day`
