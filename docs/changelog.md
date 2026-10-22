@@ -3,6 +3,21 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Silent jobs no longer freeze the open chat: Suggest/title
+  keep Send as Send (home prompt can run on the open session); only Improve
+  shows Stop; home vs silent turn end paths are split.
+
+- **2026-10-22** — Silent jobs (Improve / title / Suggest) no longer set
+  open-chat `turn_running` (throwaway ACP session was already separate;
+  the UI was wrongly showing Working… / locking history).
+
+- **2026-10-22** — Git Claude Suggest enables when the Agent panel is Ready
+  (`PromptabilityChanged`); disabled (no click / no toast) otherwise.
+
+- **2026-10-22** — Git commit Suggest is two icon buttons: heuristic
+  (`WandSparkles`) and Claude (Material `claude` icon); AI no longer falls
+  back to the heuristic.
+
 - **2026-10-22** — Silent agent jobs (Improve, chat title, Git Suggest) run
   on a throwaway ACP session so the open chat’s context is not polluted.
 

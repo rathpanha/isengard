@@ -91,8 +91,10 @@ pub enum AgentPanelEvent {
     PermissionRequested,
     /// Silent commit-message turn finished with a draft for Source Control.
     CommitSuggestReady { root: PathBuf, message: String },
-    /// Silent commit-message turn failed / was cancelled — Git falls back.
+    /// Silent commit-message turn failed / was cancelled.
     CommitSuggestFailed { root: PathBuf },
+    /// [`AgentPanel::can_silent_prompt`] may have flipped (Source Control Claude Suggest).
+    PromptabilityChanged,
 }
 
 #[derive(Clone)]
@@ -1276,7 +1278,7 @@ impl AgentPanel {
             return;
         }
         self.roots = roots;
-        if self.turn_running {
+        if self.turn_running || self.silent.is_some() {
             self.reconnect_after_turn = true;
         } else if self.connection.is_some() {
             self.start(cx);
@@ -1286,7 +1288,7 @@ impl AgentPanel {
     /// The workspace went to the background. A running turn keeps going; the
     /// agent stops once idle. The transcript stays for a later resume.
     pub fn suspend(&mut self, cx: &mut Context<Self>) {
-        if self.turn_running {
+        if self.turn_running || self.silent.is_some() {
             self.suspend_after_turn = true;
         } else if self.connection.is_some() {
             self.disconnect(cx);
@@ -1416,13 +1418,29 @@ impl AgentPanel {
         matches!(self.status, Status::Suspended) && self.connection.is_none()
     }
 
-    /// Connected session idle — Git Suggest can ask for an AI commit message.
+    /// Connected chat idle — user Send / queue (independent of silent jobs).
     pub fn can_prompt(&self) -> bool {
         matches!(self.status, Status::Ready)
             && !self.turn_running
             && self.connection.is_some()
             && self.session.is_some()
+    }
+
+    /// Agent can run a throwaway silent job (Improve / title / Git Suggest).
+    ///
+    /// Silent turns open their own ACP session (open chat `session_id`
+    /// untouched). Requires Ready + no in-flight silent; home-chat
+    /// `turn_running` still blocks so we do not stack a Suggest on top of an
+    /// active user turn (Cancel would be ambiguous).
+    pub fn can_silent_prompt(&self) -> bool {
+        matches!(self.status, Status::Ready)
+            && !self.turn_running
+            && self.connection.is_some()
             && self.silent.is_none()
+    }
+
+    fn emit_promptability_changed(&self, cx: &mut Context<Self>) {
+        cx.emit(AgentPanelEvent::PromptabilityChanged);
     }
 
     #[cfg(test)]
@@ -1539,7 +1557,7 @@ impl AgentPanel {
     }
 
     fn start_silent(&mut self, prompt: String, kind: SilentTurn, cx: &mut Context<Self>) -> bool {
-        if !self.can_prompt() {
+        if !self.can_silent_prompt() {
             return false;
         }
         let Some(connection) = &self.connection else {
@@ -1551,18 +1569,19 @@ impl AgentPanel {
             mode,
             configs,
         );
-        self.turn_running = true;
-        // Silent turns never show a file card.
+        // Do not set `turn_running` — that is the open chat's turn. Silent
+        // uses a throwaway session; the open transcript must stay idle.
         self.turn_file_changes.clear();
         self.turn_git_baseline = None;
         self.silent = Some(kind);
+        self.emit_promptability_changed(cx);
         cx.notify();
         true
     }
 
     /// One-shot commit-message turn (any ACP agent). Does not add chat bubbles.
     ///
-    /// Returns `false` if the agent is not Ready — caller should use the heuristic.
+    /// Returns `false` if a silent job cannot start ([`Self::can_silent_prompt`]).
     pub fn request_commit_message(
         &mut self,
         root: PathBuf,
@@ -1705,7 +1724,7 @@ impl AgentPanel {
         if self.active.as_deref() != Some(id.as_str()) {
             return;
         }
-        if !self.can_prompt() {
+        if !self.can_silent_prompt() {
             return;
         }
         if self.transcript_for_title(cx).is_empty() {
@@ -1814,7 +1833,7 @@ impl AgentPanel {
     /// Silent rewrite of the composer draft into plain text (`@` chips +
     /// paperclip attachments kept).
     fn request_improve_prompt(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.can_prompt() {
+        if !self.can_silent_prompt() {
             return false;
         }
         let content = self.input.read(cx).content();
@@ -1922,6 +1941,7 @@ impl AgentPanel {
         self.compacting = false;
         // Keep usage_by_chat; live `usage` restored on reopen from that map.
         self.usage = None;
+        self.emit_promptability_changed(cx);
         self.cancel_pending_permissions(cx);
     }
 
@@ -2412,9 +2432,10 @@ impl AgentPanel {
         refs.extend(user_refs_from(&attachments, &thumbs));
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
 
-        // Busy (user turn or silent job): queue without a transcript bubble yet
-        // so the current reply stays contiguous; drain pushes User + prompts.
-        if self.turn_running || self.silent.is_some() {
+        // Busy user turn: queue without a transcript bubble yet so the current
+        // reply stays contiguous; drain pushes User + prompts. Silent jobs use
+        // a throwaway session — home Send is allowed concurrently.
+        if self.turn_running {
             self.outbound.push_back(QueuedPrompt {
                 title,
                 text,
@@ -2472,7 +2493,7 @@ impl AgentPanel {
 
     /// Send the next queued prompt, if any and idle.
     fn drain_outbound_queue(&mut self, cx: &mut Context<Self>) {
-        if self.turn_running || self.silent.is_some() {
+        if self.turn_running {
             return;
         }
         if !matches!(self.status, Status::Ready) {
@@ -2613,29 +2634,43 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn turn_finished(&mut self, suggest_ok: bool, cx: &mut Context<Self>) {
+    /// Open-chat turn ended (not a throwaway silent job).
+    fn home_turn_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
-        let finishing_silent = self.silent.is_some();
-        // Resolve before reconnect/suspend so Git still gets a Suggest result.
-        if finishing_silent {
-            self.finish_silent(suggest_ok, cx);
-        } else {
-            self.flush_turn_file_changes(cx);
-        }
-        if std::mem::take(&mut self.reconnect_after_turn) && !self.suspend_after_turn {
+        self.flush_turn_file_changes(cx);
+        if self.reconnect_after_turn && !self.suspend_after_turn && self.silent.is_none() {
             // Reconnect drops the connection (and the outbound queue).
+            self.reconnect_after_turn = false;
             self.start(cx);
-        } else if self.suspend_after_turn {
+        } else if self.suspend_after_turn && self.silent.is_none() {
             self.suspend_after_turn = false;
             self.disconnect(cx);
             self.status = Status::Suspended;
         } else {
             self.cache_active_transcript(cx);
             self.drain_outbound_queue(cx);
-            if !finishing_silent && suggest_ok {
+            if ok {
                 self.maybe_auto_title_after_turn(cx);
             }
         }
+        self.emit_promptability_changed(cx);
+    }
+
+    /// Throwaway silent job ended (Improve / title / Suggest).
+    fn silent_job_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
+        // Resolve before reconnect/suspend so Git still gets a Suggest result.
+        self.finish_silent(ok, cx);
+        if self.reconnect_after_turn && !self.suspend_after_turn && !self.turn_running {
+            self.reconnect_after_turn = false;
+            self.start(cx);
+        } else if self.suspend_after_turn && !self.turn_running {
+            self.suspend_after_turn = false;
+            self.disconnect(cx);
+            self.status = Status::Suspended;
+        } else if !self.turn_running {
+            self.drain_outbound_queue(cx);
+        }
+        self.emit_promptability_changed(cx);
     }
 
     /// Clear prior turn file state; snapshot git dirties for shell-edit detection.
@@ -3005,6 +3040,7 @@ impl AgentPanel {
                     self.restore_file_change_cards(cx);
                 }
                 self.maybe_start_pending_title(cx);
+                self.emit_promptability_changed(cx);
             }
             AgentEvent::ConfigOptions(options) => {
                 self.config_options = Some(options);
@@ -3037,48 +3073,40 @@ impl AgentPanel {
                 }
             }
             AgentEvent::TurnEnded(reason) => {
-                let silent = self.silent.is_some();
-                let suggest_ok = matches!(reason, StopReason::EndTurn);
-                if !silent {
-                    let note = match reason {
-                        StopReason::EndTurn => None,
-                        StopReason::Cancelled => Some("Stopped."),
-                        StopReason::MaxTokens => Some("Stopped: the reply hit the token limit."),
-                        StopReason::MaxTurnRequests => Some("Stopped: too many steps in one turn."),
-                        StopReason::Refusal => Some("The agent declined to continue."),
-                        _ => Some("Stopped."),
-                    };
-                    if let Some(note) = note {
-                        self.push_notice(note, false, cx);
-                    }
+                // Home chat only — silent jobs end via SilentTurnEnded.
+                let ok = matches!(reason, StopReason::EndTurn);
+                let note = match reason {
+                    StopReason::EndTurn => None,
+                    StopReason::Cancelled => Some("Stopped."),
+                    StopReason::MaxTokens => Some("Stopped: the reply hit the token limit."),
+                    StopReason::MaxTurnRequests => Some("Stopped: too many steps in one turn."),
+                    StopReason::Refusal => Some("The agent declined to continue."),
+                    _ => Some("Stopped."),
+                };
+                if let Some(note) = note {
+                    self.push_notice(note, false, cx);
                 }
-                self.turn_finished(suggest_ok, cx);
+                self.home_turn_finished(ok, cx);
             }
             AgentEvent::SilentTurnEnded { ok, text } => {
                 if let Some(pending) = &mut self.silent {
                     *pending.text_mut() = text;
                 }
-                self.turn_finished(ok, cx);
+                self.silent_job_finished(ok, cx);
             }
             AgentEvent::TurnFailed(message) => {
-                if self.silent.is_none() {
-                    self.push_notice(message, true, cx);
-                }
-                self.turn_finished(false, cx);
+                self.push_notice(message, true, cx);
+                self.home_turn_finished(false, cx);
             }
             AgentEvent::AuthRequired(methods) => {
                 self.disconnect(cx);
                 self.status = Status::LoginRequired(methods);
             }
             AgentEvent::Permission(ask) => {
-                if self.silent.is_some() {
-                    // Suggest turns must not open tools — deny and fall back.
-                    let _ = ask.reply.send(None);
-                    self.abort_silent(cx);
-                } else {
-                    self.ask_permission(ask, cx);
-                    cx.emit(AgentPanelEvent::PermissionRequested);
-                }
+                // Silent-session tool asks are cancelled in the ACP client by
+                // session id; anything that reaches here is for the open chat.
+                self.ask_permission(ask, cx);
+                cx.emit(AgentPanelEvent::PermissionRequested);
             }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
@@ -5468,8 +5496,11 @@ impl AgentPanel {
 
     fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let busy = self.turn_running;
+        // Open-chat turn only — Suggest / title silent jobs must not look like
+        // the chat is busy. Improve keeps its own Stop + button spinner.
+        let chat_busy = self.turn_running;
         let improving = matches!(self.silent, Some(SilentTurn::Improve { .. }));
+        let queueing = chat_busy;
         let draft_plain = {
             let content = self.input.read(cx).content();
             text_without_tokens(content.text(), content.tokens())
@@ -5480,10 +5511,14 @@ impl AgentPanel {
                 || !input.tokens().is_empty()
                 || !self.attachments.is_empty()
         };
-        // Send stays available while busy — it queues. Stop is separate.
+        // Send stays available while a user turn runs — it queues. Stop is
+        // separate. Suggest/title do not switch Send→Queue.
         let can_send = ready && draft && !improving;
-        let can_improve = ready && !busy && self.silent.is_none() && !draft_plain.is_empty();
-        let stop = busy.then(|| {
+        let can_improve = ready
+            && !chat_busy
+            && self.silent.is_none()
+            && !draft_plain.is_empty();
+        let stop = (chat_busy || improving).then(|| {
             // Lucide `Square` is stroke-only (hollow); stop needs a solid block.
             Button::new("agent-stop")
                 .danger()
@@ -5517,7 +5552,7 @@ impl AgentPanel {
             .primary()
             .small()
             .icon(LucideIcon::ArrowUp)
-            .label(if busy && !improving { "Queue" } else { "Send" })
+            .label(if queueing { "Queue" } else { "Send" })
             .disabled(!can_send)
             .when(can_send, |b| {
                 b.cursor_pointer()
@@ -5530,7 +5565,7 @@ impl AgentPanel {
             .child(improve)
             .children(stop)
             .child(send);
-        let hint = if busy {
+        let hint = if queueing {
             if self.outbound.is_empty() {
                 "@ mention · Enter to queue".to_owned()
             } else {
@@ -5637,8 +5672,10 @@ impl AgentPanel {
                                             .small()
                                             .icon(LucideIcon::Paperclip)
                                             .tooltip("Attach files… (or drop from tree / tab / OS)")
-                                            .disabled(busy)
-                                            .when(!busy, |b| b.cursor_pointer())
+                                            .disabled(chat_busy || improving)
+                                            .when(!(chat_busy || improving), |b| {
+                                                b.cursor_pointer()
+                                            })
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 cx.emit(AgentPanelEvent::AttachFromDisk)
                                             })),

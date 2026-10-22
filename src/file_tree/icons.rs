@@ -68,9 +68,14 @@ pub fn tree_icon(
     dark: bool,
 ) -> AnyElement {
     let name = resolve_icon_name(path, is_dir, expanded, is_root, dark);
-    img(load_icon(&name))
-        .w(px(16.))
-        .h(px(16.))
+    material_icon(&name, 16.)
+}
+
+/// Full-colour Material Icon Theme glyph by stem (`claude`, `rust`, …).
+pub fn material_icon(name: &str, size_px: f32) -> AnyElement {
+    img(load_icon(name))
+        .w(px(size_px))
+        .h(px(size_px))
         .flex_shrink_0()
         .into_any_element()
 }

@@ -84,9 +84,10 @@ tabs, highlighted editor, status bar):
   (debounced; skipped for buffers >512 KiB).
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
-  + per-file); Suggest (AI via Ready ACP agent on a throwaway session so
-  the open chat is not polluted, else path heuristic) /
-  Commit from selection; Open File + discard;
+  + per-file); Suggest icons — heuristic (`WandSparkles`) and Claude
+  (Material icon; enabled only while Agent `can_silent_prompt`, throwaway
+  session, no heuristic fallback; disabled = no click) / Commit from
+  selection; Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
   dirty); refreshes when the agent touches the worktree (no manual
@@ -183,9 +184,11 @@ tabs, highlighted editor, status bar):
   accept-edits — Auto omitted for Claude models older than 4.6; Model `Cpu` /
   Version/Context; Fast Switch; Effort/agent/…)
   sits in a fixed-height band above Attach / Improve (`PencilSparkles`
-  silent rewrite on a throwaway session — open chat context untouched;
-  `@` chips + paperclip chips kept; review then Send) / Queue+Stop
-  (horizontal scroll; disabled until Ready). Picks are remembered per
+  silent rewrite on a throwaway session — open chat context untouched,
+  chat not marked `turn_running`; Suggest/title leave Send alone; Improve
+  uses Stop + `.loading`; `@` chips + paperclip chips kept; review then
+  Send) / Queue+Stop (horizontal scroll; disabled until Ready). Picks are
+  remembered per
   folder/workspace
   (`sessions.<key>.agent_prefs`, seeded from global last-used `agent_prefs`)
   and re-applied to every chat opened — new, loaded, or after a restart.

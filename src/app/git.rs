@@ -5,37 +5,48 @@ use super::tab::conflict_side_to_hunk;
 use crate::git::build_commit_suggest_prompt;
 
 impl IsengardApp {
-    /// Suggest: AI via the Ready ACP agent when connected, else path heuristic.
-    pub(super) fn suggest_git_commit(
+    /// AI Suggest via the Ready ACP agent (throwaway session). No heuristic fallback.
+    pub(super) fn suggest_git_commit_ai(
         &mut self,
         root: PathBuf,
         paths: Vec<String>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let agent = self.agent.clone();
         let can_ai = agent
             .as_ref()
-            .is_some_and(|a| a.read(cx).can_prompt());
-        if can_ai {
-            let prompt = build_commit_suggest_prompt(&root, &paths);
-            let started = agent
-                .as_ref()
-                .map(|a| {
-                    a.update(cx, |agent, cx| {
-                        agent.request_commit_message(root.clone(), prompt, cx)
-                    })
-                })
-                .unwrap_or(false);
-            if started {
-                self.git.update(cx, |git, cx| {
-                    git.set_suggest_busy(&root, true, cx);
-                });
-                return;
-            }
+            .is_some_and(|a| a.read(cx).can_silent_prompt());
+        if !can_ai {
+            // Button should already be disabled; resync and bail quietly.
+            self.sync_git_agent_ready(cx);
+            return;
         }
+        let prompt = build_commit_suggest_prompt(&root, &paths);
+        let started = agent
+            .as_ref()
+            .map(|a| {
+                a.update(cx, |agent, cx| {
+                    agent.request_commit_message(root.clone(), prompt, cx)
+                })
+            })
+            .unwrap_or(false);
+        if started {
+            self.git.update(cx, |git, cx| {
+                git.set_suggest_busy(&root, true, cx);
+            });
+        }
+        self.sync_git_agent_ready(cx);
+    }
+
+    /// Keep the Claude Suggest icon enabled when a silent ACP job can run.
+    pub(super) fn sync_git_agent_ready(&mut self, cx: &mut Context<Self>) {
+        let ready = self
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.read(cx).can_silent_prompt());
         self.git.update(cx, |git, cx| {
-            git.apply_heuristic_suggest(&root, window, cx);
+            git.set_agent_ready(ready, cx);
         });
     }
 
@@ -52,6 +63,7 @@ impl IsengardApp {
         self.sidebar_visible = true;
         self.persist_session(cx);
         self.refresh_git_panel(window, cx);
+        self.sync_git_agent_ready(cx);
         // Don't leave focus on the Explorer/Git chrome button — that handle
         // goes stale after paint and menu Close then misses the app.
         self.focus_handle.focus(window, cx);

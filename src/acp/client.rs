@@ -636,12 +636,16 @@ async fn session(
                 })?;
             }
             AgentCommand::Cancel => {
+                // Home chat and throwaway silent can run at once — cancel both.
                 let silent_id = silent
                     .lock()
                     .unwrap()
                     .as_ref()
                     .map(|j| j.session_id.clone());
-                if let Some(session_id) = silent_id.or_else(|| current.clone()) {
+                if let Some(session_id) = silent_id {
+                    cx.send_notification(CancelNotification::new(session_id))?;
+                }
+                if let Some(session_id) = current.clone() {
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
             }

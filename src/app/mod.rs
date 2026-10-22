@@ -333,8 +333,8 @@ impl IsengardApp {
                     GitPanelEvent::ConfirmDiscardAll { repo, count } => {
                         this.confirm_git_discard_all(repo.clone(), *count, window, cx);
                     }
-                    GitPanelEvent::SuggestCommit { root, paths } => {
-                        this.suggest_git_commit(root.clone(), paths.clone(), window, cx);
+                    GitPanelEvent::SuggestCommitAi { root, paths } => {
+                        this.suggest_git_commit_ai(root.clone(), paths.clone(), window, cx);
                     }
                     GitPanelEvent::ToastError(msg) => {
                         notify_error(msg.clone(), window, cx);

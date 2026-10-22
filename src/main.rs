@@ -71,6 +71,7 @@ gpui_kit::assets::icon_assets!(
         ShieldQuestionMark,
         Sparkles,
         PencilSparkles, // Improve prompt (distinct from Mode Auto's Sparkles)
+        WandSparkles,   // Git heuristic Suggest
         ListTodo,
         Cpu,
         Tag,

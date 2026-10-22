@@ -243,14 +243,16 @@ Add a row here whenever a new shared component is created.
   title runs after the first turn) over relative time (`text_xs` muted),
   active row `.selected`, ghost `Pencil` rename (dialog + `Input`; outline
   **Generate** runs a silent ACP turn on a **throwaway session** (open chat
-  context untouched) for a title for **any** chat when Ready (uses the open
-  transcript, a per-session cache from chats opened earlier, or loads that
-  chat then generates) — Cancel outline · Generate outline · Rename
-  primary) + ghost
+  `session_id` and transcript untouched; does **not** set chat
+  `turn_running` / Working…) for a title for **any** chat when Ready
+  (uses the open transcript, a per-session cache from chats opened
+  earlier, or loads that chat then generates) — Cancel outline · Generate
+  outline · Rename primary) + ghost
   `Trash` (confirm: Cancel outline · Delete danger); rows and New Chat
-  disabled while a turn runs. Empty list: muted "No chats in this
-  workspace yet." Loading a saved chat shows Spinner + "Loading chat…"
-  until the replay lands; reconnecting keeps the old transcript on screen.
+  disabled while a **user** turn runs (silent jobs do not lock history).
+  Empty list: muted "No chats in this workspace yet." Loading a saved chat
+  shows Spinner + "Loading chat…" until the replay lands; reconnecting
+  keeps the old transcript on screen.
   A background workspace's agent asking for approval raises a warning toast
   (`notify_warning`). Transcript in Kit
   `MessageScroller` (tail follow + jump-to-latest): user text in a
@@ -318,17 +320,19 @@ Add a row here whenever a new shared component is created.
   folders via `@`) + muted hint (`Enter to send`, or `Enter to queue` /
   `N queued · Enter to queue` while busy) + ghost Improve
   (`PencilSparkles` — not Mode Auto's `Sparkles`) — silent ACP rewrite on a
-  throwaway session (open chat context untouched); never auto-sends; strips
-  `@` chips only for the rewrite request, then puts them back in front of
-  the improved prose; paperclip chips untouched; `.loading` while rewriting)
-  left of primary Send (`ArrowUp`,
-  label **Queue** while a user turn runs — always enqueues when busy) and,
-  while busy, a sibling `.danger()` Stop (solid square block, not Lucide
-  stroke `Square`). Queued prompts stay out of the transcript until
-  drained FIFO when the current turn ends (cleared on disconnect /
-  suspend) so the in-flight reply stays one bubble; while waiting they
-  show in a bordered strip **under** the composer (muted header + one
-  truncated line per item + ghost `CircleX` remove).
+  throwaway session (open chat untouched; Improve `.loading` + Stop only —
+  no transcript Working…; Suggest/title do not change Send/Stop); never
+  auto-sends; strips `@` chips only for the rewrite request, then puts
+  them back in front of the improved prose; paperclip chips untouched)
+  left of primary Send (`ArrowUp`, label **Queue** while a **user** turn
+  runs — Suggest does not force Queue; home Send may run while a silent
+  job is in flight) and, while a user turn or Improve runs, a sibling
+  `.danger()` Stop (solid square block, not Lucide stroke `Square`).
+  Queued prompts stay out of the transcript until drained FIFO when the
+  current user turn ends (cleared on disconnect / suspend) so the
+  in-flight reply stays one bubble; while waiting they show in a bordered
+  strip **under** the composer (muted header + one truncated line per
+  item + ghost `CircleX` remove).
   Attachment chips bottom-align in the wrap row (file/folder chips share a
   baseline with taller image thumbs); ghost `CircleX` remove sits on the
   upper trailing corner of each chip/thumb (not inline in the flex row).
@@ -381,15 +385,17 @@ Add a row here whenever a new shared component is created.
   repos (none for a single repo or under the last). Per
   section: repo name + branch, outlined Pull / Push (`Pull (N)` /
   `Push (N)` when behind / ahead of upstream), multi-line commit
-  `Textarea` + outlined Suggest + Commit (disabled while message empty
-  or nothing selected), collapsible changes list with select-all +
-  per-file checkboxes (default none selected; Commit/`Suggest` use
-  selection only; `git add -- <paths>` then commit). Suggest: when the
-  workspace Agent panel has a Ready ACP session, one-shot prompt on a
-  throwaway session (open chat context untouched; any connected agent —
-  not Claude-only) fills the box from selected-path diff + recent
-  subjects; otherwise the path heuristic draft. Suggest spins while the
-  turn runs; never auto-commits; tools/cancel fall back to the heuristic.
+  `Textarea` + outlined icon Suggests + Commit (disabled while message
+  empty or nothing selected), collapsible changes list with select-all +
+  per-file checkboxes (default none selected; Commit / Suggests use
+  selection only; `git add -- <paths>` then commit). Suggest is **two**
+  `.small()` outline icon buttons: heuristic `WandSparkles` (path draft)
+  and Claude (Material `claude.svg` thumb). Both omit `on_click` while
+  disabled (no selection / busy / conflict lock; Claude also until Agent
+  `can_silent_prompt`). Tooltips explain why. Claude uses a one-shot
+  throwaway ACP session — open chat `session_id` untouched and not marked
+  busy; `.loading` on the Claude icon while the turn runs; never
+  auto-commits; failure toasts — no heuristic fallback.
   Change rows:
   checkbox + Material `tree_icon` + path, status letter on the right,
   ghost Open File + Undo discard (confirms). The change whose
@@ -420,8 +426,8 @@ Add a row here whenever a new shared component is created.
   --ours|--theirs` + `add`). Accept lives in the editor only — not on
   panel change rows. After resolve, conflict tab closes; open worktree
   buffers reload. While an op is in progress or any `U` remains: disable
-  Pull, Push, Discard, Discard all; Suggest disabled. Commit stays
-  available for merges (selection → `git add` then commit) but
+  Pull, Push, Discard, Discard all; both Suggest icons disabled. Commit
+  stays available for merges (selection → `git add` then commit) but
   **refuses** if any selected path still contains conflict markers
   (`<<<<<<<` / `=======` / `>>>>>>>`); Commit disabled during rebase /
   cherry-pick (continue from the terminal). Empty commit box seeds from

@@ -118,6 +118,7 @@ impl IsengardApp {
             let input = agent.read(cx).input().clone();
             input.update(cx, |input, cx| input.focus(window, cx));
         }
+        self.sync_git_agent_ready(cx);
         self.persist_session(cx);
         cx.notify();
     }
@@ -139,6 +140,7 @@ impl IsengardApp {
         };
         if let Some((panel, _)) = self.agents.get(&key) {
             self.agent = Some(panel.clone());
+            self.sync_git_agent_ready(cx);
             return;
         }
         let roots = self.workspace.folders().to_vec();
@@ -162,6 +164,7 @@ impl IsengardApp {
             });
         self.agents.insert(key, (panel.clone(), subscription));
         self.agent = Some(panel);
+        self.sync_git_agent_ready(cx);
     }
 
     /// Folders added/removed within the open workspace.
@@ -258,10 +261,14 @@ impl IsengardApp {
             AgentPanelEvent::CommitSuggestFailed { root } => {
                 self.git.update(cx, |git, cx| {
                     git.set_suggest_busy(root, false, cx);
-                    git.apply_heuristic_suggest(root, window, cx);
                 });
+                notify_warning("Claude could not Suggest a commit message.", window, cx);
             }
+            AgentPanelEvent::PromptabilityChanged => {}
             _ => {}
+        }
+        if is_current {
+            self.sync_git_agent_ready(cx);
         }
     }
 

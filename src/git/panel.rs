@@ -15,7 +15,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
-use crate::file_tree::tree_icon;
+use crate::file_tree::{material_icon, tree_icon};
 
 use super::engine::{
     ConflictSide, GitChange, RepoOp, RepoStatus, accept_conflict_side, commit_paths,
@@ -57,8 +57,8 @@ pub enum GitPanelEvent {
     },
     /// Ask the app to confirm discarding every change in a repo.
     ConfirmDiscardAll { repo: PathBuf, count: usize },
-    /// Suggest a commit message for the selected paths (AI if an agent is Ready).
-    SuggestCommit {
+    /// AI Suggest for selected paths (Ready ACP agent on a throwaway session).
+    SuggestCommitAi {
         root: PathBuf,
         paths: Vec<String>,
     },
@@ -95,6 +95,8 @@ pub struct GitPanel {
     expanded: HashMap<PathBuf, bool>,
     /// Absolute worktree path of the open diff/conflict tab (row highlight).
     active_path: Option<PathBuf>,
+    /// Agent panel can run a silent Suggest turn (`can_silent_prompt`).
+    agent_ready: bool,
     _message_subs: Vec<Subscription>,
 }
 
@@ -107,8 +109,18 @@ impl GitPanel {
             refresh_generation: 0,
             expanded: HashMap::new(),
             active_path: None,
+            agent_ready: false,
             _message_subs: Vec::new(),
         }
+    }
+
+    /// Enable/disable the Claude Suggest icon (synced from the Agent panel).
+    pub fn set_agent_ready(&mut self, ready: bool, cx: &mut Context<Self>) {
+        if self.agent_ready == ready {
+            return;
+        }
+        self.agent_ready = ready;
+        cx.notify();
     }
 
     /// Highlight the change row for the active diff/conflict tab (or clear).
@@ -283,14 +295,8 @@ impl GitPanel {
         cx.notify();
     }
 
-    /// Ask the app to fill the commit box (AI when an agent is Ready, else heuristic).
-    fn suggest_message(&mut self, root: &Path, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
-            return;
-        };
-        if section.busy.is_some() {
-            return;
-        }
+    fn selected_paths(&self, root: &Path) -> Option<Vec<String>> {
+        let section = self.sections.iter().find(|s| s.status.root == root)?;
         let paths: Vec<String> = section
             .status
             .changes
@@ -298,17 +304,41 @@ impl GitPanel {
             .filter(|c| section.selected.contains(&c.rel_path))
             .map(|c| c.rel_path.clone())
             .collect();
-        if paths.is_empty() {
-            cx.emit(GitPanelEvent::ToastError("No files selected".into()));
+        (!paths.is_empty()).then_some(paths)
+    }
+
+    /// Path-heuristic draft into the commit box (no agent).
+    fn suggest_heuristic(&mut self, root: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .sections
+            .iter()
+            .find(|s| s.status.root == root)
+            .is_some_and(|s| s.busy.is_some())
+        {
             return;
         }
-        cx.emit(GitPanelEvent::SuggestCommit {
+        self.apply_heuristic_suggest(root, window, cx);
+    }
+
+    /// Ask the app to AI-Suggest (Ready agent only — no heuristic fallback).
+    fn suggest_ai(&mut self, root: &Path, cx: &mut Context<Self>) {
+        let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
+            return;
+        };
+        if section.busy.is_some() || !self.agent_ready {
+            return;
+        }
+        let Some(paths) = self.selected_paths(root) else {
+            cx.emit(GitPanelEvent::ToastError("No files selected".into()));
+            return;
+        };
+        cx.emit(GitPanelEvent::SuggestCommitAi {
             root: root.to_path_buf(),
             paths,
         });
     }
 
-    /// Path-heuristic draft (fallback when no agent is Ready).
+    /// Path-heuristic draft.
     pub fn apply_heuristic_suggest(
         &mut self,
         root: &Path,
@@ -710,6 +740,7 @@ impl Render for GitPanel {
         } else {
             let mut painted = 0usize;
             let section_count = self.sections.len();
+            let agent_ready = self.agent_ready;
             'sections: for (si, section) in self.sections.iter().enumerate() {
                 let root = section.status.root.clone();
                 let busy_op = section.busy.clone();
@@ -855,20 +886,70 @@ impl Render for GitPanel {
                                     .w_full()
                                     .justify_end()
                                     .gap_1()
-                                    .child(
-                                        with_loading(
-                                            outline_btn(format!("git-suggest-{si}").into())
-                                                .label("Suggest"),
-                                            busy_op == Some(BusyOp::Suggest),
-                                        )
-                                        .disabled(busy || nothing_selected || lock_suggest)
-                                        .on_click({
-                                            let root = root.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.suggest_message(&root, window, cx);
+                                    .child({
+                                        let heur_disabled =
+                                            busy || nothing_selected || lock_suggest;
+                                        let mut btn = Button::new(format!("git-suggest-{si}"))
+                                            .outline()
+                                            .small()
+                                            .icon(LucideIcon::WandSparkles)
+                                            .tooltip(if nothing_selected || lock_suggest {
+                                                "Select files to Suggest a commit message"
+                                            } else if busy {
+                                                "Wait for the current Git action to finish"
+                                            } else {
+                                                "Suggest commit message"
                                             })
-                                        }),
-                                    )
+                                            .disabled(heur_disabled);
+                                        if !heur_disabled {
+                                            let root = root.clone();
+                                            btn = btn.cursor_pointer().on_click(cx.listener(
+                                                move |this, _, window, cx| {
+                                                    this.suggest_heuristic(&root, window, cx);
+                                                },
+                                            ));
+                                        }
+                                        btn
+                                    })
+                                    .child({
+                                        let suggesting = busy_op == Some(BusyOp::Suggest);
+                                        let ai_disabled = busy
+                                            || nothing_selected
+                                            || lock_suggest
+                                            || !agent_ready;
+                                        // Don't use outline_btn — it always sets
+                                        // cursor_pointer even when disabled.
+                                        let mut btn = Button::new(format!("git-suggest-ai-{si}"))
+                                            .outline()
+                                            .small()
+                                            .tooltip(if agent_ready {
+                                                if nothing_selected || lock_suggest {
+                                                    "Select files to Suggest with Claude"
+                                                } else if busy {
+                                                    "Wait for the current Git action to finish"
+                                                } else {
+                                                    "Suggest with Claude"
+                                                }
+                                            } else {
+                                                "Open the Agent panel and wait until Ready"
+                                            })
+                                            .disabled(ai_disabled)
+                                            .when(suggesting, |b| {
+                                                b.icon(LucideIcon::Loader).loading(true)
+                                            })
+                                            .when(!suggesting, |b| {
+                                                b.child(material_icon("claude", 14.))
+                                            });
+                                        if !ai_disabled {
+                                            let root = root.clone();
+                                            btn = btn.cursor_pointer().on_click(cx.listener(
+                                                move |this, _, _, cx| {
+                                                    this.suggest_ai(&root, cx);
+                                                },
+                                            ));
+                                        }
+                                        btn
+                                    })
                                     .child(
                                         with_loading(
                                             outline_btn(format!("git-commit-{si}").into())
