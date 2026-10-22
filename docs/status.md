@@ -48,6 +48,7 @@ tabs, highlighted editor, status bar):
 - **Editor:** Kit `Editor` + tree-sitter for every language Kit vendors via
   `tree-sitter-languages`; line numbers, indent guides, search; unknown
   extensions stay Plain Text. Syntax: Ayu Darker; editor/gutter bg = sidebar.
+  Markdown/agent code blocks: same tokens on muted gray (`theme::text_view_style`).
   **IntelliSense (LSP):** not bundled into the app binary. **Install** downloads
   into `dirs::data_dir()/isengard/lsp/` (bin + pkg) — never `npm -g` / brew /
   pip / rustup into the user toolchain. Resolve: app-local first, then system

@@ -174,7 +174,9 @@ struct DeferredMenu {
 
 impl DeferredMenu {
     fn build_menu(&self, window: &mut Window, cx: &mut App) -> AnyElement {
-        // Focus the menu, so that can be handle the action.
+        // Focus the menu so keyboard (arrows / Enter / Esc) works. Editors that
+        // need the selection highlight to stay while the menu is open use
+        // NativeMenu's Linux fallback, which deliberately does not focus.
         let focus_handle = self.menu_view.focus_handle(cx);
         if !focus_handle.contains_focused(window, cx) {
             focus_handle.focus(window, cx);

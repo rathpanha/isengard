@@ -6,8 +6,8 @@
 
 use crate::root::WindowState;
 use gpui::{
-    App, Context, DismissEvent, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
-    Point, Render, Subscription, Window, anchored, deferred, div, px,
+    App, Context, DismissEvent, Entity, FocusHandle, IntoElement, ParentElement, Pixels, Point,
+    Render, Subscription, Window, anchored, deferred, div, px,
 };
 
 use crate::menu::{PopupMenu, PopupMenuItem};
@@ -49,7 +49,10 @@ impl FallbackMenuOverlay {
             this.active = None;
             cx.notify();
         });
-        menu.focus_handle(cx).focus(window, cx);
+        // Do not focus the menu: gpui-base only paints Input/Editor selection
+        // while focused, so stealing focus made right-click look like it cleared
+        // the selection (range still there — Add Selection still worked). Mouse
+        // clicks still activate items; `action_context` receives the action.
 
         self.active = Some(ActiveMenu {
             menu,

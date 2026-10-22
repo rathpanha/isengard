@@ -45,6 +45,8 @@ pub(crate) fn base_text_view_style(theme: &crate::Theme) -> gpui_base::TextViewS
         .bg(theme.table_head)
         .text_color(theme.table_head_foreground);
 
+    // Fenced code: muted gray panel; token colours come from `highlight_theme`
+    // (Ayu Darker in Isengard), same as the editor.
     gpui_base::TextViewStyle::default()
         .with_foreground(theme.foreground)
         .with_muted_foreground(theme.muted_foreground)

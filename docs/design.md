@@ -30,7 +30,9 @@ section here.
 - **Dark only:** the app is dark mode permanently — no light theme, no toggle.
   Editor syntax colours come from `assets/themes/ayu-darker-highlight.json`
   (GPL-3.0); editor/gutter background is forced to `theme.sidebar` (same as the
-  file tree).
+  file tree). Markdown fenced code (agent chat, file preview) uses the same
+  Ayu Darker highlight tokens on a `theme.muted` gray code-block background
+  via `theme::text_view_style`.
 
 ## 2. Spacing
 
@@ -128,9 +130,11 @@ Add a row here whenever a new shared component is created.
 - **Editor context menu:** right-click in a text editor → Kit defaults
   (Cut/Copy/Paste/Select All, plus Go to Definition / Code Actions when
   available) plus **Add Selection to Agent** (same as `⌘L` / Edit menu).
+  On Linux the Kit NativeMenu fallback keeps editor focus so the selection
+  highlight stays (gpui-base only paints selection while focused).
 - **Terminal context menu:** right-click → Copy, Paste, **Add Selection to
   Agent** (`⌘L` / `Ctrl+L` with terminal focus attaches the selection as a
-  `Terminal` snippet chip).
+  `Terminal` snippet chip). Right-click does not clear the selection.
 - **Tab context menu:** right-click a tab → Close, Close Others (disabled when
   only one tab), Close All. Dirty tabs get one Save All / Don't Save dialog
   for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not

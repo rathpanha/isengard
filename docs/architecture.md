@@ -357,7 +357,8 @@ src/
   `highlight_theme` (Ayu Darker tokens + editor/gutter bg = `theme.sidebar` so
   it matches the file tree), `notification.placement = BottomRight`, and
   `notification.margins.bottom` above the status bar. Re-run it after any
-  font-size change.
+  font-size change. `theme::text_view_style` applies that same highlight
+  theme + editor background to Markdown `TextView`s (agent chat, preview).
   `theme.font_size` (14px) is the rem base for the whole UI;
   `mono_font_size` is the editor size from config.
 - **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,

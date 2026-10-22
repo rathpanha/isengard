@@ -801,6 +801,13 @@ impl TerminalView {
     ) {
         window.focus(&self.focus_handle, cx);
 
+        // Right-click opens the context menu — do not replace the selection
+        // (Add Selection to Agent needs it, and the highlight should stay).
+        if event.button != MouseButton::Left {
+            cx.notify();
+            return;
+        }
+
         let Some((point, side)) = self.hit_test(event.position) else {
             cx.notify();
             return;

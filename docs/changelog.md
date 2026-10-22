@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Chat/Markdown code blocks: Ayu Darker tokens on muted gray
+  background; Linux NativeMenu fallback no longer steals editor focus (selection
+  highlight stays on right-click → Add Selection to Agent).
+
 - **2026-10-22** — Terminal selection → Agent: `⌘L` / `Ctrl+L` and right-click
   Add Selection to Agent attach a `Terminal` snippet chip (same path as
   editor selection).

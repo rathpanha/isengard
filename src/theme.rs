@@ -2,7 +2,8 @@ use std::borrow::Cow;
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::component::highlighter::{HighlightTheme, HighlightThemeStyle};
-use gpui_kit::component::{Theme, ThemeMode};
+use gpui_kit::component::text::TextViewStyle;
+use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::*;
 
 use crate::config::AppConfig;
@@ -72,6 +73,17 @@ pub fn load_fonts(cx: &mut App) {
     if let Err(err) = cx.text_system().add_fonts(fonts) {
         log::error!("failed to load bundled fonts: {err:#}");
     }
+}
+
+/// Markdown / chat [`TextView`] style: Ayu Darker tokens (same as the editor)
+/// on a muted gray code-block background.
+pub fn text_view_style(cx: &App) -> TextViewStyle {
+    let theme = cx.theme();
+    let mut style = TextViewStyle::default();
+    style.highlight_theme = theme.highlight_theme.clone();
+    style.is_dark = true;
+    style.code_block = StyleRefinement::default().bg(theme.muted);
+    style
 }
 
 /// Applies dark mode, the Nerd Font everywhere, the editor font size, and

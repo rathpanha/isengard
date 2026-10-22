@@ -476,7 +476,8 @@ impl IsengardApp {
                         .child(
                             TextView::markdown(id, text)
                                 .scrollable(true)
-                                .selectable(true),
+                                .selectable(true)
+                                .style(crate::theme::text_view_style(cx)),
                         )
                         .into_any_element()
                 }

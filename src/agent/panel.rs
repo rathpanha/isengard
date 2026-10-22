@@ -3714,7 +3714,8 @@ fn render_entry(
                                                     SharedString::from(format!("agent-user-{ix}")),
                                                     text.clone(),
                                                 )
-                                                .selectable(true),
+                                                .selectable(true)
+                                                .style(crate::theme::text_view_style(cx)),
                                             ),
                                         )
                                     })
@@ -3773,7 +3774,9 @@ fn render_entry(
             .w_full()
             .min_w_0()
             .text_sm()
-            .child(TextView::new(state))
+            .child(
+                TextView::new(state).style(crate::theme::text_view_style(cx)),
+            )
             .into_any_element(),
         Entry::Thought(state) => div()
             .w_full()
@@ -3783,7 +3786,11 @@ fn render_entry(
             .border_color(theme.border)
             .text_xs()
             .text_color(theme.muted_foreground)
-            .child(TextView::new(state))
+            .child(
+                // Explicit style: parent muted color would otherwise disable
+                // code-block highlighting (Kit "inverted surface" path).
+                TextView::new(state).style(crate::theme::text_view_style(cx)),
+            )
             .into_any_element(),
         Entry::Tool(tool) => render_tool(panel, tool, cx),
         Entry::Plan(items) => v_flex()
