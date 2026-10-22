@@ -128,6 +128,9 @@ Add a row here whenever a new shared component is created.
 - **Editor context menu:** right-click in a text editor → Kit defaults
   (Cut/Copy/Paste/Select All, plus Go to Definition / Code Actions when
   available) plus **Add Selection to Agent** (same as `⌘L` / Edit menu).
+- **Terminal context menu:** right-click → Copy, Paste, **Add Selection to
+  Agent** (`⌘L` / `Ctrl+L` with terminal focus attaches the selection as a
+  `Terminal` snippet chip).
 - **Tab context menu:** right-click a tab → Close, Close Others (disabled when
   only one tab), Close All. Dirty tabs get one Save All / Don't Save dialog
   for Close Others / Close All. Implemented as Kit `Tab`s in an `h_flex` (not
@@ -267,9 +270,10 @@ Add a row here whenever a new shared component is created.
   `@` on chip text) with ghost `CircleX` remove — chips are from the Attach
   (`Paperclip`) button, paste, **drag-drop** onto the prompt (file-tree
   row, editor tab, or OS file explorer — `drop_target` highlight), or
-  **`⌘L` / `Ctrl+L`** / Edit > Add Selection to Agent / editor right-click
-  **Add Selection to Agent** (selection → `file:N-M` chip, or whole file if
-  the caret has no range); never from `@` mentions; `@` in
+  **`⌘L` / `Ctrl+L`** / Edit > Add Selection to Agent / editor or terminal
+  right-click **Add Selection to Agent** (editor selection → `file:N-M`
+  chip or whole file; terminal selection → `Terminal` snippet chip); never
+  from `@` mentions; `@` in
   the textarea opens a slim bordered mention menu (`text_xs`, scrollable
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);

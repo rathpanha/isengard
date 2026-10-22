@@ -22,44 +22,66 @@ impl IsengardApp {
         agent.update(cx, |agent, cx| agent.new_chat(window, cx));
     }
 
-    /// `⌘L` / `Ctrl+L`: attach the editor selection (or whole file) to the Agent.
+    /// `⌘L` / `Ctrl+L`: attach editor selection (or whole file), or terminal
+    /// selection when the terminal has focus.
     pub(super) fn on_add_selection_to_agent(
         &mut self,
         _: &AddSelectionToAgent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab) = self.tabs.active() else {
-            return notify_error("Open a file before adding to the agent", window, cx);
-        };
-        let Some(state) = tab.editor_state().cloned() else {
-            return notify_error("Only text editors can be added to the agent", window, cx);
-        };
-        let path = tab.path.clone();
-        if document::is_untitled(&path) {
-            return notify_error("Save the file before adding it to the agent", window, cx);
-        }
+        let terminal_focused = self
+            .terminal
+            .read(cx)
+            .focus_handle(cx)
+            .is_some_and(|h| h.is_focused(window));
 
-        let (selected, range, full) = state.read_with(cx, |editor, _| {
-            (
-                editor.selected_text().to_string(),
-                editor.selected_range(),
-                editor.text().to_string(),
-            )
-        });
-        let attachment = if range.is_empty() || selected.is_empty() {
-            Attachment::File {
-                path,
-                text: Some(full),
-                selection: None,
+        let attachment = if terminal_focused {
+            let Some(text) = self
+                .terminal
+                .read(cx)
+                .active_selection_text(cx)
+                .filter(|t| !t.is_empty())
+            else {
+                return notify_error("Select text in the terminal first", window, cx);
+            };
+            Attachment::Snippet {
+                label: "Terminal".into(),
+                text,
             }
         } else {
-            let start = line_at_offset(&full, range.start);
-            let end = line_at_offset(&full, range.end.saturating_sub(1).max(range.start));
-            Attachment::File {
-                path,
-                text: Some(selected),
-                selection: Some(LineRange { start, end }),
+            let Some(tab) = self.tabs.active() else {
+                return notify_error("Open a file before adding to the agent", window, cx);
+            };
+            let Some(state) = tab.editor_state().cloned() else {
+                return notify_error("Only text editors can be added to the agent", window, cx);
+            };
+            let path = tab.path.clone();
+            if document::is_untitled(&path) {
+                return notify_error("Save the file before adding it to the agent", window, cx);
+            }
+
+            let (selected, range, full) = state.read_with(cx, |editor, _| {
+                (
+                    editor.selected_text().to_string(),
+                    editor.selected_range(),
+                    editor.text().to_string(),
+                )
+            });
+            if range.is_empty() || selected.is_empty() {
+                Attachment::File {
+                    path,
+                    text: Some(full),
+                    selection: None,
+                }
+            } else {
+                let start = line_at_offset(&full, range.start);
+                let end = line_at_offset(&full, range.end.saturating_sub(1).max(range.start));
+                Attachment::File {
+                    path,
+                    text: Some(selected),
+                    selection: Some(LineRange { start, end }),
+                }
             }
         };
 

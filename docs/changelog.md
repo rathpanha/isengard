@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Terminal selection → Agent: `⌘L` / `Ctrl+L` and right-click
+  Add Selection to Agent attach a `Terminal` snippet chip (same path as
+  editor selection).
+
 - **2026-10-22** — Agent transcript keeps ~half-pane empty scroll space below
   the latest message (Kit `MessageScroller::with_bottom_space`) so long chats
   are not glued to the composer.

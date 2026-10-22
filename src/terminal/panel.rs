@@ -64,6 +64,13 @@ impl TerminalPanel {
             .map(|tab| tab.view.read(cx).focus_handle().clone())
     }
 
+    /// Selected text in the active terminal tab, if any.
+    pub fn active_selection_text(&self, cx: &App) -> Option<String> {
+        self.tabs
+            .get(self.active)
+            .and_then(|tab| tab.view.read(cx).selection_text())
+    }
+
     pub fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.visible = true;
         self.focus_active(window, cx);

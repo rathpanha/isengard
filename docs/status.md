@@ -133,8 +133,9 @@ tabs, highlighted editor, status bar):
   icon + basename, or image thumb; send resolves to ACP blocks; →/Tab
   dives; empty `@` / filters see workspace roots + nested folders via a
   plain FS walk). Chip row is Attach / paste / drag-drop (tree row, editor
-  tab, or OS explorer onto the prompt) / `⌘L`·`Ctrl+L` / editor right-click
-  Add Selection to Agent (selection or whole file) only — bottom-aligned;
+  tab, or OS explorer onto the prompt) / `⌘L`·`Ctrl+L` / editor or terminal
+  right-click Add Selection to Agent (editor selection or whole file;
+  terminal selection → `Terminal` chip) only — bottom-aligned;
   raster paths and pastes show thumbnails; Paperclip opens the OS
   multi-file picker. Mention tokens and paperclip chips also show as
   icon/name or thumbs in the user bubble.

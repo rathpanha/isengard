@@ -317,8 +317,9 @@ src/
   `prompt_for_paths` (OS multi-file; `directories: false` — folders via `@`)
   → same attach path (each image is a separate chip). Drag-drop onto the
   prompt (`TreeEntryDrag` / `EditorTabDrag` / external paths) and
-  `⌘L`/`Ctrl+L` (`AddSelectionToAgent`: selection → `File` + `LineRange`,
-  or whole buffer if empty) use the same chip path. Composer mounts during
+  `⌘L`/`Ctrl+L` (`AddSelectionToAgent`: editor selection → `File` +
+  `LineRange`, or whole buffer if empty; terminal selection → `Snippet`)
+  use the same chip path. Composer mounts during
   `Starting`/`Opening` when a transcript exists (Send gated on `Ready`).
   Paste image/paths also become chips. `session/prompt`
   sends `Vec<ContentBlock>` (`resource` when `embeddedContext`, else

@@ -116,8 +116,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         KeyBinding::new("secondary-alt-b", ToggleAgentPanel, None),
-        // Editor → Agent: selection (or whole file) as an attach chip.
-        KeyBinding::new("secondary-l", AddSelectionToAgent, Some("!Terminal")),
+        // Editor / terminal → Agent: selection (editor: or whole file) as a chip.
+        KeyBinding::new("secondary-l", AddSelectionToAgent, None),
         // Tree selection only — do not steal Delete/F2 from the editor.
         KeyBinding::new("f2", RenameSelectedTreeItem, Some("Tree")),
         KeyBinding::new("delete", DeleteSelectedTreeItem, Some("Tree")),

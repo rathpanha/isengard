@@ -193,6 +193,8 @@ struct UserRef {
     /// Full path for Material icons (`tree_icon`); empty when paste-only image.
     path: PathBuf,
     is_dir: bool,
+    /// Terminal (or other) snippet — Lucide terminal icon instead of Material path.
+    snippet: bool,
     /// When set, render a small preview instead of a file/folder icon.
     thumb: Option<ImageThumb>,
 }
@@ -237,13 +239,22 @@ fn user_refs_from(
                         name: name.into(),
                         path: path.clone(),
                         is_dir,
+                        snippet: false,
                         thumb,
                     }
                 }
+                Attachment::Snippet { label, .. } => UserRef {
+                    name: label.clone().into(),
+                    path: PathBuf::new(),
+                    is_dir: false,
+                    snippet: true,
+                    thumb,
+                },
                 Attachment::Image { label, path, .. } => UserRef {
                     name: label.clone().into(),
                     path: path.clone().unwrap_or_default(),
                     is_dir: false,
+                    snippet: false,
                     thumb,
                 },
             }
@@ -262,6 +273,7 @@ fn user_refs_from_mention_tokens(tokens: &[InlineTokenSpan]) -> Vec<UserRef> {
                 name: span.token().label().clone(),
                 path,
                 is_dir,
+                snippet: false,
                 thumb,
             }
         })
@@ -3720,7 +3732,17 @@ fn render_entry(
                                                             theme.border,
                                                         );
                                                     }
-                                                    // Files/folders: Material icon + basename.
+                                                    // Files/folders: Material icon + basename;
+                                                    // snippets (terminal): Lucide terminal.
+                                                    let icon = if r.snippet {
+                                                        Icon::new(LucideIcon::SquareTerminal)
+                                                            .text_color(theme.muted_foreground)
+                                                            .into_any_element()
+                                                    } else {
+                                                        material_path_icon(
+                                                            &r.path, r.is_dir, false, cx,
+                                                        )
+                                                    };
                                                     h_flex()
                                                         .items_center()
                                                         .gap_1()
@@ -3730,12 +3752,7 @@ fn render_entry(
                                                         .border_color(theme.border)
                                                         .bg(theme.muted.opacity(0.35))
                                                         .text_xs()
-                                                        .child(material_path_icon(
-                                                            &r.path,
-                                                            r.is_dir,
-                                                            false,
-                                                            cx,
-                                                        ))
+                                                        .child(icon)
                                                         .child(
                                                             div()
                                                                 .min_w_0()
@@ -5304,12 +5321,21 @@ impl AgentPanel {
                     )
                 } else {
                     let label = attachment.label();
-                    let (path, is_dir) = match attachment {
-                        Attachment::File { path, .. } => (path.as_path(), path.is_dir()),
-                        Attachment::Image { path: Some(p), .. } => (p.as_path(), false),
-                        Attachment::Image { label, .. } => (Path::new(label.as_str()), false),
+                    let icon = match attachment {
+                        Attachment::Snippet { .. } => Icon::new(LucideIcon::SquareTerminal)
+                            .text_color(theme.muted_foreground)
+                            .into_any_element(),
+                        Attachment::File { path, .. } => {
+                            let is_root = self.roots.iter().any(|r| r == path);
+                            material_path_icon(path, path.is_dir(), is_root, cx)
+                        }
+                        Attachment::Image { path: Some(p), .. } => {
+                            material_path_icon(p, false, false, cx)
+                        }
+                        Attachment::Image { label, .. } => {
+                            material_path_icon(Path::new(label.as_str()), false, false, cx)
+                        }
                     };
-                    let is_root = self.roots.iter().any(|r| r == path);
                     h_flex()
                         .items_center()
                         .gap_1()
@@ -5319,7 +5345,7 @@ impl AgentPanel {
                         .border_1()
                         .border_color(theme.border)
                         .text_xs()
-                        .child(material_path_icon(path, is_dir, is_root, cx))
+                        .child(icon)
                         .child(div().min_w_0().truncate().child(label))
                         .into_any_element()
                 };

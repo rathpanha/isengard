@@ -37,6 +37,11 @@ pub enum Attachment {
         text: Option<String>,
         selection: Option<LineRange>,
     },
+    /// Non-file text (e.g. terminal selection).
+    Snippet {
+        label: String,
+        text: String,
+    },
     Image {
         mime: String,
         data_b64: String,
@@ -61,7 +66,7 @@ impl Attachment {
                     None => name,
                 }
             }
-            Self::Image { label, .. } => label.clone(),
+            Self::Snippet { label, .. } | Self::Image { label, .. } => label.clone(),
         }
     }
 }
@@ -168,6 +173,7 @@ fn attachment_path(a: &Attachment) -> Option<&Path> {
     match a {
         Attachment::File { path, .. } => Some(path),
         Attachment::Image { path, .. } => path.as_deref(),
+        Attachment::Snippet { .. } => None,
     }
 }
 
@@ -232,6 +238,24 @@ fn attachment_block(attachment: &Attachment, caps: PromptCaps) -> Option<Content
                     }
                     Some(ContentBlock::ResourceLink(link))
                 }
+            }
+        }
+        Attachment::Snippet { label, text } => {
+            let body = text.as_str();
+            if body.len() > MAX_EMBED_BYTES {
+                return None;
+            }
+            let uri = format!("snippet://{label}");
+            if caps.embedded_context {
+                let mut contents = TextResourceContents::new(body.to_owned(), uri);
+                contents = contents.mime_type("text/plain".to_owned());
+                Some(ContentBlock::Resource(EmbeddedResource::new(
+                    EmbeddedResourceResource::TextResourceContents(contents),
+                )))
+            } else {
+                Some(ContentBlock::Text(TextContent::new(format!(
+                    "<context ref=\"{uri}\">\n{body}\n</context>"
+                ))))
             }
         }
         Attachment::Image {
@@ -457,6 +481,24 @@ mod tests {
         assert_eq!(line_at_offset("a\nb\nc", 0), 1);
         assert_eq!(line_at_offset("a\nb\nc", 2), 2);
         assert_eq!(line_at_offset("a\nb\nc", 4), 3);
+    }
+
+    #[test]
+    fn snippet_becomes_context_text() {
+        let blocks = build_blocks(
+            "explain",
+            &[Attachment::Snippet {
+                label: "Terminal".into(),
+                text: "cargo test".into(),
+            }],
+            PromptCaps::default(),
+        );
+        assert_eq!(blocks.len(), 2);
+        let ContentBlock::Text(t) = &blocks[0] else {
+            panic!("expected text context");
+        };
+        assert!(t.text.contains("snippet://Terminal"));
+        assert!(t.text.contains("cargo test"));
     }
 }
 

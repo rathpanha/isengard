@@ -59,6 +59,7 @@ use alacritty_terminal::index::{Column, Point as AlacPoint};
 use alacritty_terminal::selection::{Selection as AlacSelection, SelectionType as AlacSelectionType};
 use alacritty_terminal::term::TermMode;
 use gpui_kit::component::input::{Copy as EditCopy, Paste as EditPaste};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::{ClipboardItem, Edges, prelude::FluentBuilder as _, *};
 
 use crate::ui::components::notify_success;
@@ -945,7 +946,8 @@ impl TerminalView {
         })
     }
 
-    fn selection_text(&self) -> Option<String> {
+    /// Selected terminal text, if any (for copy / Add Selection to Agent).
+    pub fn selection_text(&self) -> Option<String> {
         self.state.with_term(|term| term.selection_to_string())
     }
 
@@ -1165,6 +1167,15 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .context_menu(|menu, _, _| {
+                menu.menu("Copy", Box::new(EditCopy))
+                    .menu("Paste", Box::new(EditPaste))
+                    .separator()
+                    .menu(
+                        "Add Selection to Agent",
+                        Box::new(crate::app::AddSelectionToAgent),
+                    )
+            })
             .child(
                 canvas(
                     move |bounds, _window, _cx| bounds,
