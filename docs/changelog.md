@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Gate `Command` import in `agent/limits.rs` to macOS so
+  Linux `cargo run` is warning-free.
+
 - **2026-10-22** — Modal dialogs: no enter animation / panel shadow, and the
   host is clipped to the Linux CSD content frame so the dim overlay no longer
   paints into the transparent window-shadow padding (looked like a slab under

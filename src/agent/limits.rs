@@ -5,6 +5,7 @@
 //! The token stays in this process and is only sent to `api.anthropic.com`.
 //! Best effort — the endpoint is undocumented, so any failure just hides the bars.
 
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use serde_json::Value;
