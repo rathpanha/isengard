@@ -142,7 +142,7 @@ src/
 │   ├── files.rs         `slice_lines` for `fs/read_text_file` ranges
 │   └── testing.rs       (tests) in-memory `FakeAgent` + `install` hook
 ├── agent/
-│   ├── panel.rs         `AgentPanel`: status, transcript (`MessageScroller`),
+│   ├── panel.rs         `AgentPanel`: transcript (`MessageScroller` + half-pane bottom space),
 │   │                    tool rows, permission buttons, composer + `@` menu
 │   ├── limits.rs        Claude plan usage (5h/week) via OAuth; merge keeps last good
 │   ├── mention.rs       `@` query parse + workspace file/folder listing

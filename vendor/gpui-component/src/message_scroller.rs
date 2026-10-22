@@ -1,10 +1,11 @@
 use std::{ops::Range, time::Duration};
 
 use gpui::{
-    AnyElement, App, Axis, Context, ElementId, Entity, FollowMode, Hsla, InteractiveElement as _,
-    IntoElement, ListAlignment, ListOffset, ListState, ParentElement as _, RenderOnce, Role,
-    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
-    linear_color_stop, linear_gradient, list, prelude::FluentBuilder as _, px, rems,
+    AnyElement, App, Axis, Context, DefiniteLength, ElementId, Entity, FollowMode, Hsla,
+    InteractiveElement as _, IntoElement, ListAlignment, ListOffset, ListState,
+    ParentElement as _, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, Window, div, linear_color_stop, linear_gradient, list,
+    prelude::FluentBuilder as _, px, rems,
 };
 use gpui_base::motion::{Transition, transition};
 
@@ -175,6 +176,10 @@ pub struct MessageScroller {
     jump_button_renderer: Option<Box<dyn FnOnce(Button) -> Button>>,
     jump_button_transition: Duration,
     bottom_fade: Option<Hsla>,
+    /// Scrollable empty space after the last row (fraction of viewport height
+    /// or absolute). Lets long chats sit above the fold instead of glued to
+    /// the bottom edge. Default matches the old `py_2` bottom pad.
+    bottom_space: DefiniteLength,
     scrollbar: bool,
     jump_button: bool,
     jump_button_label: SharedString,
@@ -205,10 +210,19 @@ impl MessageScroller {
             jump_button_renderer: None,
             jump_button_transition: JUMP_BUTTON_TRANSITION,
             bottom_fade: None,
+            bottom_space: rems(0.5).into(),
             scrollbar: true,
             jump_button: true,
             jump_button_label: "Jump to latest".into(),
         }
+    }
+
+    /// Empty scroll room after the last message (e.g. `relative(0.5)` ≈ half
+    /// the viewport). Tail-follow still lands on the latest row; the spacer
+    /// sits below it so longer sessions are not glued to the bottom edge.
+    pub fn with_bottom_space(mut self, space: impl Into<DefiniteLength>) -> Self {
+        self.bottom_space = space.into();
+        self
     }
 
     /// Enable or disable the virtual-list scrollbar.
@@ -360,7 +374,8 @@ impl RenderOnce for MessageScroller {
         })
         .size_full()
         .min_h_0()
-        .py_2()
+        .pt_2()
+        .pb(self.bottom_space)
         .refine_style(&list_style);
 
         let viewport = div()

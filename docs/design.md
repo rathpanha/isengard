@@ -316,9 +316,12 @@ Add a row here whenever a new shared component is created.
   transcript is shown / session is opening (Send disabled until Ready) so
   history does not jump when the agent finishes connecting. User bubbles
   show attachment refs the same way (Material icon + basename, or image
-  thumb only — never Lucide Folder/File/Image, never a leading `@`). While a turn runs, a Kit `Spinner` + activity
+  thumb only — never Lucide Folder/File/Image, never a leading `@`).   While a turn runs, a Kit `Spinner` + activity
   label also sits at the bottom of the transcript pane (in addition to the
-  header spinner), so a long chat still shows work in progress. Non-ready
+  header spinner), so a long chat still shows work in progress. Transcript
+  `MessageScroller` keeps ~50% viewport bottom scroll space after the last
+  row so longer sessions can sit mid-pane (not glued to the composer).
+  Non-ready
   states are one centred column: Spinner + "Starting…"; not installed →
   primary Install (`Download`, loading while npm runs) + danger error line;
   login → one button per agent login method (first primary, others outline)

@@ -4898,6 +4898,9 @@ impl AgentPanel {
                     None => div().into_any_element(),
                 }
             })
+            // ~half the pane below the latest row so long chats can sit mid-
+            // viewport (Cursor-style), not glued to the composer.
+            .with_bottom_space(relative(0.5))
             .size_full()
             .into_any_element()
         };

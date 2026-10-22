@@ -126,7 +126,9 @@ tabs, highlighted editor, status bar):
   Header shows a live activity line while busy
   (spinner + real tool title, or Thinking/Writing/…). While a turn runs,
   Spinner + activity also appear at the bottom of the transcript (not only
-  in the header).   Composer: type `@` for a slim file/folder picker (filter; click/Enter
+  in the header). Long chats keep ~half-pane scroll room under the latest
+  message so the end is not glued to the composer. Composer: type `@` for a
+  slim file/folder picker (filter; click/Enter
   inserts an inline token in the prompt Textarea — Material folder/file
   icon + basename, or image thumb; send resolves to ACP blocks; →/Tab
   dives; empty `@` / filters see workspace roots + nested folders via a

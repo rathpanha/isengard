@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent transcript keeps ~half-pane empty scroll space below
+  the latest message (Kit `MessageScroller::with_bottom_space`) so long chats
+  are not glued to the composer.
+
 - **2026-10-22** — Plan usage bar tooltips show reset time in local date/time
   (e.g. `Thu Oct 22, 2026 3:10 PM`) instead of raw UTC ISO-8601.
 
