@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — File tree drag: dropping on an invalid target (e.g. itself)
+  clears the hover and can no longer fall through and move the item to the root.
+
 - **2026-10-22** — File tree: folders toggle on click instead of mouse-down,
   so dragging a folder no longer expands it.
 

@@ -578,23 +578,34 @@ impl FileTreePanel {
                             })
                         })
                         .when_some(drop_dir, |item, dir| {
-                            let dir_ok = dir.clone();
-                            let roots_ok = root_paths.clone();
-                            item.can_drop(move |value, _, _| {
-                                value.downcast_ref::<TreeEntryDrag>().is_some_and(|d| {
+                            // No `can_drop`: GPUI then skips this row's listener on a
+                            // refused drop, leaving the drag alive for the panel's
+                            // blank-space handler (it would move the item to the root)
+                            // and the hover painted. Handle every drop; gate inside.
+                            let allowed = {
+                                let dir = dir.clone();
+                                Rc::new(move |d: &TreeEntryDrag| {
                                     if d.is_root {
                                         // Roots only reorder, and only onto another root.
                                         row_is_root
-                                            && reorder_allowed(&roots_ok, &d.path, Some(&dir_ok))
+                                            && reorder_allowed(&root_paths, &d.path, Some(&dir))
                                     } else {
-                                        move_allowed(&d.path, &dir_ok)
+                                        move_allowed(&d.path, &dir)
                                     }
                                 })
-                            })
-                            .drag_over::<TreeEntryDrag>(|this, _, _, cx| {
-                                this.bg(cx.theme().drop_target)
+                            };
+                            let allowed_over = allowed.clone();
+                            item.drag_over::<TreeEntryDrag>(move |this, d, _, cx| {
+                                if allowed_over(d) {
+                                    this.bg(cx.theme().drop_target)
+                                } else {
+                                    this
+                                }
                             })
                             .on_drop(move |d: &TreeEntryDrag, window, cx| {
+                                if !allowed(d) {
+                                    return;
+                                }
                                 if d.is_root {
                                     window.dispatch_action(
                                         Box::new(ReorderRoot {
@@ -810,21 +821,11 @@ impl FileTreePanel {
             .w_full()
             .overflow_hidden()
             .when_some(blank_drop_root, |panel, root| {
-                let root_ok = root.clone();
-                let roots_ok = blank_roots.clone();
-                panel
-                    .can_drop(move |value, _, _| {
-                        value.downcast_ref::<TreeEntryDrag>().is_some_and(|d| {
-                            if d.is_root {
-                                // Blank space below the rows → last root.
-                                reorder_allowed(&roots_ok, &d.path, None)
-                            } else {
-                                move_allowed(&d.path, &root_ok)
-                            }
-                        })
-                    })
-                    .on_drop(move |d: &TreeEntryDrag, window, cx| {
-                        if d.is_root {
+                let roots = blank_roots.clone();
+                panel.on_drop(move |d: &TreeEntryDrag, window, cx| {
+                    if d.is_root {
+                        // Blank space below the rows → last root.
+                        if reorder_allowed(&roots, &d.path, None) {
                             window.dispatch_action(
                                 Box::new(ReorderRoot {
                                     folder: d.path.clone(),
@@ -832,16 +833,17 @@ impl FileTreePanel {
                                 }),
                                 cx,
                             );
-                        } else {
-                            window.dispatch_action(
-                                Box::new(MovePath {
-                                    from: d.path.clone(),
-                                    to_dir: root.clone(),
-                                }),
-                                cx,
-                            );
                         }
-                    })
+                    } else if move_allowed(&d.path, &root) {
+                        window.dispatch_action(
+                            Box::new(MovePath {
+                                from: d.path.clone(),
+                                to_dir: root.clone(),
+                            }),
+                            cx,
+                        );
+                    }
+                })
             })
             .context_menu(move |menu, window, cx| {
                 if blank_menu_blocked.replace(false) {

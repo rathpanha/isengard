@@ -146,7 +146,9 @@ Add a row here whenever a new shared component is created.
   never runs, which keeps a drag from expanding the folder (`ToggleDir`).
   Multi-root: root rows are draggable too but only **reorder** (drop on another
   root = insert before it; blank space = last); a root can't be moved into a
-  folder and a file can't reorder roots. No-op positions are not drop targets.
+  folder and a file can't reorder roots. No-op positions get no highlight. Every row consumes the drop (no `can_drop`):
+  a refused drop is ignored inside the handler, so it can't fall through to the
+  panel's blank-space handler or leave the hover painted.
 - **File icons (tree + editor tabs + agent mentions):** full Material Icon
   Theme under `assets/icons/material/` (MIT; see its `LICENSE`) with
   associations from `assets/icons/material-icons.json`, via
