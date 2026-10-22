@@ -315,8 +315,11 @@ Add a row here whenever a new shared component is created.
   them. (2) action
   row: ghost `.small()` Attach (`Paperclip` — OS multi-file picker;
   folders via `@`) + muted hint (`Enter to send`, or `Enter to queue` /
-  `N queued · Enter to queue` while busy) + primary Send (`ArrowUp`,
-  label **Queue** while a turn runs — always enqueues when busy) and,
+  `N queued · Enter to queue` while busy) + ghost Improve (`Sparkles` —
+  silent ACP rewrite of plain composer text into the draft; never
+  auto-sends; flattens `@` chips to words; keeps attachment chips;
+  `.loading` while rewriting) left of primary Send (`ArrowUp`,
+  label **Queue** while a user turn runs — always enqueues when busy) and,
   while busy, a sibling `.danger()` Stop (solid square block, not Lucide
   stroke `Square`). Queued prompts stay out of the transcript until
   drained FIFO when the current turn ends (cleared on disconnect /

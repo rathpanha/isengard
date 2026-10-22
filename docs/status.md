@@ -179,7 +179,8 @@ tabs, highlighted editor, status bar):
   Composer: config row (icon+label taps: Mode icon tracks Ask/Auto/Plan/
   accept-edits — Auto omitted for Claude models older than 4.6; Model `Cpu` /
   Version/Context; Fast Switch; Effort/agent/…)
-  sits in a fixed-height band above Attach / Queue+Stop (horizontal
+  sits in a fixed-height band above Attach / Improve (`Sparkles` silent
+  rewrite into the draft — review then Send) / Queue+Stop (horizontal
   scroll; disabled until Ready). Picks are remembered per folder/workspace
   (`sessions.<key>.agent_prefs`, seeded from global last-used `agent_prefs`)
   and re-applied to every chat opened — new, loaded, or after a restart.

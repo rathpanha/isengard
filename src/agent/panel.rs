@@ -445,6 +445,8 @@ pub struct AgentPanel {
     title_transcripts: HashMap<String, String>,
     /// After loading a non-active chat, run Generate once entries land.
     pending_title: Option<String>,
+    /// Improved composer draft waiting for `render` (needs `Window` for set_value).
+    pending_improve: Option<String>,
     /// New chats get a first-prompt placeholder title; after the first real
     /// turn we run a silent title turn once (cleared on rename / success).
     needs_auto_title: HashSet<String>,
@@ -461,7 +463,7 @@ pub struct AgentPanel {
     scroller: Entity<MessageScrollerState>,
     input: Entity<TextareaState>,
     install_error: Option<SharedString>,
-    /// Silent one-shot turn (commit message / chat title) — not shown in chat.
+    /// Silent one-shot turn (commit / title / improve) — not shown in chat.
     silent: Option<SilentTurn>,
     /// ACP session modes from the last open (Ask/Code/…).
     modes: Option<SessionModeState>,
@@ -505,6 +507,8 @@ enum SilentTurn {
         text: String,
         notify: bool,
     },
+    /// Rewrite composer draft; applied through `pending_improve` on next render.
+    Improve { text: String },
 }
 
 /// A user prompt waiting for the current turn to finish.
@@ -519,7 +523,7 @@ struct QueuedPrompt {
 impl SilentTurn {
     fn text_mut(&mut self) -> &mut String {
         match self {
-            Self::Commit { text, .. } | Self::Title { text, .. } => text,
+            Self::Commit { text, .. } | Self::Title { text, .. } | Self::Improve { text } => text,
         }
     }
 }
@@ -794,6 +798,7 @@ impl AgentPanel {
             transcript_of: None,
             title_transcripts: HashMap::new(),
             pending_title: None,
+            pending_improve: None,
             needs_auto_title: HashSet::new(),
             pending_file_change_restore: false,
             entries: Vec::new(),
@@ -1731,7 +1736,54 @@ impl AgentPanel {
                     self.push_notice("Title generation stopped.", false, cx);
                 }
             }
+            SilentTurn::Improve { text } => {
+                if ok {
+                    let improved = scrub_improved_prompt(&text);
+                    if improved.is_empty() {
+                        self.push_notice("Could not improve the prompt.", true, cx);
+                    } else {
+                        self.pending_improve = Some(improved);
+                    }
+                } else {
+                    self.push_notice("Prompt improve stopped.", false, cx);
+                }
+            }
         }
+    }
+
+    /// Apply a finished Improve rewrite (needs `Window` for Textarea `set_value`).
+    fn flush_pending_improve(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.pending_improve.take() else {
+            return;
+        };
+        self.mention = None;
+        let caret = text.len();
+        self.input.update(cx, |input, cx| {
+            input.set_value(&text, window, cx);
+            input.set_selected_range(caret..caret, cx);
+        });
+        self.focus_input(window, cx);
+        cx.notify();
+    }
+
+    /// Silent rewrite of the composer draft into plain text (attachments kept).
+    fn request_improve_prompt(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.can_prompt() {
+            return false;
+        }
+        let content = self.input.read(cx).content();
+        let tokens = content.tokens();
+        let draft = text_without_tokens(content.text(), tokens);
+        if draft.is_empty() {
+            return false;
+        }
+        self.start_silent(
+            build_improve_prompt(&draft),
+            SilentTurn::Improve {
+                text: String::new(),
+            },
+            cx,
+        )
     }
 
     /// Abort an in-flight silent turn (tools / permissions / disconnect).
@@ -3316,6 +3368,19 @@ fn build_chat_title_prompt(transcript: &str) -> String {
     )
 }
 
+fn build_improve_prompt(draft: &str) -> String {
+    format!(
+        "Rewrite this user message into a clearer prompt for a coding agent.\n\n\
+         Rules:\n\
+         - Fix spelling and grammar; expand lazy shorthand when the intent is clear.\n\
+         - Keep the original intent and scope — do not invent files, requirements, or constraints.\n\
+         - Reply with ONLY the improved prompt text.\n\
+         - No quotes, no markdown fences, no preamble or explanation.\n\
+         - Do not use tools.\n\n\
+         Draft:\n{draft}\n"
+    )
+}
+
 /// First line, short — same ceiling as the first-prompt fallback title.
 fn scrub_chat_title(raw: &str) -> String {
     let scrubbed = crate::git::scrub_commit_message(raw);
@@ -3325,6 +3390,28 @@ fn scrub_chat_title(raw: &str) -> String {
         title.push('…');
     }
     title
+}
+
+/// Strip fences / quotes / “here’s an improved…” wrappers from an Improve reply.
+fn scrub_improved_prompt(raw: &str) -> String {
+    let mut s = crate::git::scrub_commit_message(raw);
+    const LABELS: &[&str] = &[
+        "Improved prompt:",
+        "improved prompt:",
+        "Improved:",
+        "improved:",
+        "Here's the improved prompt:",
+        "Here's an improved prompt:",
+        "Here is the improved prompt:",
+        "Here is an improved prompt:",
+    ];
+    for label in LABELS {
+        if let Some(rest) = s.strip_prefix(label) {
+            s = rest.trim().to_owned();
+            break;
+        }
+    }
+    s.trim().to_owned()
 }
 
 struct ConfigSelect {
@@ -5297,14 +5384,20 @@ impl AgentPanel {
     fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let busy = self.turn_running;
+        let improving = matches!(self.silent, Some(SilentTurn::Improve { .. }));
+        let draft_plain = {
+            let content = self.input.read(cx).content();
+            text_without_tokens(content.text(), content.tokens())
+        };
         let draft = {
             let input = self.input.read(cx);
-            !input.value().trim().is_empty()
+            !draft_plain.is_empty()
                 || !input.tokens().is_empty()
                 || !self.attachments.is_empty()
         };
         // Send stays available while busy — it queues. Stop is separate.
-        let can_send = ready && draft;
+        let can_send = ready && draft && !improving;
+        let can_improve = ready && !busy && self.silent.is_none() && !draft_plain.is_empty();
         let stop = busy.then(|| {
             // Lucide `Square` is stroke-only (hollow); stop needs a solid block.
             Button::new("agent-stop")
@@ -5321,11 +5414,25 @@ impl AgentPanel {
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
                 .into_any_element()
         });
+        let improve = Button::new("agent-improve")
+            .ghost()
+            .small()
+            .icon(LucideIcon::Sparkles)
+            .tooltip("Improve prompt")
+            .loading(improving)
+            .disabled(!can_improve && !improving)
+            .when(can_improve, |b| {
+                b.cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let _ = this.request_improve_prompt(cx);
+                    }))
+            })
+            .into_any_element();
         let send = Button::new("agent-send")
             .primary()
             .small()
             .icon(LucideIcon::ArrowUp)
-            .label(if busy { "Queue" } else { "Send" })
+            .label(if busy && !improving { "Queue" } else { "Send" })
             .disabled(!can_send)
             .when(can_send, |b| {
                 b.cursor_pointer()
@@ -5335,6 +5442,7 @@ impl AgentPanel {
         let actions = h_flex()
             .gap_1()
             .items_center()
+            .child(improve)
             .children(stop)
             .child(send);
         let hint = if busy {
@@ -5709,7 +5817,8 @@ impl AgentPanel {
 }
 
 impl Render for AgentPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.flush_pending_improve(window, cx);
         let ready = matches!(self.status, Status::Ready);
         // Keep the transcript on screen while reconnecting / replaying into it.
         let show_transcript = ready
@@ -5781,5 +5890,36 @@ mod mode_filter_tests {
         assert_eq!(ids("opus-5"), vec!["ask", "auto", "plan"]);
         // Non-Claude agents keep Auto.
         assert_eq!(ids("gpt-4o"), vec!["ask", "auto", "plan"]);
+    }
+}
+
+#[cfg(test)]
+mod improve_prompt_tests {
+    use super::{build_improve_prompt, scrub_improved_prompt};
+
+    #[test]
+    fn scrub_strips_fences_and_preamble() {
+        assert_eq!(
+            scrub_improved_prompt("```\nFix the overlay pushing chat\n```"),
+            "Fix the overlay pushing chat"
+        );
+        assert_eq!(
+            scrub_improved_prompt("Improved prompt: Make expand absolute over the transcript"),
+            "Make expand absolute over the transcript"
+        );
+        assert_eq!(
+            scrub_improved_prompt("Here's an improved prompt:\nKeep attachments; rewrite text only"),
+            "Keep attachments; rewrite text only"
+        );
+        assert_eq!(scrub_improved_prompt("\"Tighten the error message\""), "Tighten the error message");
+        assert!(scrub_improved_prompt("   ").is_empty());
+    }
+
+    #[test]
+    fn improve_prompt_asks_for_plain_rewrite() {
+        let p = build_improve_prompt("fix overlay push chat");
+        assert!(p.contains("Draft:\nfix overlay push chat"));
+        assert!(p.contains("ONLY the improved prompt"));
+        assert!(p.contains("do not invent"));
     }
 }

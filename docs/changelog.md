@@ -39,6 +39,9 @@ status, architecture, or design. See [README.md](README.md).
   the latest message (Kit `MessageScroller::with_bottom_space`) so long chats
   are not glued to the composer.
 
+- **2026-10-22** — Agent composer ghost **Improve** (`Sparkles`) left of Send:
+  silent ACP rewrite into the draft for review; never auto-sends.
+
 - **2026-10-22** — Plan usage bar tooltips show reset time in local date/time
   (e.g. `Thu Oct 22, 2026 3:10 PM`) instead of raw UTC ISO-8601.
 
