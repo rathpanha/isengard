@@ -246,14 +246,19 @@ Add a row here whenever a new shared component is created.
   allow-once `.primary()`, allow-always `.outline()`, reject
   `.danger().outline()`.   Composer: optional wrap-row of attachment chips
   (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
-  `@` on chip text) with ghost `CircleX` remove; `@` in
+  `@` on chip text) with ghost `CircleX` remove — chips are **only** from
+  the Attach (`Paperclip`) button, paste, or (future) drag-drop, never from
+  `@` mentions; `@` in
   the textarea opens a slim bordered mention menu (`text_xs`, scrollable
   ~200px): empty `@` lists every root child except build/deps skips
   (`.git`, `node_modules`, `target`, …); typing fuzzy-filters (≤8 hits);
-  ↑↓ move (scrolls selection into view); click/Enter attaches file or
-  folder; →/Tab dives (query gets a trailing `/` and lists that folder);
-  empty `@` lists nested folders (not only top-level) plus root files;
-  Esc closes; then auto-growing
+  ↑↓ move (scrolls selection into view); click/Enter replaces the `@query`
+  with a Kit **inline token inside the prompt Textarea** (Material
+  folder/file icon + basename, or a line-height image thumb — not a path
+  string and not the paperclip chip row); send resolves those to ACP
+  resource/image blocks; →/Tab dives (query gets a trailing `/` and lists
+  that folder); empty `@` lists nested folders (not only top-level) plus
+  root files; Esc closes; then auto-growing
   `Textarea` (Enter sends when the menu is closed, Shift+Enter newline;
   paste image / file paths become chips); then **two** composer strips:
   (1) session config row when ACP advertises options — each tap is ghost

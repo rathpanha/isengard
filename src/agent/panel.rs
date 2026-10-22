@@ -18,7 +18,10 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
     h_flex,
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{
+        InlineToken, InlineTokenContext, InlineTokenSpan, Input, InputEvent, InputState, Textarea,
+        TextareaState,
+    },
     list::ListItem,
     message::{Message, MessageAlignment, MessageContent},
     message_scroller::{MessageScroller, MessageScrollerState},
@@ -68,7 +71,9 @@ pub enum AgentPanelEvent {
     Login { title: String, command: TerminalCommand },
     /// Open the OS file picker and attach the chosen paths.
     AttachFromDisk,
-    /// Attach a path from the `@` mention picker (buffer text preferred).
+    /// Attach a path as a chip (paperclip / tests). `@` mentions stay in the
+    /// prompt and are resolved on send instead.
+    #[allow(dead_code)]
     AttachPath(PathBuf),
     /// Open these paths in editor tabs (file-change summary row click).
     OpenPaths(Vec<PathBuf>),
@@ -245,6 +250,97 @@ fn user_refs_from(
         .collect()
 }
 
+fn user_refs_from_mention_tokens(tokens: &[InlineTokenSpan]) -> Vec<UserRef> {
+    tokens
+        .iter()
+        .map(|span| {
+            let path = PathBuf::from(span.token().id().as_ref());
+            let is_dir = path.is_dir();
+            let thumb = document::is_image(&path).then(|| ImageThumb::Path(path.clone()));
+            UserRef {
+                name: span.token().label().clone(),
+                path,
+                is_dir,
+                thumb,
+            }
+        })
+        .collect()
+}
+
+/// Prompt text with inline-token backing strings removed (attachments carry them).
+fn text_without_tokens(text: &str, tokens: &[InlineTokenSpan]) -> String {
+    let mut out = text.to_owned();
+    for span in tokens.iter().rev() {
+        let range = span.range();
+        if range.end <= out.len() {
+            out.replace_range(range, "");
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Inline `@` chip inside the composer Textarea (Material icon or image thumb).
+fn render_mention_token(ctx: &InlineTokenContext, roots: &[PathBuf], cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let path = PathBuf::from(ctx.token().id().as_ref());
+    let h = ctx.line_height();
+    if document::is_image(&path) {
+        return div()
+            .id(SharedString::from(format!("agent-inline-img-{}", path.display())))
+            .h(h)
+            .w(h)
+            .min_w(h)
+            .min_h(h)
+            .flex_shrink_0()
+            .overflow_hidden()
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(if ctx.is_selected() {
+                theme.selection.alpha(1.)
+            } else {
+                theme.border
+            })
+            .child(
+                img(path)
+                    .id("agent-inline-img-src")
+                    .object_fit(ObjectFit::Cover)
+                    .size_full(),
+            )
+            .into_any_element();
+    }
+    let is_dir = path.is_dir();
+    let is_root = roots.iter().any(|r| r == &path);
+    // Material icons (same as the tree) — Kit InputToken only takes Lucide Icon.
+    div()
+        .id(SharedString::from(format!("agent-inline-tok-{}", path.display())))
+        .flex()
+        .items_center()
+        .gap_1()
+        .px_1()
+        .h(h)
+        .max_w(ctx.available_width())
+        .rounded(theme.radius)
+        .border_1()
+        .map(|this| {
+            if ctx.is_selected() {
+                this.bg(theme.selection)
+                    .border_color(theme.selection.alpha(1.))
+            } else {
+                this.bg(theme.muted).border_color(theme.border)
+            }
+        })
+        .text_color(theme.foreground)
+        .when(ctx.is_disabled(), |this| this.opacity(0.5))
+        .child(material_path_icon(&path, is_dir, is_root, cx))
+        .child(
+            div()
+                .min_w_0()
+                .text_ellipsis()
+                .child(ctx.token().label().clone()),
+        )
+        .into_any_element()
+}
+
 /// Material file/folder icon (same as the explorer tree).
 fn material_path_icon(path: &Path, is_dir: bool, is_root: bool, cx: &App) -> AnyElement {
     tree_icon(path, is_dir, false, is_root, cx.theme().is_dark())
@@ -339,7 +435,7 @@ pub struct AgentPanel {
     /// race ahead of replay `Update`s on cold start).
     pending_file_change_restore: bool,
     entries: Vec<Entry>,
-    /// Context chips for the next prompt (@file / selection / image).
+    /// Context chips for the next prompt (paperclip / paste / drag-drop).
     attachments: Vec<Attachment>,
     /// Parallel to `attachments`: image thumbnails (path or decoded paste).
     attachment_thumbs: Vec<Option<ImageThumb>>,
@@ -910,6 +1006,29 @@ impl AgentPanel {
         self.refresh_mention(cx);
     }
 
+    /// Confirm the selected `@` mention into the composer (tests).
+    #[cfg(test)]
+    pub fn confirm_mention_for_test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.confirm_mention(window, cx);
+    }
+
+    /// Composer text (tests).
+    #[cfg(test)]
+    pub fn composer_text_for_test(&self, cx: &App) -> String {
+        self.input.read(cx).value().to_string()
+    }
+
+    /// Labels of inline `@` tokens in the composer (tests).
+    #[cfg(test)]
+    pub fn prompt_mention_names_for_test(&self, cx: &App) -> Vec<String> {
+        self.input
+            .read(cx)
+            .tokens()
+            .iter()
+            .map(|s| s.token().label().to_string())
+            .collect()
+    }
+
     pub fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.attachments.len() {
             self.attachments.remove(index);
@@ -921,8 +1040,16 @@ impl AgentPanel {
     }
 
     fn refresh_mention(&mut self, cx: &mut Context<Self>) {
-        let (text, cursor) = self.input.read_with(cx, |input, _| {
-            (input.value().to_string(), input.selected_range().end)
+        let (text, cursor, token_ranges) = self.input.read_with(cx, |input, _| {
+            (
+                input.value().to_string(),
+                input.selected_range().end,
+                input
+                    .tokens()
+                    .iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+            )
         });
         let Some(query) = mention::mention_at_cursor(&text, cursor) else {
             if self.mention.take().is_some() {
@@ -930,6 +1057,16 @@ impl AgentPanel {
             }
             return;
         };
+        // Ignore `@` that is only the backing text of an existing inline token.
+        if token_ranges
+            .iter()
+            .any(|r| r.start <= query.at && query.at < r.end)
+        {
+            if self.mention.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
         let hits = mention::list_mentions(&self.roots, &query.query, MAX_MENTION_HITS);
         let selected = self
             .mention
@@ -983,14 +1120,36 @@ impl AgentPanel {
         };
         let at = menu.query.at;
         let cursor = menu.cursor;
-        let text = self.input.read_with(cx, |input, _| input.value().to_string());
-        let (next, caret) = mention::strip_mention(&text, at, cursor);
-        self.input.update(cx, |input, cx| {
-            input.set_value(&next, window, cx);
-            input.set_selected_range(caret..caret, cx);
-        });
+        let token_count = self.input.read(cx).tokens().len();
+        if token_count >= MAX_ATTACHMENTS {
+            self.push_notice(
+                format!("At most {MAX_ATTACHMENTS} @ mentions per message."),
+                true,
+                cx,
+            );
+            self.close_mention(cx);
+            return;
+        }
+        let mut name = hit
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| hit.path.display().to_string());
+        if hit.is_dir && !name.ends_with('/') {
+            name.push('/');
+        }
+        // Backing text is the basename (no leading `@` — that would re-trigger the
+        // mention menu). Rendered as an inline chip inside the prompt Textarea.
+        let token = InlineToken::new(hit.path.to_string_lossy().to_string(), name.clone())
+            .with_label(name);
         self.mention = None;
-        cx.emit(AgentPanelEvent::AttachPath(hit.path));
+        let result = self.input.update(cx, |input, cx| {
+            input.replace_range_with_token(at..cursor, token, window, cx)
+        });
+        if let Err(err) = result {
+            log::warn!("agent: insert @ token failed: {err}");
+            self.push_notice("Could not insert that mention.", true, cx);
+        }
         cx.notify();
     }
 
@@ -1007,11 +1166,7 @@ impl AgentPanel {
         let text = self.input.read_with(cx, |input, _| input.value().to_string());
         let rel = mention::mention_rel_label(&self.roots, &hit.path);
         let insert = format!("@{}/", rel.trim_end_matches('/'));
-        let mut out = String::new();
-        out.push_str(&text[..at.min(text.len())]);
-        out.push_str(&insert);
-        out.push_str(&text[cursor.min(text.len())..]);
-        let caret = at + insert.len();
+        let (out, caret) = mention::replace_mention(&text, at, cursor, &insert);
         self.input.update(cx, |input, cx| {
             input.set_value(&out, window, cx);
             input.set_selected_range(caret..caret, cx);
@@ -1023,7 +1178,7 @@ impl AgentPanel {
         if let Some(menu) = self.mention.as_mut() {
             menu.selected = index;
         }
-        // Same as Enter: attach file or folder. Dive with →/Tab only.
+        // Same as Enter: insert `@path` into the prompt. Dive with →/Tab only.
         self.confirm_mention(window, cx);
     }
 
@@ -1956,8 +2111,10 @@ impl AgentPanel {
         if !matches!(self.status, Status::Ready) {
             return;
         }
-        let text = self.input.read(cx).value().trim().to_string();
-        if text.is_empty() && self.attachments.is_empty() {
+        let content = self.input.read(cx).content();
+        let tokens = content.tokens().to_vec();
+        let text = text_without_tokens(content.text(), &tokens);
+        if text.is_empty() && self.attachments.is_empty() && tokens.is_empty() {
             return;
         }
         let Some(session) = self.session.clone() else {
@@ -1970,18 +2127,31 @@ impl AgentPanel {
         let thumbs = std::mem::take(&mut self.attachment_thumbs);
         self.mention = None;
         let caps = self.prompt_caps();
-        let blocks = prompt::build_blocks(&text, &attachments, caps);
+        // Inline `@` tokens in the prompt → ACP blocks. Paperclip chips stay
+        // on the attach strip. Also honor any leftover typed `@rel`.
+        let mut mentioned: Vec<_> = tokens
+            .iter()
+            .filter_map(|s| prompt::attachment_from_path(Path::new(s.token().id().as_ref())))
+            .collect();
+        for path in mention::paths_in_text(&self.roots, content.text()) {
+            if let Some(a) = prompt::attachment_from_path(&path) {
+                mentioned.push(a);
+            }
+        }
+        let for_wire = prompt::merge_attachments(attachments.clone(), mentioned);
+        let blocks = prompt::build_blocks(&text, &for_wire, caps);
         if blocks.is_empty() {
             self.attachments = attachments;
             self.attachment_thumbs = thumbs;
             return;
         }
         let title = if text.is_empty() {
-            display_user_message(&text, &attachments)
+            display_user_message(&text, &for_wire)
         } else {
             text.clone()
         };
-        let refs = user_refs_from(&attachments, &thumbs);
+        let mut refs = user_refs_from_mention_tokens(&tokens);
+        refs.extend(user_refs_from(&attachments, &thumbs));
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
 
         // Busy (user turn or silent job): queue without a transcript bubble yet
@@ -4748,7 +4918,12 @@ impl AgentPanel {
     fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let busy = self.turn_running;
-        let draft = !self.input.read(cx).value().trim().is_empty() || !self.attachments.is_empty();
+        let draft = {
+            let input = self.input.read(cx);
+            !input.value().trim().is_empty()
+                || !input.tokens().is_empty()
+                || !self.attachments.is_empty()
+        };
         // Send stays available while busy — it queues. Stop is separate.
         let can_send = ready && draft;
         let stop = busy.then(|| {
@@ -4800,6 +4975,7 @@ impl AgentPanel {
         let border = theme.border;
         let chips = (!self.attachments.is_empty()).then(|| self.render_attachment_chips(cx));
         let mention = self.mention.as_ref().map(|m| self.render_mention_menu(m, cx));
+        let roots = self.roots.clone();
         v_flex()
             .w_full()
             .flex_shrink_0()
@@ -4810,11 +4986,14 @@ impl AgentPanel {
             .children(chips)
             .children(mention)
             .child(
-                Textarea::new(&self.input).on_paste(move |item, _window, cx| {
-                    panel
-                        .update(cx, |panel, cx| panel.handle_composer_paste(item, cx))
-                        .unwrap_or(false)
-                }),
+                // `@` mentions are Kit inline tokens inside the prompt Textarea.
+                Textarea::new(&self.input)
+                    .token(move |ctx, _, cx| render_mention_token(ctx, &roots, cx))
+                    .on_paste(move |item, _window, cx| {
+                        panel
+                            .update(cx, |panel, cx| panel.handle_composer_paste(item, cx))
+                            .unwrap_or(false)
+                    }),
             )
             // Config band then attach/hint/Send. Always reserve one control-row
             // height so first options / session open do not shove the textarea.

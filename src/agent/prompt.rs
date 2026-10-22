@@ -140,6 +140,53 @@ fn reencode_png(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// File / folder / image attachment from a disk path (for `@` mention resolve
+/// and attach-button paths). Images become [`Attachment::Image`]; missing
+/// paths return `None`.
+pub fn attachment_from_path(path: &Path) -> Option<Attachment> {
+    if let Some(image) = image_from_path(path) {
+        return Some(image);
+    }
+    if path.is_file() {
+        let text = std::fs::read_to_string(path).ok();
+        Some(Attachment::File {
+            path: path.to_path_buf(),
+            text,
+            selection: None,
+        })
+    } else if path.is_dir() {
+        Some(Attachment::File {
+            path: path.to_path_buf(),
+            text: None,
+            selection: None,
+        })
+    } else {
+        None
+    }
+}
+
+fn attachment_path(a: &Attachment) -> Option<&Path> {
+    match a {
+        Attachment::File { path, .. } => Some(path),
+        Attachment::Image { path, .. } => path.as_deref(),
+    }
+}
+
+/// Chip attachments first, then `@`-resolved paths not already in chips.
+pub fn merge_attachments(chips: Vec<Attachment>, mentioned: Vec<Attachment>) -> Vec<Attachment> {
+    let mut out = chips;
+    for a in mentioned {
+        let dup = attachment_path(&a).is_some_and(|p| {
+            out.iter()
+                .any(|b| attachment_path(b).is_some_and(|q| q == p))
+        });
+        if !dup {
+            out.push(a);
+        }
+    }
+    out
+}
+
 /// Assemble prompt blocks: attachments first (context), then the user text.
 pub fn build_blocks(text: &str, attachments: &[Attachment], caps: PromptCaps) -> Vec<ContentBlock> {
     let mut blocks = Vec::with_capacity(attachments.len() + 1);
@@ -219,6 +266,39 @@ pub fn display_user_message(text: &str, attachments: &[Attachment]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_from_path_reads_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "fn main() {}").unwrap();
+        let att = attachment_from_path(&path).expect("file");
+        match att {
+            Attachment::File {
+                text: Some(body), ..
+            } => assert!(body.contains("fn main")),
+            other => panic!("expected File, got {other:?}"),
+        }
+        assert!(attachment_from_path(dir.path()).is_some());
+    }
+
+    #[test]
+    fn merge_attachments_dedupes_by_path() {
+        let path = PathBuf::from("/w/a.rs");
+        let chip = Attachment::File {
+            path: path.clone(),
+            text: Some("chip".into()),
+            selection: None,
+        };
+        let mention = Attachment::File {
+            path,
+            text: Some("mention".into()),
+            selection: None,
+        };
+        let merged = merge_attachments(vec![chip.clone()], vec![mention]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0], chip);
+    }
 
     #[test]
     fn embeds_when_capable_and_small() {

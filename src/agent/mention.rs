@@ -64,14 +64,86 @@ pub fn mention_at_cursor(text: &str, cursor: usize) -> Option<MentionQuery> {
     })
 }
 
-/// Replace `@query` at `at..cursor` with nothing; returns new text + caret.
-pub fn strip_mention(text: &str, at: usize, cursor: usize) -> (String, usize) {
+/// Replace `@query` at `at..cursor` with `insert`; returns new text + caret.
+pub fn replace_mention(text: &str, at: usize, cursor: usize, insert: &str) -> (String, usize) {
     let cursor = cursor.min(text.len());
     let at = at.min(cursor);
-    let mut out = String::with_capacity(text.len());
+    let mut out = String::with_capacity(text.len() + insert.len());
     out.push_str(&text[..at]);
+    out.push_str(insert);
     out.push_str(&text[cursor..]);
-    (out, at)
+    (out, at + insert.len())
+}
+
+/// Absolute paths for `@rel` tokens in `text` (whitespace-bounded, same
+/// boundary rules as [`mention_at_cursor`]). Order = first appearance; deduped.
+pub fn paths_in_text(roots: &[PathBuf], text: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'@' {
+            let boundary = i == 0 || bytes[i - 1].is_ascii_whitespace();
+            if boundary {
+                let start = i + 1;
+                let mut end = start;
+                while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+                    end += 1;
+                }
+                if end > start {
+                    let raw = &text[start..end];
+                    // Prefer the raw token (`@a.rs`); only strip trailing
+                    // punctuation when that fails (`@a.rs.`).
+                    let path = resolve_mention_path(roots, raw).or_else(|| {
+                        let trimmed = raw.trim_end_matches(|c: char| {
+                            matches!(c, ',' | ';' | ':' | ')' | ']' | '}' | '.' | '!' | '?')
+                        });
+                        (trimmed != raw)
+                            .then(|| resolve_mention_path(roots, trimmed))
+                            .flatten()
+                    });
+                    if let Some(path) = path
+                        && seen.insert(path.clone())
+                    {
+                        out.push(path);
+                    }
+                }
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Resolve an `@` token (relative label) to a file or directory under `roots`.
+pub fn resolve_mention_path(roots: &[PathBuf], query: &str) -> Option<PathBuf> {
+    let query = query.trim_matches('/');
+    if query.is_empty() {
+        return None;
+    }
+    for root in roots {
+        if file_name(root).eq_ignore_ascii_case(query) {
+            return Some(root.clone());
+        }
+        let rel = if roots.len() > 1 {
+            let prefix = format!("{}/", file_name(root));
+            match query.strip_prefix(&prefix) {
+                Some("") => return Some(root.clone()),
+                Some(rest) => rest,
+                None => query,
+            }
+        } else {
+            query
+        };
+        let candidate = root.join(rel);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Workspace files/folders matching `query` (case-insensitive substring on the
@@ -194,29 +266,16 @@ pub fn mention_rel_label(roots: &[PathBuf], path: &Path) -> String {
 }
 
 fn resolve_dir(roots: &[PathBuf], query: &str) -> Option<(PathBuf, PathBuf)> {
-    let query = query.trim_matches('/');
-    for root in roots {
-        // `@royal5g-system/` → the workspace root itself.
-        if file_name(root).eq_ignore_ascii_case(query) {
-            return Some((root.clone(), root.clone()));
-        }
-        // Multi-root labels are `rootName/rel`; strip that prefix when present.
-        let rel = if roots.len() > 1 {
-            let prefix = format!("{}/", file_name(root));
-            match query.strip_prefix(&prefix) {
-                Some("") => return Some((root.clone(), root.clone())),
-                Some(rest) => rest,
-                None => query,
-            }
-        } else {
-            query
-        };
-        let candidate = root.join(rel);
-        if candidate.is_dir() {
-            return Some((root.clone(), candidate));
-        }
+    let path = resolve_mention_path(roots, query)?;
+    if !path.is_dir() {
+        return None;
     }
-    None
+    let root = roots
+        .iter()
+        .find(|r| path.starts_with(r))
+        .cloned()
+        .unwrap_or_else(|| path.clone());
+    Some((root, path))
 }
 
 fn list_dir_children(
@@ -405,10 +464,29 @@ mod tests {
     }
 
     #[test]
-    fn strip_removes_at_query() {
-        let (text, caret) = strip_mention("look @src/a.rs please", 5, 14);
-        assert_eq!(text, "look  please");
+    fn replace_can_strip_or_insert() {
+        let (stripped, caret) = replace_mention("look @src/a.rs please", 5, 14, "");
+        assert_eq!(stripped, "look  please");
         assert_eq!(caret, 5);
+        let (text, caret) = replace_mention("look @src please", 5, 9, "@src/a.rs ");
+        assert_eq!(text, "look @src/a.rs  please");
+        assert_eq!(caret, 5 + "@src/a.rs ".len());
+    }
+
+    #[test]
+    fn paths_in_text_finds_workspace_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src/a.rs"), "x").unwrap();
+        let roots = [dir.path().to_path_buf()];
+        let paths = paths_in_text(&roots, "see @src/a.rs and @src please");
+        assert_eq!(paths.len(), 2, "{paths:?}");
+        assert!(paths[0].ends_with("src/a.rs"));
+        assert!(paths[1].ends_with("src") && paths[1].is_dir());
+        assert!(paths_in_text(&roots, "user@src/a.rs").is_empty());
+        let dotted = paths_in_text(&roots, "see @src/a.rs.");
+        assert_eq!(dotted.len(), 1);
+        assert!(dotted[0].ends_with("src/a.rs"));
     }
 
     #[test]

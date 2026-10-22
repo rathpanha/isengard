@@ -702,6 +702,38 @@ fn agent_at_mention_matches_multi_root_folder(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_at_mention_is_visual_token_not_path_or_attach_chip(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.file("note.rs", "fn main() {}\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+    h.wait_ready(cx);
+
+    h.agent_composer("@note", cx);
+    h.with_app(cx, |app, window, cx| {
+        let panel = app.agent.clone().expect("agent");
+        panel.update(cx, |panel, cx| panel.confirm_mention_for_test(window, cx));
+    });
+    let (attach, mentions) = cx.read(|cx| {
+        let panel = h.app.read(cx).agent.as_ref().unwrap().read(cx);
+        (
+            panel.attachment_labels(),
+            panel.prompt_mention_names_for_test(cx),
+        )
+    });
+    assert!(
+        attach.is_empty(),
+        "paperclip chip row stays empty, got {attach:?}"
+    );
+    assert_eq!(
+        mentions, ["note.rs"],
+        "mention is an inline token inside the prompt"
+    );
+}
+
+#[gpui_kit::test]
 fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

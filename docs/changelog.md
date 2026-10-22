@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent `@` mentions are Kit inline tokens **inside** the
+  prompt Textarea (folder/file icon + basename, or image thumb); paperclip
+  chip row stays Attach / paste only.
+
 - **2026-10-22** — Agent **N Files** pins above the composer as a full-width
   layout strip (`border_t`, edge-to-edge — not an inset card); still drops
   paths on Source Control discard.
