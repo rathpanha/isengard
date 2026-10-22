@@ -304,9 +304,10 @@ src/
   buttons run `<agent command> <method args>` via
   `TerminalPanel::add_command_session` (one-off tabs are not persisted).
   We do **not** advertise ACP client `terminal/*` — Claude Agent 0.94.0
-  runs Bash in-process and never calls those methods. Header
+  runs Bash in-process and never calls those methods. Transcript-footer
   `activity_label` shows the in-progress tool title (or Thinking / Writing)
-  while a turn runs.   Composer attachments (`agent::mention` + `agent::prompt`): `@` opens a
+  while a turn runs (header keeps the session title only). Composer
+  attachments (`agent::mention` + `agent::prompt`): `@` opens a
   filtered file/folder menu from workspace roots (plain FS walk + `SKIP_DIRS`,
   not gitignore; each root gets a fair fuzzy-walk budget so secondary roots
   stay searchable; empty query lists roots + nested dirs + root files;

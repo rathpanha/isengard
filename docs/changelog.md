@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent header shows session title only while busy (no
+  activity suffix / Spinner); turn activity stays in the transcript footer.
+
 - **2026-10-22** — Agent chats auto-title after the first turn (silent ACP
   turn; Claude sends no `session_info_update`); rename / Generate unchanged.
 

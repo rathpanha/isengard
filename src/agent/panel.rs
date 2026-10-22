@@ -40,9 +40,10 @@ use crate::acp::schema::{
     CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
     PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOptions, SessionModeState, SessionUpdate,
-    StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
-    ToolCallUpdateFields, ToolKind,
+    StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
+#[cfg(test)]
+use crate::acp::schema::ToolCallUpdateFields;
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
     FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
@@ -4229,19 +4230,15 @@ impl AgentPanel {
         };
         let can_new_chat =
             !self.turn_running && matches!(self.status, Status::Ready | Status::Failed(_));
-        let activity = self.activity_label();
-        // Session title, not the agent process name — pickers live on the composer.
-        let session_title = self
+        // Session title only — turn activity lives in the transcript footer.
+        let title: SharedString = self
             .active
             .as_ref()
             .and_then(|id| self.chats.iter().find(|c| &c.id == id))
             .map(|c| c.title.as_str())
             .filter(|t| !t.is_empty())
-            .unwrap_or("New chat");
-        let title: SharedString = match &activity {
-            Some(what) => format!("{session_title} · {what}").into(),
-            None => session_title.into(),
-        };
+            .unwrap_or("New chat")
+            .into();
         h_flex()
             .w_full()
             .h(px(theme::PANEL_HEADER_ROW_H))
@@ -4252,16 +4249,12 @@ impl AgentPanel {
             .border_b_1()
             .border_color(theme.border)
             .child(status_mark(color))
-            .when(activity.is_some(), |row| {
-                row.child(Spinner::new().small())
-            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_sm()
-                    .when(activity.is_some(), |t| t.text_color(theme.muted_foreground))
                     .child(title),
             )
             .when_some(self.usage, |row, u| {

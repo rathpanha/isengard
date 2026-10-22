@@ -224,7 +224,7 @@ Add a row here whenever a new shared component is created.
   Header `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
   status square (success ready, warning starting/working, danger failed,
   muted otherwise) + **session title** (active chat title, or `New chat`;
-  activity suffix while busy; Compacting… during agent compaction) +
+  no activity suffix — busy line is transcript-footer only) +
   muted/warning/danger `text_xs` context used/size (e.g. `53K / 200K`;
   `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
   `Plus` New Chat. Chat-list rows append last-known used/size beside the
@@ -326,9 +326,10 @@ Add a row here whenever a new shared component is created.
   transcript is shown / session is opening (Send disabled until Ready) so
   history does not jump when the agent finishes connecting. User bubbles
   show attachment refs the same way (Material icon + basename, or image
-  thumb only — never Lucide Folder/File/Image, never a leading `@`).   While a turn runs, a Kit `Spinner` + activity
-  label also sits at the bottom of the transcript pane (in addition to the
-  header spinner), so a long chat still shows work in progress. Transcript
+  thumb only — never Lucide Folder/File/Image, never a leading `@`). While a
+  turn runs, a Kit `Spinner` + activity label sits at the bottom of the
+  transcript pane (header title stays put), so a long chat still shows
+  work in progress. Transcript
   `MessageScroller` keeps ~50% viewport bottom scroll space after the last
   row so longer sessions can sit mid-pane (not glued to the composer).
   Non-ready
