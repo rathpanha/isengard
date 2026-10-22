@@ -283,7 +283,9 @@ src/
   counter drops events from replaced connections. Chats: after `Connected`
   the panel sends `SessionOpen::Resume(id)` when `transcript_of` is still
   that chat, else `Load(id)` (agent replays it as updates, user chunks
-  merged into one bubble), else `New`. One open chat per connection
+  merged into one bubble; **N Files** cards are not in ACP history — they
+  live on `AgentChat.file_changes` and are spliced in after Load), else
+  `New`. One open chat per connection
   (`session/close` the previous); updates are filtered by session id;
   `opens_in_flight` ignores answers to superseded opens. Roots: the
   connection gets every workspace folder (`roots[0]` = session cwd, rest =

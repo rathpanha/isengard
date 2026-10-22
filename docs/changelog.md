@@ -3,6 +3,15 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Agent **N Files** pins above the composer as a full-width
+  layout strip (`border_t`, edge-to-edge — not an inset card); still drops
+  paths on Source Control discard.
+
+- **2026-10-22** — Agent **N Files** cards persist on `AgentChat.file_changes`
+  and are spliced back after `session/load`; restore retries as history
+  `Update`s arrive so a full editor restart no longer loses them (in-session
+  close/reopen already kept the panel in memory).
+
 - **2026-10-22** — Claude plan usage bars: normal band uses
   `muted_foreground` instead of green; yellow (≥70%) and red (≥90%) unchanged.
 

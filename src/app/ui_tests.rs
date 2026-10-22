@@ -423,6 +423,93 @@ fn agent_writes_show_file_change_summary(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_file_change_cards_survive_transcript_reload(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("notes.txt", "alpha\nbeta\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    panel.update(cx, |panel, cx| {
+        panel.seed_chat_session_for_test("chat-1");
+        panel.push_user_for_test("please edit", cx);
+    });
+
+    let (reply, answer) = flume::bounded(1);
+    h.agent_event(
+        AgentPanelEvent::WriteFile(FileWrite {
+            path: path.clone(),
+            content: "alpha\nBETA\ngamma\n".into(),
+            reply,
+        }),
+        cx,
+    );
+    assert_eq!(answer.try_recv().unwrap(), Ok(()));
+
+    panel.update(cx, |panel, cx| panel.flush_file_changes_for_test(cx));
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).file_change_summaries_for_test()),
+        vec![("notes.txt".into(), 2, 1, false)]
+    );
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).chats()[0].file_changes.len()),
+        1
+    );
+
+    // Cold-start race: SessionOpened can restore before replay User bubbles.
+    panel.update(cx, |panel, cx| {
+        panel.clear_entries_for_test(cx);
+        panel.restore_file_change_cards_for_test(cx);
+        assert_eq!(panel.file_change_card_count_for_test(), 0);
+        panel.push_user_for_test("please edit", cx);
+        panel.restore_file_change_cards_for_test(cx);
+    });
+    assert_eq!(cx.read(|cx| panel.read(cx).file_change_card_count_for_test()), 1);
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).file_change_summaries_for_test()),
+        vec![("notes.txt".into(), 2, 1, false)]
+    );
+}
+
+#[gpui_kit::test]
+fn agent_file_change_card_drops_discarded_paths(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("notes.txt", "alpha\nbeta\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-alt-b", cx);
+
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    panel.update(cx, |panel, cx| {
+        panel.seed_chat_session_for_test("chat-1");
+        panel.push_user_for_test("edit", cx);
+    });
+    let (reply, answer) = flume::bounded(1);
+    h.agent_event(
+        AgentPanelEvent::WriteFile(FileWrite {
+            path: path.clone(),
+            content: "alpha\nBETA\n".into(),
+            reply,
+        }),
+        cx,
+    );
+    assert_eq!(answer.try_recv().unwrap(), Ok(()));
+    panel.update(cx, |panel, cx| panel.flush_file_changes_for_test(cx));
+    assert!(!cx.read(|cx| panel.read(cx).file_change_summaries_for_test()).is_empty());
+
+    panel.update(cx, |panel, cx| {
+        panel.note_discarded_paths(&[path.clone()], cx);
+    });
+    assert!(
+        cx.read(|cx| panel.read(cx).file_change_summaries_for_test()).is_empty(),
+        "discard should clear the card rows"
+    );
+    assert!(
+        cx.read(|cx| panel.read(cx).chats()[0].file_changes.is_empty()),
+        "persisted cards should drop emptied turns"
+    );
+}
+
+#[gpui_kit::test]
 fn agent_edit_tool_without_write_rpc_shows_file_summary(cx: &mut TestAppContext) {
     use agent_client_protocol::schema::v1::ToolCallStatus;
 

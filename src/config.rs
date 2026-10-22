@@ -144,6 +144,24 @@ pub enum AgentPrefValue {
 /// Cap for remembered agent chats per folder/workspace.
 pub const MAX_AGENT_CHATS: usize = 50;
 
+/// One row in a persisted end-of-turn **N Files** card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentFileChange {
+    pub path: PathBuf,
+    pub added: u32,
+    pub removed: u32,
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+/// Files the agent touched in one user turn (restored after `session/load`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentFileChangesCard {
+    /// 0-based index among `User` bubbles in the transcript.
+    pub turn: u32,
+    pub files: Vec<AgentFileChange>,
+}
+
 /// One agent chat (ACP session) in the per-workspace index.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -153,6 +171,9 @@ pub struct AgentChat {
     pub title: String,
     /// Last prompt time, Unix seconds.
     pub updated: u64,
+    /// End-of-turn file-change cards (ACP replay has no equivalent).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_changes: Vec<AgentFileChangesCard>,
 }
 
 fn default_agent_width() -> f32 {
@@ -640,6 +661,15 @@ mod tests {
                     id: "s1".into(),
                     title: "Fix the build".into(),
                     updated: 1_700_000_000,
+                    file_changes: vec![AgentFileChangesCard {
+                        turn: 0,
+                        files: vec![AgentFileChange {
+                            path: PathBuf::from("/code/app/src/main.rs"),
+                            added: 2,
+                            removed: 1,
+                            deleted: false,
+                        }],
+                    }],
                 }],
                 agent_active: Some("s1".into()),
                 ..Default::default()
@@ -650,6 +680,16 @@ mod tests {
         let session = loaded.session("/code/app").unwrap();
         assert_eq!(session.agent_chats[0].title, "Fix the build");
         assert_eq!(session.agent_active.as_deref(), Some("s1"));
+        assert_eq!(session.agent_chats[0].file_changes[0].files[0].added, 2);
+    }
+
+    #[test]
+    fn agent_chat_without_file_changes_still_loads() {
+        let chat: AgentChat = serde_json::from_str(
+            r#"{"id":"s1","title":"Hi","updated":1}"#,
+        )
+        .unwrap();
+        assert!(chat.file_changes.is_empty());
     }
 
     #[test]

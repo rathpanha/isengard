@@ -231,9 +231,14 @@ Add a row here whenever a new shared component is created.
   (`MessageScroller` row `pb_2`, tool entry `py_0p5` / card `py_0p5`, not
   section `pb_8`);   after a turn that changed files (git dirty delta since turn start —
   including shell create/edit/delete — and/or ACP write / Edit/Move/
-  Delete tools), a bordered **N Files** summary under the reply (starts
-  collapsed; chevron expands; Material path icon + basename, green `+N` /
-  red `-M`; row click opens one); plan as 7×7 status
+  Delete tools), a full-width **N Files** strip for the latest turn is
+  pinned on top of the composer / chat input (`border_t`, `px_3` like
+  header/usage — not an inset rounded card; above Send, not under usage
+  and not mid-transcript); starts collapsed; chevron expands; Material path
+  icon + basename, green `+N` / red `-M`; row click opens one; Source Control
+  discard drops matching paths from the strip; stored on
+  `AgentChat.file_changes` and restored after ACP `session/load`); plan as
+  7×7 status
   squares + text (done = muted + line-through);
   notices `text_xs` muted or danger. **Permission prompts
   are inline** on the tool row (not a modal — several can be open while

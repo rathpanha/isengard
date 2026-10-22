@@ -109,11 +109,13 @@ tabs, highlighted editor, status bar):
   program exits the panel reconnects by itself (Retry stays as a fallback).
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
-  end-of-turn **N Files** change summary (collapsed by default; `+/-`
-  from git worktree delta since turn start — covers shell
+  end-of-turn **N Files** change summary as a full-width strip on top of
+  the composer (above the chat input; latest turn; collapsed by default;
+  `+/-` from git worktree delta since turn start — covers shell
   create/edit/delete — plus Write/Edit/Delete tool paths; expand then
-  row-click to open; **not** restored after editor restart — in-memory
-  UI only; chat text/tools may replay from the agent), plan checklist, inline
+  row-click to open; Git discard removes those paths; strip state persists
+  in the workspace session and is spliced back after `session/load` /
+  editor restart), plan checklist, inline
   permission buttons, Stop (`.danger()`, `session/cancel`), New Chat.
   Header shows a live activity line while busy
   (spinner + real tool title, or Thinking/Writing/…).   Mentions show as Material icon + name chips in the user bubble (images are

@@ -62,6 +62,10 @@ pub enum GitPanelEvent {
         root: PathBuf,
         paths: Vec<String>,
     },
+    /// Worktree paths the user discarded — agent **N Files** cards should drop them.
+    DiscardedPaths { paths: Vec<PathBuf> },
+    /// Whole-repo discard — drop every **N Files** row under this root.
+    DiscardedRepo { root: PathBuf },
     ToastError(String),
     ToastSuccess(String),
     /// Porcelain reload finished — file tree can tint dirty paths.
@@ -502,6 +506,23 @@ impl GitPanel {
             | Mutation::ResolveConflictContent { rel_path, .. } => Some(root.join(rel_path)),
             _ => None,
         };
+        let discard_notify = match &kind {
+            Mutation::DiscardFile {
+                rel_path,
+                old_rel_path,
+                ..
+            } => {
+                let mut paths = vec![root.join(rel_path)];
+                if let Some(old) = old_rel_path {
+                    paths.push(root.join(old));
+                }
+                Some(GitPanelEvent::DiscardedPaths { paths })
+            }
+            Mutation::DiscardAll => Some(GitPanelEvent::DiscardedRepo {
+                root: root.clone(),
+            }),
+            _ => None,
+        };
 
         cx.spawn_in(window, async move |this, window| {
             let result = window
@@ -571,6 +592,9 @@ impl GitPanel {
                                 path: path.clone(),
                             });
                             cx.emit(GitPanelEvent::ReloadFile { path });
+                        }
+                        if let Some(ev) = discard_notify {
+                            cx.emit(ev);
                         }
                         cx.emit(GitPanelEvent::ToastSuccess(short_toast(&msg)));
                         this.set_folders(folders, labels, window, cx);

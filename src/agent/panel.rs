@@ -51,7 +51,10 @@ use crate::agent::prompt::{
 use crate::agent::limits;
 use crate::editor::document;
 use crate::file_tree::tree_icon;
-use crate::config::{AgentChat, AgentPrefValue, AgentPrefs, AgentSettings, MAX_AGENT_CHATS};
+use crate::config::{
+    AgentChat, AgentFileChange, AgentFileChangesCard, AgentPrefValue, AgentPrefs, AgentSettings,
+    MAX_AGENT_CHATS,
+};
 use crate::git::{line_change_counts, snapshot_dirty_contents, worktree_deltas_since_turn};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
@@ -131,6 +134,26 @@ struct FileChangeRow {
     added: u32,
     removed: u32,
     deleted: bool,
+}
+
+impl FileChangeRow {
+    fn stored(&self) -> AgentFileChange {
+        AgentFileChange {
+            path: self.path.clone(),
+            added: self.added,
+            removed: self.removed,
+            deleted: self.deleted,
+        }
+    }
+
+    fn from_stored(row: AgentFileChange) -> Self {
+        Self {
+            path: row.path,
+            added: row.added,
+            removed: row.removed,
+            deleted: row.deleted,
+        }
+    }
 }
 
 impl PendingFileChange {
@@ -312,6 +335,9 @@ pub struct AgentPanel {
     title_transcripts: HashMap<String, String>,
     /// After loading a non-active chat, run Generate once entries land.
     pending_title: Option<String>,
+    /// Re-splice **N Files** cards as ACP history arrives (SessionOpened can
+    /// race ahead of replay `Update`s on cold start).
+    pending_file_change_restore: bool,
     entries: Vec<Entry>,
     /// Context chips for the next prompt (@file / selection / image).
     attachments: Vec<Attachment>,
@@ -622,6 +648,7 @@ impl AgentPanel {
             transcript_of: None,
             title_transcripts: HashMap::new(),
             pending_title: None,
+            pending_file_change_restore: false,
             entries: Vec::new(),
             attachments: Vec::new(),
             attachment_thumbs: Vec::new(),
@@ -1115,6 +1142,54 @@ impl AgentPanel {
             _ => None,
         })
         .unwrap_or_default()
+    }
+
+    /// How many **N Files** cards are in the transcript (tests).
+    #[cfg(test)]
+    pub fn file_change_card_count_for_test(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e, Entry::FileChanges { .. }))
+            .count()
+    }
+
+    /// Re-run restore after a simulated `session/load` (tests).
+    #[cfg(test)]
+    pub fn restore_file_change_cards_for_test(&mut self, cx: &mut Context<Self>) {
+        self.restore_file_change_cards(cx);
+    }
+
+    /// Drop transcript UI only (tests) — stored chat cards stay in `chats`.
+    #[cfg(test)]
+    pub fn clear_entries_for_test(&mut self, cx: &mut Context<Self>) {
+        self.clear_entries(cx);
+    }
+
+    /// Bind a chat id so flush can persist **N Files** cards (tests).
+    #[cfg(test)]
+    pub fn seed_chat_session_for_test(&mut self, id: &str) {
+        self.session = Some(id.to_owned());
+        self.transcript_of = Some(id.to_owned());
+        self.active = Some(id.to_owned());
+        if !self.chats.iter().any(|c| c.id == id) {
+            self.chats.push(AgentChat {
+                id: id.to_owned(),
+                title: "Test".into(),
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Push a bare user bubble so restore can place cards by turn (tests).
+    #[cfg(test)]
+    pub fn push_user_for_test(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.push_entry(
+            Entry::User {
+                text: text.into(),
+                refs: Vec::new(),
+            },
+            cx,
+        );
     }
 
     /// Background-idle with its agent stopped (tests).
@@ -2059,7 +2134,7 @@ impl AgentPanel {
             None => AgentChat {
                 id: id.to_owned(),
                 title: chat_title(first_prompt.unwrap_or("")),
-                updated: 0,
+                ..Default::default()
             },
         };
         chat.updated = now_secs();
@@ -2129,6 +2204,7 @@ impl AgentPanel {
 
     /// Clear prior turn file state; snapshot git dirties for shell-edit detection.
     fn begin_turn_file_tracking(&mut self) {
+        self.pending_file_change_restore = false;
         self.turn_file_changes.clear();
         self.turn_git_baseline = Some(snapshot_dirty_contents(&self.roots));
     }
@@ -2141,7 +2217,7 @@ impl AgentPanel {
         after: String,
         cx: &mut Context<Self>,
     ) {
-        if self.silent.is_some() {
+        if !self.tracking_file_changes() {
             return;
         }
         match self.turn_file_changes.get_mut(&path) {
@@ -2166,7 +2242,7 @@ impl AgentPanel {
 
     /// Snapshot baseline early so a completed delete still has line counts.
     fn ensure_turn_file_baseline(&mut self, path: &Path) {
-        if self.silent.is_some() || self.turn_file_changes.contains_key(path) {
+        if !self.tracking_file_changes() || self.turn_file_changes.contains_key(path) {
             return;
         }
         let baseline = std::fs::read_to_string(path).unwrap_or_default();
@@ -2182,7 +2258,7 @@ impl AgentPanel {
     }
 
     fn note_file_delete(&mut self, path: PathBuf) {
-        if self.silent.is_some() {
+        if !self.tracking_file_changes() {
             return;
         }
         self.ensure_turn_file_baseline(&path);
@@ -2225,7 +2301,7 @@ impl AgentPanel {
 
     /// After an Edit/Move tool finishes, pull the on-disk text for +/- counts.
     fn refresh_turn_file_latest(&mut self, path: &Path) {
-        if self.silent.is_some() {
+        if !self.tracking_file_changes() {
             return;
         }
         let latest = std::fs::read_to_string(path).unwrap_or_default();
@@ -2262,6 +2338,14 @@ impl AgentPanel {
         if files.is_empty() {
             return;
         }
+        // User count already includes this turn's bubble.
+        let turn = self
+            .entries
+            .iter()
+            .filter(|e| matches!(e, Entry::User { .. }))
+            .count()
+            .saturating_sub(1) as u32;
+        self.remember_file_changes(turn, &files, cx);
         self.push_entry(
             Entry::FileChanges {
                 files,
@@ -2273,12 +2357,165 @@ impl AgentPanel {
         cx.emit(AgentPanelEvent::WorkspaceTouched);
     }
 
+    /// Persist the card on the chat index so it survives `session/load` / restart.
+    fn remember_file_changes(
+        &mut self,
+        turn: u32,
+        files: &[FileChangeRow],
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.session.clone() else {
+            return;
+        };
+        let Some(chat) = self.chats.iter_mut().find(|c| c.id == id) else {
+            return;
+        };
+        chat.file_changes.retain(|c| c.turn != turn);
+        chat.file_changes.push(AgentFileChangesCard {
+            turn,
+            files: files.iter().map(FileChangeRow::stored).collect(),
+        });
+        chat.file_changes.sort_by_key(|c| c.turn);
+        cx.emit(AgentPanelEvent::ChatsChanged);
+    }
+
+    /// Splice stored **N Files** cards into the current transcript.
+    ///
+    /// Safe to call repeatedly while history is still streaming: strips any
+    /// prior splice and rebuilds from `AgentChat.file_changes`.
+    fn restore_file_change_cards(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.session.clone() else {
+            return;
+        };
+        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+            return;
+        };
+        if chat.file_changes.is_empty() {
+            self.pending_file_change_restore = false;
+            return;
+        }
+        let max_turn = chat
+            .file_changes
+            .iter()
+            .map(|c| c.turn)
+            .max()
+            .unwrap_or(0);
+        let mut by_turn: HashMap<u32, Vec<FileChangeRow>> = HashMap::new();
+        for card in &chat.file_changes {
+            by_turn.insert(
+                card.turn,
+                card.files
+                    .iter()
+                    .cloned()
+                    .map(FileChangeRow::from_stored)
+                    .collect(),
+            );
+        }
+        // Drop a partial splice from an earlier attempt (SessionOpened raced).
+        let old: Vec<_> = self
+            .entries
+            .drain(..)
+            .filter(|e| !matches!(e, Entry::FileChanges { .. }))
+            .collect();
+        let mut out = Vec::with_capacity(old.len() + by_turn.len());
+        let mut user_turn = 0u32;
+        for entry in old {
+            if matches!(entry, Entry::User { .. }) {
+                if user_turn > 0
+                    && let Some(files) = by_turn.remove(&(user_turn - 1))
+                {
+                    out.push(Entry::FileChanges {
+                        files,
+                        expanded: false,
+                    });
+                }
+                out.push(entry);
+                user_turn += 1;
+            } else {
+                out.push(entry);
+            }
+        }
+        if user_turn > 0
+            && let Some(files) = by_turn.remove(&(user_turn - 1))
+        {
+            out.push(Entry::FileChanges {
+                files,
+                expanded: false,
+            });
+        }
+        self.entries = out;
+        // Card for turn N needs N+1 user bubbles before we know the turn ended.
+        if user_turn >= max_turn.saturating_add(1) {
+            self.pending_file_change_restore = false;
+        }
+        cx.notify();
+    }
+
+    /// Replay must not snapshot today's disk into a historical turn.
+    fn tracking_file_changes(&self) -> bool {
+        self.silent.is_none()
+            && !matches!(self.opening, Some(SessionOpen::Load(_)))
+            && !self.pending_file_change_restore
+    }
+
     fn toggle_file_changes(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(Entry::FileChanges { expanded, .. }) = self.entries.get_mut(ix) {
             *expanded = !*expanded;
             self.touched(ix, cx);
             cx.notify();
         }
+    }
+
+    /// Latest non-empty **N Files** card (sticky strip above the composer).
+    fn latest_file_changes(&self) -> Option<(usize, &[FileChangeRow], bool)> {
+        self.entries.iter().enumerate().rev().find_map(|(ix, e)| match e {
+            Entry::FileChanges { files, expanded } if !files.is_empty() => {
+                Some((ix, files.as_slice(), *expanded))
+            }
+            _ => None,
+        })
+    }
+
+    /// Source Control discarded these paths — drop them from **N Files** cards.
+    pub fn note_discarded_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        let drop = |p: &Path| paths.iter().any(|d| d == p);
+        self.prune_file_change_paths(drop, cx);
+    }
+
+    /// Discard All in a repo — drop every card row under that root.
+    pub fn note_discarded_repo(&mut self, root: &Path, cx: &mut Context<Self>) {
+        let drop = |p: &Path| p.starts_with(root);
+        self.prune_file_change_paths(drop, cx);
+    }
+
+    fn prune_file_change_paths(
+        &mut self,
+        mut drop: impl FnMut(&Path) -> bool,
+        cx: &mut Context<Self>,
+    ) {
+        for entry in &mut self.entries {
+            if let Entry::FileChanges { files, .. } = entry {
+                files.retain(|f| !drop(&f.path));
+            }
+        }
+        for chat in &mut self.chats {
+            for card in &mut chat.file_changes {
+                card.files.retain(|f| !drop(&f.path));
+            }
+            chat.file_changes.retain(|c| !c.files.is_empty());
+        }
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        cx.notify();
+    }
+
+    /// Pinned on top of the composer (input) so it stays reachable while chatting.
+    fn render_sticky_file_changes(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (ix, files, expanded) = self.latest_file_changes()?;
+        let panel = cx.entity().downgrade();
+        Some(render_file_changes(&panel, ix, files, expanded, cx))
     }
 
     /// Count an open's answer; `true` if a newer open is still pending.
@@ -2301,6 +2538,7 @@ impl AgentPanel {
                 modes,
                 config_options,
             } => {
+                let was_load = matches!(self.opening, Some(SessionOpen::Load(_)));
                 self.session = Some(id.clone());
                 self.transcript_of = Some(id.clone());
                 // A brand-new chat is active but stays out of the index (and
@@ -2321,6 +2559,15 @@ impl AgentPanel {
                 // Claude only sends usage_update mid-turn — seed size so the
                 // header is not blank on open / switch.
                 self.ensure_usage_placeholder();
+                // ACP replay has no file-change cards — splice ours back in.
+                // History `Update`s can still be in the queue *after* this
+                // event on cold start, so keep retrying until all turns land.
+                if was_load {
+                    self.turn_file_changes.clear();
+                    self.turn_git_baseline = None;
+                    self.pending_file_change_restore = true;
+                    self.restore_file_change_cards(cx);
+                }
                 self.maybe_start_pending_title(cx);
             }
             AgentEvent::ConfigOptions(options) => {
@@ -2347,6 +2594,9 @@ impl AgentPanel {
             AgentEvent::Update { session, update } => {
                 if self.session.as_deref() == Some(session.as_str()) {
                     self.apply_update(update, cx);
+                    if self.pending_file_change_restore {
+                        self.restore_file_change_cards(cx);
+                    }
                     self.maybe_start_pending_title(cx);
                 }
             }
@@ -2678,6 +2928,7 @@ impl AgentPanel {
     }
 
     fn clear_entries(&mut self, cx: &mut Context<Self>) {
+        self.pending_file_change_restore = false;
         self.entries.clear();
         self.scroller.update(cx, |s, cx| s.reset(0, cx));
     }
@@ -3366,9 +3617,9 @@ fn render_entry(
                     )
             }))
             .into_any_element(),
-        Entry::FileChanges { files, expanded } => {
-            render_file_changes(panel, ix, files, *expanded, cx)
-        }
+        // Sticky strip above the composer owns this UI — keep a zero-height
+        // placeholder so MessageScroller indices stay aligned with `entries`.
+        Entry::FileChanges { .. } => div().into_any_element(),
         Entry::Notice { text, error } => div()
             .text_xs()
             .text_color(if *error {
@@ -3382,7 +3633,11 @@ fn render_entry(
     // Tool / file-change rows are bordered cards — keep outer padding
     // tight so consecutive shell tools don't float apart. Bubbles /
     // markdown keep a touch more air via scroller pb_2.
-    let entry_py = matches!(entry, Entry::Tool(_) | Entry::FileChanges { .. });
+    let entry_py = matches!(entry, Entry::Tool(_));
+    // File-change rows live above the composer — no mid-stream padding.
+    if matches!(entry, Entry::FileChanges { .. }) {
+        return body;
+    }
     div()
         .id(("agent-entry", ix))
         .w_full()
@@ -3422,13 +3677,13 @@ fn render_file_changes(
     v_flex()
         .id(("agent-file-changes", ix))
         .w_full()
+        .flex_shrink_0()
         .min_w_0()
         .gap_1()
-        .px_2()
-        .py_1p5()
-        .border_1()
+        .px_3()
+        .py_1()
+        .border_t_1()
         .border_color(theme.border)
-        .rounded_md()
         .child(
             h_flex()
                 .id(("agent-file-changes-toggle", ix))
@@ -3463,7 +3718,6 @@ fn render_file_changes(
                     .min_w_0()
                     .items_center()
                     .gap_2()
-                    .px_1()
                     .py_0p5()
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.muted.opacity(0.35)))
@@ -4433,6 +4687,7 @@ impl AgentPanel {
 
     fn render_transcript(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
+        let muted = theme.muted_foreground;
         let busy = self.turn_running;
         let activity = self.activity_label();
         let body = if self.entries.is_empty() {
@@ -4443,7 +4698,7 @@ impl AgentPanel {
                 .p_4()
                 .text_center()
                 .text_xs()
-                .text_color(theme.muted_foreground)
+                .text_color(muted)
                 .child(format!("Ask {} about this workspace.", self.agent_name))
                 .into_any_element()
         } else {
@@ -4482,7 +4737,7 @@ impl AgentPanel {
                                 .min_w_0()
                                 .truncate()
                                 .text_xs()
-                                .text_color(theme.muted_foreground)
+                                .text_color(muted)
                                 .child(activity.unwrap_or_else(|| "Working…".into())),
                         ),
                 )
@@ -4889,6 +5144,8 @@ impl Render for AgentPanel {
                         self.render_state(cx)
                     }),
             )
+            // **N Files** sits on top of the composer (the chat input), not under usage.
+            .children(self.render_sticky_file_changes(cx))
             .when(show_composer, |col| col.child(self.render_composer(ready, cx)))
     }
 }

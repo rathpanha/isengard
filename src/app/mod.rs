@@ -343,6 +343,20 @@ impl IsengardApp {
                     GitPanelEvent::ToastSuccess(msg) => {
                         notify_success(msg.clone(), window, cx);
                     }
+                    GitPanelEvent::DiscardedPaths { paths } => {
+                        if let Some(agent) = this.agent.clone() {
+                            agent.update(cx, |agent, cx| {
+                                agent.note_discarded_paths(paths, cx);
+                            });
+                        }
+                    }
+                    GitPanelEvent::DiscardedRepo { root } => {
+                        if let Some(agent) = this.agent.clone() {
+                            agent.update(cx, |agent, cx| {
+                                agent.note_discarded_repo(root, cx);
+                            });
+                        }
+                    }
                     GitPanelEvent::StatusUpdated => {
                         let dirty = this.git.read(cx).dirty_paths();
                         this.file_tree.set_git_dirty(dirty, cx);
