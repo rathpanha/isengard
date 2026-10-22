@@ -144,7 +144,7 @@ src/
 ├── agent/
 │   ├── panel.rs         `AgentPanel`: status, transcript (`MessageScroller`),
 │   │                    tool rows, permission buttons, composer + `@` menu
-│   ├── limits.rs        Claude plan usage (5h/week) via OAuth usage endpoint
+│   ├── limits.rs        Claude plan usage (5h/week) via OAuth; merge keeps last good
 │   ├── mention.rs       `@` query parse + workspace file/folder listing
 │   └── prompt.rs        `Attachment` → ACP `ContentBlock`s (`resource` /
 │                        `resource_link` / `image`) from agent prompt caps

@@ -634,10 +634,14 @@ impl AgentPanel {
                     let fetched = cx.background_spawn(async { limits::fetch() }).await;
                     let alive = this
                         .update(cx, |this, cx| {
-                            // Keep the last good value across transient failures.
+                            // Err → keep last. Empty/partial Ok → merge (API
+                            // often returns null windows without failing).
                             if let Ok(l) = fetched {
-                                this.plan_limits = Some(l);
-                                cx.notify();
+                                let next = limits::merge(this.plan_limits.clone(), l);
+                                if this.plan_limits != next {
+                                    this.plan_limits = next;
+                                    cx.notify();
+                                }
                             }
                         })
                         .is_ok();
@@ -4179,7 +4183,11 @@ impl AgentPanel {
                 theme.muted_foreground
             };
             let tip: SharedString = match &w.resets_at {
-                Some(at) => format!("{label} limit {pct:.0}% used · resets {at}").into(),
+                Some(at) => format!(
+                    "{label} limit {pct:.0}% used · resets {}",
+                    limits::format_resets_local(at)
+                )
+                .into(),
                 None => format!("{label} limit {pct:.0}% used").into(),
             };
             h_flex()

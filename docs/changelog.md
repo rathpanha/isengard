@@ -3,6 +3,13 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-22** — Plan usage bar tooltips show reset time in local date/time
+  (e.g. `Thu Oct 22, 2026 3:10 PM`) instead of raw UTC ISO-8601.
+
+- **2026-10-22** — Claude plan usage bars no longer vanish when the OAuth
+  usage endpoint returns HTTP 200 with null `five_hour` / `seven_day`
+  (merge keeps the last good windows).
+
 - **2026-10-22** — Editor right-click → Add Selection to Agent (same as
   `⌘L` / `Ctrl+L`); Kit `Editor::context_menu` now receives the default
   menu so apps can append without rebuilding Cut/Copy/Paste.

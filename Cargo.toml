@@ -37,6 +37,8 @@ similar = "2"
 # Match GPUI Kit / gpui-base (CompletionProvider + diagnostics use the same types).
 lsp-types = { version = "0.97", features = ["proposed"] }
 url = "2"
+# Local timezone for plan-usage reset tooltips (already in the Kit tree).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # App-local LSP downloads (blocking HTTP; no Tokio).
 ureq = "3"
 flate2 = "1"

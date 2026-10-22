@@ -223,7 +223,8 @@ Add a row here whenever a new shared component is created.
   relative time when available (process memory only). Under the header, an optional `border_b` strip of
   two Kit `Progress` bars (`5h`, `Week`, `text_xs` label + percent):
   `theme.muted_foreground` <70%, `theme.warning` 70–90%, `theme.danger`
-  ≥90%; hidden until data arrives. Background
+  ≥90%; tooltip = `% used · resets` + local wall clock (not raw UTC ISO);
+  hidden until data arrives. Background
   `theme.sidebar` like the other panels. Header also has a ghost
   `MessagesSquare` chat list (Popover, 300px): rows are Kit `ListItem`s —
   title (`text_sm`, truncated) over relative time (`text_xs` muted), active

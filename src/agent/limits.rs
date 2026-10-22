@@ -8,6 +8,7 @@
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
+use chrono::{DateTime, Local};
 use serde_json::Value;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -25,6 +26,44 @@ pub struct Window {
 pub struct PlanLimits {
     pub session: Option<Window>,
     pub week: Option<Window>,
+}
+
+impl PlanLimits {
+    pub fn is_empty(&self) -> bool {
+        self.session.is_none() && self.week.is_none()
+    }
+}
+
+/// API `resets_at` (RFC3339 / ISO-8601) → local wall clock for tooltips.
+///
+/// Unparseable strings pass through unchanged.
+pub fn format_resets_local(iso: &str) -> String {
+    DateTime::parse_from_rfc3339(iso)
+        .map(|dt| {
+            dt.with_timezone(&Local)
+                .format("%a %b %d, %Y %-I:%M %p")
+                .to_string()
+        })
+        .unwrap_or_else(|_| iso.to_string())
+}
+
+/// Fold a fresh fetch into the last good snapshot.
+///
+/// Anthropic's OAuth usage endpoint sometimes returns HTTP 200 with
+/// `five_hour` / `seven_day` null (outages, plan quirks). Treating that as
+/// authoritative would blank the bars after they had already shown — keep
+/// prior windows and only fill in what the payload actually has.
+pub fn merge(prev: Option<PlanLimits>, next: PlanLimits) -> Option<PlanLimits> {
+    if next.is_empty() {
+        return prev;
+    }
+    Some(match prev {
+        Some(p) => PlanLimits {
+            session: next.session.or(p.session),
+            week: next.week.or(p.week),
+        },
+        None => next,
+    })
 }
 
 /// Blocking: call from a background task.
@@ -90,7 +129,7 @@ fn keychain_credentials() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Window, parse};
+    use super::{PlanLimits, Window, format_resets_local, merge, parse};
     use serde_json::json;
 
     #[test]
@@ -113,5 +152,62 @@ mod tests {
     fn missing_windows_are_none() {
         let l = parse(&json!({"five_hour": null}));
         assert!(l.session.is_none() && l.week.is_none());
+    }
+
+    #[test]
+    fn formats_rfc3339_as_local_wall_clock() {
+        let s = format_resets_local("2026-10-22T08:10:00.071913+00:00");
+        assert!(!s.contains("T08:"), "{s}");
+        assert!(s.contains("2026"), "{s}");
+        assert!(s.contains("Oct"), "{s}");
+        assert!(s.ends_with("AM") || s.ends_with("PM"), "{s}");
+    }
+
+    #[test]
+    fn bad_timestamp_passthrough() {
+        assert_eq!(format_resets_local("later"), "later");
+    }
+
+    #[test]
+    fn empty_fetch_keeps_previous() {
+        let prev = Some(PlanLimits {
+            session: Some(Window {
+                percent: 18.0,
+                resets_at: None,
+            }),
+            week: Some(Window {
+                percent: 13.0,
+                resets_at: None,
+            }),
+        });
+        let empty = PlanLimits {
+            session: None,
+            week: None,
+        };
+        assert_eq!(merge(prev.clone(), empty), prev);
+    }
+
+    #[test]
+    fn partial_fetch_keeps_missing_window() {
+        let prev = Some(PlanLimits {
+            session: Some(Window {
+                percent: 18.0,
+                resets_at: None,
+            }),
+            week: Some(Window {
+                percent: 13.0,
+                resets_at: None,
+            }),
+        });
+        let only_week = PlanLimits {
+            session: None,
+            week: Some(Window {
+                percent: 20.0,
+                resets_at: Some("later".into()),
+            }),
+        };
+        let merged = merge(prev, only_week).unwrap();
+        assert_eq!(merged.session.map(|w| w.percent), Some(18.0));
+        assert_eq!(merged.week.map(|w| w.percent), Some(20.0));
     }
 }
