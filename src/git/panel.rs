@@ -938,7 +938,15 @@ impl Render for GitPanel {
                                                 b.icon(LucideIcon::Loader).loading(true)
                                             })
                                             .when(!suggesting, |b| {
-                                                b.child(material_icon("claude", 14.))
+                                                // Material SVG ignores Kit disabled `fg`;
+                                                // match outline disabled (~muted @ 0.5).
+                                                b.child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .when(ai_disabled, |d| d.opacity(0.5))
+                                                        .child(material_icon("claude", 14.)),
+                                                )
                                             });
                                         if !ai_disabled {
                                             let root = root.clone();

@@ -392,10 +392,12 @@ Add a row here whenever a new shared component is created.
   `.small()` outline icon buttons: heuristic `WandSparkles` (path draft)
   and Claude (Material `claude.svg` thumb). Both omit `on_click` while
   disabled (no selection / busy / conflict lock; Claude also until Agent
-  `can_silent_prompt`). Tooltips explain why. Claude uses a one-shot
-  throwaway ACP session — open chat `session_id` untouched and not marked
-  busy; `.loading` on the Claude icon while the turn runs; never
-  auto-commits; failure toasts — no heuristic fallback.
+  `can_silent_prompt`). Tooltips explain why. Claude’s SVG ignores Kit
+  disabled `fg`, so the thumb uses `opacity(0.5)` when disabled (same
+  ballpark as outline muted). Claude uses a one-shot throwaway ACP
+  session — open chat `session_id` untouched and not marked busy;
+  `.loading` on the Claude icon while the turn runs; never auto-commits;
+  failure toasts — no heuristic fallback.
   Change rows:
   checkbox + Material `tree_icon` + path, status letter on the right,
   ghost Open File + Undo discard (confirms). The change whose

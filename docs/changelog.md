@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-23** — Git Claude Suggest icon dims at 50% opacity when disabled
+  (Material SVG does not pick up Kit’s muted disabled `fg`).
+
 - **2026-10-22** — Silent jobs no longer freeze the open chat: Suggest/title
   keep Send as Send (home prompt can run on the open session); only Improve
   shows Stop; home vs silent turn end paths are split.
