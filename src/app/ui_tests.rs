@@ -1684,3 +1684,76 @@ fn terminal_new_adds_another_tab(cx: &mut TestAppContext) {
     assert!(h.terminal_visible(cx));
     assert_eq!(h.terminal_session_count(cx), 2, "New Terminal adds a tab");
 }
+
+#[gpui_kit::test]
+fn save_as_writes_new_path_and_leaves_original(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    let path = h.file("a.txt", "hello");
+    h.open(&path, cx);
+    h.input("X", cx);
+    assert_eq!(h.tab(&path, cx), Some((true, "Xhello".into())));
+
+    let as_path = h.dir.path().join("a-copy.txt");
+    let r = h.with_app(cx, |app, w, cx| app.save_as_to(&path, as_path.clone(), w, cx));
+    assert!(r.is_ok(), "{r:?}");
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello", "original untouched");
+    assert_eq!(std::fs::read_to_string(&as_path).unwrap(), "Xhello");
+    assert!(h.tab(&path, cx).is_none(), "tab left the old path");
+    assert_eq!(h.tab(&as_path, cx), Some((false, "Xhello".into())));
+}
+
+#[gpui_kit::test]
+fn dirty_buffer_text_restores_with_the_folder_session(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let a = h.folder("a");
+    let b = h.folder("b");
+    let path = a.join("note.txt");
+    std::fs::write(&path, "base").unwrap();
+
+    h.open_folder(&a, cx);
+    h.open(&path, cx);
+    h.input("EDIT-", cx);
+    assert_eq!(h.tab(&path, cx), Some((true, "EDIT-base".into())));
+
+    // Switch away: Don't Save still persist_session (with unsaved_text) first.
+    h.open_folder(&b, cx);
+    assert!(h.has("dialog-secondary", cx), "unsaved-changes before switch");
+    h.click("dialog-secondary", cx);
+    assert!(h.tab(&path, cx).is_none());
+
+    h.open_folder(&a, cx);
+    assert_eq!(
+        h.tab(&path, cx),
+        Some((true, "EDIT-base".into())),
+        "unsaved text + dirty mark come back with the folder"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "base", "disk unchanged");
+}
+
+#[gpui_kit::test]
+fn quit_asks_to_save_untitled_multi_root_workspace(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let first = h.folder("first");
+    let second = h.folder("second");
+    h.open_folder(&first, cx);
+    h.with_app(cx, |app, window, cx| {
+        app.add_folders(std::slice::from_ref(&second), window, cx);
+        assert!(
+            app.workspace.is_untitled_multi_root(),
+            "two roots, no workspace file"
+        );
+        assert!(
+            !app.confirm_quit(window, cx),
+            "must show a dialog, not quit immediately"
+        );
+    });
+    assert!(
+        h.has("dialog-secondary", cx),
+        "Save workspace? dialog (Don't Save / Save…)"
+    );
+    // Cancel — don't drive quit in the harness.
+    h.click("dialog-cancel", cx);
+    assert!(!h.has("dialog-secondary", cx));
+}

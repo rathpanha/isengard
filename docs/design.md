@@ -546,12 +546,17 @@ Add a row here whenever a new shared component is created.
     Save Workspace As…, Close Folder / Close Workspace. Edit includes
     Find in Files. View includes sidebar / Explorer / Search / Source
     Control / terminal / Agent panel.
-  - **Tabs open:** Save, Save All, Close Tab, Edit clipboard/find, Toggle
-    Preview, Increase / Decrease / Reset Font Size.
+  - **Tabs open:** Save, Save As… (`⌘⇧S` / `Ctrl+Shift+S`), Save All
+    (`⌘⌥S` / `Ctrl+Alt+S`), Close Tab, Edit clipboard/find, Toggle Preview,
+    Increase / Decrease / Reset Font Size.
 - **New File:** opens an in-memory `Untitled-N` tab (welcome or workspace); no
   file on disk until Save. Save dialog defaults to the workspace target dir
-  (tree selection, else active root). Close tab / quit asks Save / Don't Save
-  when dirty. Linux title-bar × runs the same quit confirmation as the WM close.
+  (tree selection, else active root). **Save As…** always picks a path
+  (untitled → same as Save); on-disk tabs write a copy and rebind the tab,
+  leaving the original file alone. Close tab / quit asks Save / Don't Save
+  when dirty; quit (like switch) also offers Save Workspace… for an untitled
+  multi-root workspace before the dirty-files dialog. Linux title-bar × runs
+  the same quit confirmation as the WM close.
 - **Workspaces before folders** wherever both appear (Start actions, recent
   lists, menus).
 - **Recent lists:** one titled section per kind ("Recent workspaces", then

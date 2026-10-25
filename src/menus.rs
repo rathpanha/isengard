@@ -5,7 +5,7 @@ use crate::app::{
     About, AddFolderToWorkspace, AddSelectionToAgent, CloseTab, CloseWorkspace, DecreaseFontSize,
     FindInFiles, FormatDocument, IncreaseFontSize, NewFile, NewTerminal, NewWorkspace,
     OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit, RenameSymbol, ResetFontSize, Save,
-    SaveAll, SaveWorkspaceAs, ShowFileTree, ShowGit, ToggleAgentPanel, TogglePreview,
+    SaveAll, SaveAs, SaveWorkspaceAs, ShowFileTree, ShowGit, ToggleAgentPanel, TogglePreview,
     ToggleSidebar, ToggleTerminal,
 };
 
@@ -113,6 +113,7 @@ fn file_items(ctx: MenuContext) -> Vec<MenuItem> {
     if ctx.has_tabs {
         sections.push(vec![
             MenuItem::action("Save", Save),
+            MenuItem::action("Save As…", SaveAs),
             MenuItem::action("Save All", SaveAll),
         ]);
     }

@@ -13,6 +13,7 @@ actions!(
         SaveWorkspaceAs,
         CloseWorkspace,
         Save,
+        SaveAs,
         SaveAll,
         CloseTab,
         CloseAllTabs,
@@ -106,6 +107,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-n", NewAgentChat, Some("Agent")),
         KeyBinding::new("secondary-o", OpenFolder, None),
         KeyBinding::new("secondary-s", Save, None),
+        KeyBinding::new("secondary-shift-s", SaveAs, None),
         KeyBinding::new("secondary-alt-s", SaveAll, None),
         KeyBinding::new("secondary-w", CloseTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
@@ -174,6 +176,9 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|_: &Save, cx| {
         with_active_app(cx, |app, window, cx| app.on_save(&Save, window, cx));
+    });
+    cx.on_action(|_: &SaveAs, cx| {
+        with_active_app(cx, |app, window, cx| app.on_save_as(&SaveAs, window, cx));
     });
     cx.on_action(|_: &SaveAll, cx| {
         with_active_app(cx, |app, window, cx| app.on_save_all(&SaveAll, window, cx));

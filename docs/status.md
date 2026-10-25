@@ -14,9 +14,11 @@ tabs, highlighted editor, status bar):
 - **Workspaces:** multi-root folders in one window; `.isengard-workspace` JSON
   (relative folder paths); Add Folder / Open / Save As / Close Folder or
   Close Workspace (label tracks single-folder vs named/multi-root); root
-  context menu remove; switching closes tabs (unsaved + untitled-workspace
-  prompts). Session restore (tabs with cursor/scroll + expanded tree dirs)
-  per folder/workspace in `config.json` `sessions` (tabs + dirty/untitled
+  context menu remove; switching or quitting closes tabs (unsaved +
+  untitled-workspace prompts). File **Save As…** (`⌘⇧S` / `Ctrl+Shift+S`)
+  writes a copy and rebinds the tab (original file untouched). Session
+  restore (tabs with cursor/scroll + expanded tree dirs) per
+  folder/workspace in `config.json` `sessions` (tabs + dirty/untitled
   text, sidebar strip, search query, git drafts/selection; terminal
   layout/cwds only — clean shells; cold start still welcome) — see design
   for restore rules. Save cancelled mid-close/quit toasts instead of
@@ -242,12 +244,13 @@ tabs, highlighted editor, status bar):
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).
 - UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
-  Save, Save All with a failing file, tab close with the unsaved dialog,
-  file-tree create/rename/move, terminal toggle + new tab, Agent panel
-  toggle/restore per folder, and agent file read/write against open buffers,
-  chats per folder across switch + restart (resume vs load), and a turn
-  finishing in the background after a switch. Agents must extend these for
-  every new UI feature ([architecture.md](architecture.md) ·
+  Save, Save As, Save All with a failing file, dirty-session restore across
+  folder switch, quit’s untitled multi-root workspace prompt, tab close with
+  the unsaved dialog, file-tree create/rename/move, terminal toggle + new
+  tab, Agent panel toggle/restore per folder, and agent file read/write
+  against open buffers, chats per folder across switch + restart (resume vs
+  load), and a turn finishing in the background after a switch. Agents must
+  extend these for every new UI feature ([architecture.md](architecture.md) ·
   [`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)).
   `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
   permission).
@@ -257,20 +260,19 @@ tabs, highlighted editor, status bar):
   a clean tab resets its cursor/scroll/undo (same as the agent-write reload).
   Deleted files keep their open buffer. Changes made while the app is closed
   are not noticed.
-- No Save As; no "Open Recent" in the native menu
-  (welcome screen only). Tree New File creates on disk after the inline
-  name (distinct from menu New File / `⌘N`, which stays untitled until
-  Save). Tree Delete always goes to Trash. Gitignore rules refresh on
-  folder open / expand, not on every save of `.gitignore`. `.env` /
-  `.gitignore` / lockfiles / Dockerfile use Bash/JSON/TOML aliases (no
-  dedicated Dockerfile grammar compatible with GPUI's tree-sitter); GraphQL
-  and TSX highlights are patched in `editor::highlights` because GPUI Kit
-  ships an empty GraphQL query and only a TS-keyword delta for TSX.
+- No "Open Recent" in the native menu (welcome screen only). Tree New File
+  creates on disk after the inline name (distinct from menu New File /
+  `⌘N`, which stays untitled until Save). Tree Delete always goes to Trash.
+  Gitignore rules refresh on folder open / expand, not on every save of
+  `.gitignore`. `.env` / `.gitignore` / lockfiles / Dockerfile use
+  Bash/JSON/TOML aliases (no dedicated Dockerfile grammar compatible with
+  GPUI's tree-sitter); GraphQL and TSX highlights are patched in
+  `editor::highlights` because GPUI Kit ships an empty GraphQL query and
+  only a TS-keyword delta for TSX.
 - Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
-  root context menu, switch dialogs. Quitting with an untitled multi-root
-  workspace does not offer to save it (only switching does). Workspace
-  `settings` are stored but not applied. Session restore does not restore
-  unsaved buffer text or auto-open last workspace on launch.
+  root context menu, switch dialogs. Workspace `settings` are stored but
+  not applied. Session restore does not auto-open last workspace on launch
+  (cold start stays welcome).
 - Save All: an untitled buffer whose write fails after the Save dialog still
   stops the queue (on-disk files carry on and report together).
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.

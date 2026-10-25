@@ -1128,6 +1128,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_delete_selected_tree_item))
             .on_action(cx.listener(Self::on_close_workspace))
             .on_action(cx.listener(Self::on_save))
+            .on_action(cx.listener(Self::on_save_as))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_close_tab))
             .on_action(cx.listener(Self::on_close_tab_at))

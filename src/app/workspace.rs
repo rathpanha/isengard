@@ -126,7 +126,9 @@ impl IsengardApp {
             "Don't Save",
             "Save…",
             move |this, window, cx| this.confirm_unsaved_then(after_discard.clone(), window, cx),
-            move |this, window, cx| this.save_workspace_as(Some(switch.clone()), window, cx),
+            move |this, window, cx| {
+                this.save_workspace_as(AfterWorkspaceSave::Switch(switch.clone()), window, cx)
+            },
             window,
             cx,
         );
@@ -205,7 +207,7 @@ impl IsengardApp {
 
     pub(super) fn save_workspace_as(
         &mut self,
-        next: Option<Switch>,
+        next: AfterWorkspaceSave,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -219,18 +221,20 @@ impl IsengardApp {
             .unwrap_or_default();
         let name = format!("{}.{WORKSPACE_EXTENSION}", self.workspace.display_name());
         let path = cx.prompt_for_new_path(&dir, Some(&name));
-        let abort_close = matches!(next, Some(Switch::Close));
+        let abort_message: Option<&'static str> = match &next {
+            AfterWorkspaceSave::Switch(Switch::Close) => {
+                Some("Save cancelled — workspace still open")
+            }
+            AfterWorkspaceSave::ContinueQuit => Some("Save cancelled — quit aborted"),
+            AfterWorkspaceSave::None | AfterWorkspaceSave::Switch(_) => None,
+        };
         cx.spawn_in(window, async move |this, window| {
             let path = match path.await {
                 Ok(Ok(Some(path))) => path,
                 Ok(Ok(None)) => {
-                    if abort_close {
+                    if let Some(msg) = abort_message {
                         this.update_in(window, |_, window, cx| {
-                            notify_error(
-                                "Save cancelled — workspace still open",
-                                window,
-                                cx,
-                            );
+                            notify_error(msg, window, cx);
                         })
                         .ok();
                     }
@@ -267,8 +271,16 @@ impl IsengardApp {
                             window,
                             cx,
                         );
-                        if let Some(next) = next {
-                            this.confirm_unsaved_then(next, window, cx);
+                        match next {
+                            AfterWorkspaceSave::None => {}
+                            AfterWorkspaceSave::Switch(switch) => {
+                                this.confirm_unsaved_then(switch, window, cx);
+                            }
+                            AfterWorkspaceSave::ContinueQuit => {
+                                if this.confirm_quit_unsaved(window, cx) {
+                                    this.quit(cx);
+                                }
+                            }
                         }
                     }
                     Err(err) => {
@@ -584,7 +596,7 @@ impl IsengardApp {
             );
             return;
         }
-        self.save_workspace_as(None, window, cx);
+        self.save_workspace_as(AfterWorkspaceSave::None, window, cx);
     }
 
     pub(super) fn on_remove_workspace_folder(

@@ -401,6 +401,19 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
+        self.write_tab_to_path(old_path, new_path, window, cx)
+    }
+
+    /// Write the text tab at `old_path` to `new_path` and rebind the tab
+    /// (untitled Save and Save As). Leaves the original on-disk file alone
+    /// when `old_path` was already a real path.
+    pub(super) fn write_tab_to_path(
+        &mut self,
+        old_path: &Path,
+        new_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
         let text = {
             let Some(tab) = self.tabs.iter().find(|t| t.path == *old_path) else {
                 anyhow::bail!("tab was closed");
@@ -411,6 +424,27 @@ impl IsengardApp {
             state.read(cx).value()
         };
         document::write_text(&new_path, &text)?;
+        self.rebind_tab_to_path(old_path, new_path, window, cx)
+    }
+
+    /// After the bytes are on disk: rematerialize the tab onto `new_path`.
+    fn rebind_tab_to_path(
+        &mut self,
+        old_path: &Path,
+        new_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        if old_path == new_path.as_path() {
+            // Same path (Save As → overwrite self): just mark saved.
+            if let Some(tab) = self.tabs.find_mut(|t| t.path == *old_path) {
+                tab.mark_saved(cx);
+            }
+            self.lsp.did_save(old_path, None);
+            self.persist_session(cx);
+            cx.notify();
+            return Ok(());
+        }
 
         if let Some(existing) = self.tabs.position(|t| t.path == new_path) {
             if let Some(old_ix) = self.tabs.position(|t| t.path == *old_path) {
@@ -460,6 +494,17 @@ impl IsengardApp {
         self.persist_session(cx);
         cx.notify();
         Ok(())
+    }
+
+    /// Save As to a concrete path (UI tests / dialog callback).
+    pub(super) fn save_as_to(
+        &mut self,
+        old_path: &Path,
+        new_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.write_tab_to_path(old_path, new_path, window, cx)
     }
 
     /// Saves every dirty tab (prompts for each untitled), then runs `after`.
@@ -729,7 +774,41 @@ impl IsengardApp {
         );
     }
     pub(super) fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.allow_quit || !self.has_unsaved() {
+        if self.allow_quit {
+            self.persist_session(cx);
+            return true;
+        }
+        // Same order as workspace switch: offer to persist an untitled
+        // multi-root workspace before asking about dirty files.
+        if self.workspace.is_untitled_multi_root() {
+            self.open_choice_dialog(
+                "Save workspace?",
+                "Save the folders in this workspace to a workspace file so you can reopen it later?",
+                "Don't Save",
+                "Save…",
+                |this, window, cx| {
+                    if this.confirm_quit_unsaved(window, cx) {
+                        this.quit(cx);
+                    }
+                },
+                |this, window, cx| {
+                    this.save_workspace_as(AfterWorkspaceSave::ContinueQuit, window, cx);
+                },
+                window,
+                cx,
+            );
+            return false;
+        }
+        self.confirm_quit_unsaved(window, cx)
+    }
+
+    /// Unsaved-file half of quit (after any untitled-workspace prompt).
+    pub(super) fn confirm_quit_unsaved(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.has_unsaved() {
             self.persist_session(cx);
             return true;
         }
@@ -901,6 +980,68 @@ impl IsengardApp {
             return;
         };
         self.request_save(path, |_, _, _, _| {}, None, window, cx);
+    }
+
+    pub(super) fn on_save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        if tab.editor_state().is_none() {
+            return;
+        }
+        let path = tab.path.clone();
+        if document::is_untitled(&path) {
+            self.request_save(path, |_, _, _, _| {}, None, window, cx);
+            return;
+        }
+        self.prompt_save_as(path, window, cx);
+    }
+
+    fn prompt_save_as(
+        &mut self,
+        old_path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = old_path
+            .parent()
+            .map(Path::to_path_buf)
+            .or_else(|| self.new_file_directory(cx))
+            .or_else(|| self.workspace.folders().first().cloned())
+            .or_else(dirs::home_dir)
+            .unwrap_or_default();
+        let suggested = old_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled.txt".into());
+        let prompt = cx.prompt_for_new_path(&dir, Some(&suggested));
+        cx.spawn_in(window, async move |this, window| {
+            let new_path = match prompt.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => return,
+                Ok(Err(err)) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error(format!("Save dialog failed: {err:#}"), window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+                Err(_) => {
+                    this.update_in(window, |_, window, cx| {
+                        notify_error("Save dialog was interrupted", window, cx);
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            this.update_in(window, |this, window, cx| {
+                if let Err(err) = this.save_as_to(&old_path, new_path, window, cx) {
+                    notify_error(format!("Save As failed: {err:#}"), window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub(super) fn on_save_all(&mut self, _: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {

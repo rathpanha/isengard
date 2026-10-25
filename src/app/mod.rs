@@ -122,7 +122,7 @@ pub use actions::{
     CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
     IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
     FormatDocument, OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, RenameSymbol,
-    ResetFontSize, Save, SaveAll,
+    ResetFontSize, Save, SaveAll, SaveAs,
     SaveWorkspaceAs, NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel,
     TogglePreview, ToggleSidebar, ToggleTerminal,
 };
@@ -166,6 +166,17 @@ pub(super) enum Switch {
     Folder(PathBuf),
     Workspace(Workspace),
     Close,
+}
+
+/// After a successful "Save Workspace As…" during leave/quit.
+#[derive(Clone)]
+pub(super) enum AfterWorkspaceSave {
+    /// Menu Save Workspace As — stay put.
+    None,
+    /// Switching / closing: continue with unsaved-file confirm then switch.
+    Switch(Switch),
+    /// Quit: continue with unsaved-file confirm then quit.
+    ContinueQuit,
 }
 
 /// Which view fills the left sidebar (same panel width).
