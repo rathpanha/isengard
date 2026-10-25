@@ -390,9 +390,12 @@ Add a row here whenever a new shared component is created.
   (shared `.git` → one section); bottom-border separators only *between*
   repos (none for a single repo or under the last). Per
   section: repo name + branch, outlined Pull / Push (`Pull (N)` /
-  `Push (N)` when behind / ahead of upstream), multi-line commit
-  `Textarea` + outlined icon Suggests + Commit (disabled while message
-  empty or nothing selected), collapsible changes list with select-all +
+  `Push (N)` when behind / ahead of upstream), commit `Textarea` in a
+  pixel-height box (one line idle; auto height from content up to 6
+  rows; bottom drag grip raises a floor through 20 rows — past the auto
+  cap; taller content scrolls inside) + outlined icon Suggests + Commit
+  (disabled while message empty or nothing selected), collapsible
+  changes list with select-all +
   per-file checkboxes (default none selected; Commit / Suggests use
   selection only; `git add -- <paths>` then commit). Suggest is **two**
   `.small()` outline icon buttons: heuristic `WandSparkles` (path draft)

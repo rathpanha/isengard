@@ -25,6 +25,43 @@ use super::engine::{
 };
 
 const MAX_RENDERED_CHANGES: usize = 500;
+/// Commit box starts at one row; content height auto-grows up to this many.
+const COMMIT_AUTO_MAX_ROWS: usize = 6;
+/// Drag can raise the floor through this many rows (past the auto cap).
+const COMMIT_MANUAL_MAX_ROWS: usize = 20;
+/// Line box used for auto height + drag (Kit textarea chrome is separate pad).
+const COMMIT_ROW_H: f32 = 20.;
+const COMMIT_PAD: f32 = 10.;
+
+fn commit_min_h() -> Pixels {
+    px(COMMIT_ROW_H + COMMIT_PAD)
+}
+
+fn commit_auto_max_h() -> Pixels {
+    px(COMMIT_AUTO_MAX_ROWS as f32 * COMMIT_ROW_H + COMMIT_PAD)
+}
+
+fn commit_manual_max_h() -> Pixels {
+    px(COMMIT_MANUAL_MAX_ROWS as f32 * COMMIT_ROW_H + COMMIT_PAD)
+}
+
+/// Height from message text alone (1..=auto-max rows).
+fn commit_auto_h(message: &str) -> Pixels {
+    let rows = message.lines().count().max(1).min(COMMIT_AUTO_MAX_ROWS);
+    px(rows as f32 * COMMIT_ROW_H + COMMIT_PAD).min(commit_auto_max_h())
+}
+
+/// Visible box: max(auto content height, drag floor), clamped.
+fn commit_display_h(floor: Pixels, message: &str) -> Pixels {
+    let auto = commit_auto_h(message);
+    auto.max(floor).max(commit_min_h()).min(commit_manual_max_h())
+}
+
+struct MsgResize {
+    section_i: usize,
+    last_y: Pixels,
+    last_h: Pixels,
+}
 
 #[derive(Clone)]
 pub enum GitPanelEvent {
@@ -77,6 +114,8 @@ struct RepoSection {
     /// Display label (workspace-relative root name).
     label: String,
     message: Entity<TextareaState>,
+    /// Drag-resize floor in px (`0` = pure auto height from content).
+    message_floor_h: Pixels,
     /// Which action is in flight (siblings disable; only this one spins).
     busy: Option<BusyOp>,
     /// Whether the changes list is visible.
@@ -97,6 +136,8 @@ pub struct GitPanel {
     active_path: Option<PathBuf>,
     /// Agent panel can run a silent Suggest turn (`can_silent_prompt`).
     agent_ready: bool,
+    /// Commit-box bottom-edge drag (pixel floor past the auto cap).
+    msg_resize: Option<MsgResize>,
     _message_subs: Vec<Subscription>,
 }
 
@@ -110,7 +151,26 @@ impl GitPanel {
             expanded: HashMap::new(),
             active_path: None,
             agent_ready: false,
+            msg_resize: None,
             _message_subs: Vec::new(),
+        }
+    }
+
+    fn set_message_floor_h(&mut self, section_i: usize, floor: Pixels, cx: &mut Context<Self>) {
+        let floor = floor.max(px(0.)).min(commit_manual_max_h());
+        let Some(section) = self.sections.get_mut(section_i) else {
+            return;
+        };
+        if section.message_floor_h == floor {
+            return;
+        }
+        section.message_floor_h = floor;
+        cx.notify();
+    }
+
+    fn end_msg_resize(&mut self, cx: &mut Context<Self>) {
+        if self.msg_resize.take().is_some() {
+            cx.notify();
         }
     }
 
@@ -181,6 +241,7 @@ impl GitPanel {
     ) {
         let mut old_messages: HashMap<PathBuf, String> = HashMap::new();
         let mut old_selection: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+        let mut old_floor_h: HashMap<PathBuf, Pixels> = HashMap::new();
         for section in &self.sections {
             self.expanded
                 .insert(section.status.root.clone(), section.changes_expanded);
@@ -189,6 +250,7 @@ impl GitPanel {
                 section.message.read(cx).value().to_string(),
             );
             old_selection.insert(section.status.root.clone(), section.selected.clone());
+            old_floor_h.insert(section.status.root.clone(), section.message_floor_h);
         }
 
         let first_paint = self.sections.is_empty();
@@ -212,6 +274,7 @@ impl GitPanel {
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
             let selected =
                 merge_selection(old_selection.remove(&status.root), &status.changes);
+            let message_floor_h = old_floor_h.remove(&status.root).unwrap_or(px(0.));
             let message = cx.new(|cx| {
                 let mut state = TextareaState::new(window, cx).placeholder("Commit message");
                 if !draft.is_empty() {
@@ -229,6 +292,7 @@ impl GitPanel {
                 status,
                 label,
                 message,
+                message_floor_h,
                 busy: None,
                 changes_expanded,
                 selected,
@@ -762,9 +826,6 @@ impl Render for GitPanel {
                 let all_selected = change_count > 0 && selected_count == change_count;
                 let nothing_selected = selected_count == 0;
 
-                // Fixed commit-box height — `min_h` + `h_full` let the first
-                // section steal leftover flex and look uneven vs the next.
-                const COMMIT_BOX_H: f32 = 72.;
                 let mut section_el = v_flex()
                     .id(ElementId::Name(SharedString::from(format!("git-repo-{si}"))))
                     .w_full()
@@ -866,20 +927,72 @@ impl Render for GitPanel {
                                 .child(text),
                         )
                     })
-                    .child(
+                    .child({
+                        let msg_text = section.message.read(cx).value().to_string();
+                        let display_h =
+                            commit_display_h(section.message_floor_h, &msg_text);
                         v_flex()
                             .w_full()
                             .gap_1()
                             .px_2()
                             .child(
-                                div()
+                                v_flex()
                                     .id(ElementId::Name(SharedString::from(format!(
                                         "git-msg-{si}"
                                     ))))
                                     .w_full()
-                                    .h(px(COMMIT_BOX_H))
-                                    .overflow_hidden()
-                                    .child(Textarea::new(&section.message).size_full()),
+                                    .child(
+                                        // Pixel height (auto from content up to 6
+                                        // rows, or the drag floor). No Kit
+                                        // `auto_grow` — rebuilding that mode
+                                        // mid-drag was snapping the box back.
+                                        div()
+                                            .w_full()
+                                            .h(display_h)
+                                            .overflow_hidden()
+                                            .child(Textarea::new(&section.message).size_full()),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(ElementId::Name(SharedString::from(format!(
+                                                "git-msg-resize-{si}"
+                                            ))))
+                                            .w_full()
+                                            .h(px(6.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .cursor(CursorStyle::ResizeUpDown)
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                                                    let start_h = this
+                                                        .sections
+                                                        .get(si)
+                                                        .map(|s| {
+                                                            commit_display_h(
+                                                                s.message_floor_h,
+                                                                &s.message.read(cx).value(),
+                                                            )
+                                                        })
+                                                        .unwrap_or_else(commit_min_h);
+                                                    this.set_message_floor_h(si, start_h, cx);
+                                                    this.msg_resize = Some(MsgResize {
+                                                        section_i: si,
+                                                        last_y: e.position.y,
+                                                        last_h: start_h,
+                                                    });
+                                                    cx.notify();
+                                                }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(28.))
+                                                    .h(px(2.))
+                                                    .rounded_full()
+                                                    .bg(theme.border),
+                                            ),
+                                    ),
                             )
                             .child(
                                 h_flex()
@@ -982,8 +1095,8 @@ impl Render for GitPanel {
                                             })
                                         }),
                                     ),
-                            ),
-                    )
+                            )
+                    })
                     .when_some(section.status.error.clone(), |el, err| {
                         el.child(
                             div()
@@ -1147,6 +1260,37 @@ impl Render for GitPanel {
             .min_w_0()
             .bg(theme.sidebar)
             .text_color(theme.sidebar_foreground)
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                let Some((si, new_h)) = this.msg_resize.as_mut().and_then(|drag| {
+                    let dy: f32 = (e.position.y - drag.last_y).into();
+                    if dy.abs() < 0.5 {
+                        return None;
+                    }
+                    let new_h = (drag.last_h + px(dy))
+                        .max(commit_min_h())
+                        .min(commit_manual_max_h());
+                    // Resync to the pointer every step. Growing the box moves
+                    // the grip; anchoring last_y to the mouse avoids a reverse
+                    // delta on the next event (the old row/`auto_grow` path).
+                    drag.last_y = e.position.y;
+                    if new_h == drag.last_h {
+                        return None;
+                    }
+                    drag.last_h = new_h;
+                    Some((drag.section_i, new_h))
+                }) else {
+                    return;
+                };
+                this.set_message_floor_h(si, new_h, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_msg_resize(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_msg_resize(cx)),
+            )
             .child(
                 h_flex()
                     .w_full()
@@ -1371,4 +1515,28 @@ fn render_change_row(
             )
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        commit_auto_h, commit_auto_max_h, commit_display_h, commit_manual_max_h, commit_min_h,
+    };
+    use gpui_kit::px;
+
+    #[test]
+    fn commit_display_h_auto_then_floor() {
+        assert_eq!(commit_auto_h(""), commit_min_h());
+        assert_eq!(
+            commit_auto_h("a\nb\nc\nd\ne\nf\ng"),
+            commit_auto_max_h()
+        );
+        assert_eq!(commit_display_h(px(0.), "a"), commit_min_h());
+        let tall = px(200.);
+        assert_eq!(commit_display_h(tall, "a"), tall);
+        assert_eq!(
+            commit_display_h(px(9999.), "a"),
+            commit_manual_max_h()
+        );
+    }
 }

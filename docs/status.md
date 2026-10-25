@@ -84,11 +84,12 @@ tabs, highlighted editor, status bar):
   (debounced; skipped for buffers >512 KiB).
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
-  + per-file); Suggest icons — heuristic (`WandSparkles`) and Claude
-  (Material icon; enabled only while Agent `can_silent_prompt`, throwaway
-  session, no heuristic fallback; disabled = no click; scrub drops
-  Co-Authored-By / Generated-with / Claude-Session trailers) / Commit from
-  selection; Open File + discard;
+  + per-file); commit box height auto 1→6 rows + drag floor to 20; Suggest
+  icons — heuristic (`WandSparkles`) and Claude (Material icon; enabled
+  only while Agent `can_silent_prompt`, throwaway session, no heuristic
+  fallback; disabled = no click; scrub drops Co-Authored-By /
+  Generated-with / Claude-Session trailers) / Commit from selection;
+  Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
   dirty); refreshes when the agent touches the worktree (no manual
