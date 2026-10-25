@@ -4,8 +4,8 @@ use gpui_kit::{Image, ImageFormat};
 use image::RgbaImage;
 
 /// Freedesktop / Wayland app id — must match the `.desktop` file basename
-/// (`dev.isengard.editor.desktop`) and `package.metadata.bundle.identifier`.
-pub const APP_ID: &str = "dev.isengard.editor";
+/// (`app.isengard.edtir.desktop`) and `package.metadata.bundle.identifier`.
+pub const APP_ID: &str = "app.isengard.edtir";
 
 /// The logo mark (no background), for use inside the UI.
 pub static LOGO_MARK: LazyLock<Arc<Image>> = LazyLock::new(|| {

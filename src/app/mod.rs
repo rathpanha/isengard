@@ -419,6 +419,12 @@ impl IsengardApp {
         let bounds_sub = cx.observe_window_bounds(window, |this, window, cx| {
             this.schedule_persist_window_geometry(window, cx);
         });
+        // Watcher can miss events while the window is inactive / after sleep.
+        let activation_sub = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.reconcile_open_tabs_with_disk(window, cx);
+            }
+        });
 
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
@@ -472,6 +478,7 @@ impl IsengardApp {
                 search_subscription,
                 git_subscription,
                 bounds_sub,
+                activation_sub,
             ],
         };
 

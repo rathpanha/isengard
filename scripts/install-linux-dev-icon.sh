@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Install a user-local .desktop + hicolor icon so Wayland compositors show the
-# Isengard logo for `cargo run` (app_id = dev.isengard.editor).
+# Isengard logo for `cargo run` (app_id = app.isengard.edtir).
 # X11 also gets WindowOptions::icon from the binary; this script still helps
 # alt-tab / launcher entries.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP_ID="dev.isengard.editor"
+APP_ID="app.isengard.edtir"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 ICON_DIR="$DATA/icons/hicolor/512x512/apps"
 APP_DIR="$DATA/applications"

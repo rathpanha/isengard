@@ -1809,6 +1809,87 @@ fn quit_asks_to_save_untitled_multi_root_workspace(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn disk_reload_keeps_selection(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("a.txt", "abcdefghij");
+    h.open(&path, cx);
+    h.with_app(cx, |app, _, cx| {
+        let state = app
+            .tabs
+            .iter()
+            .find(|t| t.path == path)
+            .and_then(|t| t.editor_state())
+            .expect("editor")
+            .clone();
+        state.update(cx, |state, cx| state.set_selected_range(3..7, cx));
+    });
+
+    std::fs::write(&path, "abcdefghijXXX").unwrap();
+    h.with_app(cx, |app, window, cx| {
+        app.reload_open_file_from_disk(&path, window, cx);
+    });
+
+    let (text, range) = h.with_app(cx, |app, _, cx| {
+        let tab = app.tabs.iter().find(|t| t.path == path).expect("tab");
+        let state = tab.editor_state().expect("editor");
+        let range = state.read(cx).selected_range();
+        (tab.editor_state().unwrap().read(cx).value().to_string(), range)
+    });
+    assert_eq!(text, "abcdefghijXXX");
+    assert_eq!(range, 3..7, "selection survives clean reload");
+}
+
+#[gpui_kit::test]
+fn deleted_clean_tab_closes_dirty_stays(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let clean = h.file("clean.txt", "ok");
+    let dirty = h.file("dirty.txt", "ok");
+    h.open(&clean, cx);
+    h.open(&dirty, cx);
+    h.input("X", cx);
+    assert_eq!(h.tab(&dirty, cx).map(|t| t.0), Some(true));
+
+    std::fs::remove_file(&clean).unwrap();
+    std::fs::remove_file(&dirty).unwrap();
+    h.with_app(cx, |app, window, cx| {
+        use crate::watch::FsChange;
+        app.apply_fs_changes(
+            vec![
+                FsChange {
+                    path: clean.clone(),
+                    structural: true,
+                },
+                FsChange {
+                    path: dirty.clone(),
+                    structural: true,
+                },
+            ],
+            window,
+            cx,
+        );
+    });
+
+    assert!(h.tab(&clean, cx).is_none(), "clean deleted tab closes");
+    assert_eq!(
+        h.tab(&dirty, cx),
+        Some((true, "Xok".into())),
+        "dirty deleted tab keeps buffer"
+    );
+}
+
+#[gpui_kit::test]
+fn reconcile_reloads_clean_tab_after_external_write(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("a.txt", "old");
+    h.open(&path, cx);
+    std::fs::write(&path, "new").unwrap();
+    h.with_app(cx, |app, window, cx| {
+        app.reconcile_open_tabs_with_disk(window, cx);
+    });
+    assert_eq!(h.tab(&path, cx), Some((false, "new".into())));
+}
+
+#[gpui_kit::test]
 fn workspace_settings_overlay_font_tab_and_format(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let root = h.folder("proj");

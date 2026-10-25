@@ -8,8 +8,19 @@ use std::path::{Path, PathBuf};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Path components whose changes are never reported.
-const SKIP_COMPONENTS: &[&str] = &[".git", "node_modules", "target", ".DS_Store"];
+/// Path components whose changes are never reported (build / VCS / caches —
+/// keeps Linux inotify watch counts down on huge trees).
+const SKIP_COMPONENTS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    ".next",
+    "dist",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".DS_Store",
+];
 
 /// One changed path.
 #[derive(Debug, Clone)]
@@ -84,6 +95,8 @@ mod tests {
         assert!(is_ignored(Path::new("/p/.git/index")));
         assert!(is_ignored(Path::new("/p/target/debug/x")));
         assert!(is_ignored(Path::new("/p/web/node_modules/a/b.js")));
+        assert!(is_ignored(Path::new("/p/app/.next/cache")));
+        assert!(is_ignored(Path::new("/p/.venv/lib/x")));
         assert!(!is_ignored(Path::new("/p/src/main.rs")));
     }
 

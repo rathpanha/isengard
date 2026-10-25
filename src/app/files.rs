@@ -127,6 +127,8 @@ impl IsengardApp {
     }
 
     /// After Accept Current/Incoming (or similar), refresh an open text tab from disk.
+    /// Keeps the prior selection and scroll (clamped); undo history still resets
+    /// because `EditorState::set_value` clears it.
     pub(super) fn reload_open_file_from_disk(
         &mut self,
         path: &Path,
@@ -146,7 +148,14 @@ impl IsengardApp {
             }
         };
         state.update(cx, |state, cx| {
+            let range = state.selected_range();
+            let scroll = state.scroll_offset();
             state.set_value(text, window, cx);
+            let len = state.text().len();
+            let start = range.start.min(len);
+            let end = range.end.min(len);
+            state.set_selected_range(start..end, cx);
+            state.set_scroll_offset(scroll, cx);
         });
         if let Some(tab) = self.tabs.get_mut(ix) {
             tab.mark_saved(cx);

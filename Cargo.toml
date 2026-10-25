@@ -70,7 +70,7 @@ gpui-kit = { version = "0.7.1", features = ["tree-sitter-languages", "test-suppo
 # which builds a macOS .app / Linux .deb with the app icon.
 [package.metadata.bundle]
 name = "Isengard"
-identifier = "dev.isengard.editor"
+identifier = "app.isengard.edtir"
 icon = ["assets/logo/Isengard.icns", "assets/logo/icon-1024.png"]
 category = "public.app-category.developer-tools"
 short_description = "The already configured editor"

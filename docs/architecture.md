@@ -54,7 +54,7 @@ Settings: `dirs::config_dir()/isengard/config.json` (macOS:
 3. App icon:
    - **X11:** automatic via `WindowOptions::icon` (`icon-1024.png`).
    - **Wayland:** one-time user `.desktop` + hicolor icon so the compositor can
-     match `app_id` (`dev.isengard.editor`):
+     match `app_id` (`app.isengard.edtir`):
 
      ```sh
      ./scripts/install-dev-icon.sh   # or install-linux-dev-icon.sh
@@ -383,7 +383,7 @@ src/
   `Isengard.icns`, `icon-1024.png` (macOS Dock, X11 window icon, cargo-bundle),
   `logo-512.png` (Linux hicolor via `scripts/install-dev-icon.sh`),
   `Isengard.ico` (Windows `.exe` via `build.rs` + `assets/windows/isengard.rc` +
-  `embed-resource`). App id `branding::APP_ID` (`dev.isengard.editor`) is set
+  `embed-resource`). App id `branding::APP_ID` (`app.isengard.edtir`) is set
   on the window for Wayland `.desktop` matching. See **App icon matrix** above.
   Colors: tile `#0b0b0c`, mark `#ececec`, cursor `#f5a524`. The group is
   optically centred (halfway between bbox centre and area centroid). To

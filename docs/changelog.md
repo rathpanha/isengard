@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — App id `app.isengard.edtir`; file-watch edges (reload
+  keeps selection/scroll, delete closes clean / warns dirty, window
+  activation reconciles open tabs); more watch skip dirs; status drops
+  LSP-bundle / GPL-as-open-TODO.
+
 - **2026-10-25** — Workspace `settings` overlay (font / tab / format-on-save);
   LSP `executeCommand` + `applyEdit` for command-only code actions; drop
   click-verify / Wayland-icon TODOs (verified / ignore).
