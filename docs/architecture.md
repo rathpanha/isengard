@@ -119,7 +119,9 @@ src/
 │   ├── chrome.rs        sidebar toggle, About, config, quit
 │   ├── render.rs        title/sidebar/editor/status-bar paint + `Render`
 │   └── welcome.rs       welcome screen (start actions + recent folders)
-├── watch.rs             `FsWatcher`: `notify` recursive watch → flume of `FsChange`
+├── watch.rs             `FsWatcher`: non-recursive watches per dir (skips
+│                        `node_modules`/… so Linux inotify does not blow up)
+│                        → flume of `FsChange`
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
@@ -348,15 +350,20 @@ src/
   assembly.
 - **File watching:** `workspace_changed` → `restart_fs_watch` (new
   `watch::FsWatcher` over `workspace.folders()`, `fs_watch_gen` bump so an old
-  pump stops; skipped under `cfg!(test)`). The pump task `recv_async`s, sleeps
-  300 ms, drains the channel, then `apply_fs_changes`: per open text tab,
-  compare disk text with the tab's `saved` rope — equal → nothing (own save),
-  clean → `reload_open_file_from_disk`, dirty → one warning toast tracked in
-  `disk_conflicts`. Parents of create/remove/rename paths go to
-  `FileTreePanel::refresh_loaded_dirs` (`FsNode::refresh_children`: loaded dirs
-  only, subdirectory state kept — never use `refresh_dir` here, it expands).
-  Then `GitPanel::refresh`. `.git` is not watched, so Git's own index writes
-  cannot loop back.
+  pump stops; skipped under `cfg!(test)`). `FsWatcher` walks the tree and
+  registers a **non-recursive** watch per directory, never descending into
+  `.git` / `node_modules` / `target` / `.next` / `dist` / `__pycache__` /
+  `.venv` / `venv` (Linux inotify is one watch per dir — recursive watch on a
+  root would register under those trees and hit `max_user_watches`). New dirs
+  get a watch on create. The pump task `recv_async`s, sleeps 300 ms, drains,
+  then `apply_fs_changes`: per open text tab, compare disk with `saved` —
+  equal → nothing, clean → `reload_open_file_from_disk` (keeps selection/
+  scroll; undo still clears via Kit `set_value`), dirty → one warning in
+  `disk_conflicts`, missing + clean → close tab, missing + dirty → warn and
+  keep. Window activation runs `reconcile_open_tabs_with_disk`. Parents of
+  create/remove/rename → `FileTreePanel::refresh_loaded_dirs`
+  (`FsNode::refresh_children`: loaded dirs only — never `refresh_dir` here).
+  Then `GitPanel::refresh`.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close

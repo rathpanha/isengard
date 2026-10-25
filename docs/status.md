@@ -241,50 +241,15 @@ tabs, highlighted editor, status bar):
 
 ## Known issues / TODO
 
-- UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
-  Save, Save As, Save All with a failing on-disk or untitled write, dirty-session
-  restore across folder switch, quit’s untitled multi-root workspace prompt,
-  tab close with the unsaved dialog, file-tree create/rename/move, terminal
-  toggle + new tab, Agent panel toggle/restore per folder, agent file
-  read/write against open buffers, chats per folder across switch + restart
-  (resume vs load), a turn finishing in the background after a switch, and
-  file-watch edges (reload keeps selection, delete clean vs dirty, activate
-  reconcile). Agents must extend these for every new UI feature
-  ([architecture.md](architecture.md) ·
-  [`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)).
-  `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
-  permission).
-- File watching (`notify`, recursive on every root; skips `.git` /
-  `node_modules` / `target` / `.next` / `dist` / `__pycache__` / `.venv` /
-  `venv`): on Linux inotify watches every directory, so a huge tree can still
-  hit the watch limit (logged, watching degrades). Clean-tab reload keeps
-  selection + scroll (undo still clears via Kit `set_value`). Deleted clean
-  tabs close; deleted dirty tabs warn once and keep the buffer. Window
-  activation re-checks open tabs for missed offline changes. Changes while
-  the **process** was not running are picked up on next open / restore from
-  disk (not while closed).
-- Tree New File creates on disk after the inline name (distinct from menu
-  New File / `⌘N`, which stays untitled until Save). Tree Delete always goes
-  to Trash. Gitignore rules refresh on folder open / expand, not on every
-  save of `.gitignore`. `.env` / `.gitignore` / lockfiles / Dockerfile use
-  Bash/JSON/TOML aliases (no dedicated Dockerfile grammar compatible with
-  GPUI's tree-sitter); GraphQL and TSX highlights are patched in
-  `editor::highlights` because GPUI Kit ships an empty GraphQL query and
-  only a TS-keyword delta for TSX.
-- Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
-- App id / bundle id: `app.isengard.edtir` (`branding::APP_ID`,
-  `package.metadata.bundle.identifier`). Icons: see architecture (Wayland
-  needs `scripts/install-linux-dev-icon.sh` for some DEs).
-- License: **GPL-3.0-only** (`LICENSE`, `Cargo.toml`, theme under
-  `assets/themes/`). Policy in [CONTRIBUTING.md](../CONTRIBUTING.md).
+None open for the editor shell. Agent switch is the only deferred item
+(below). UI test coverage is an agent rule
+([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
+not a product TODO. License is **GPL-3.0-only** — see
+[CONTRIBUTING.md](../CONTRIBUTING.md) (no action unless you want a different
+license, which means replacing GPL theme assets and relicensing).
 
 ## Roadmap — Agent panel after v1
 
 - Process-level agent switch in the panel — **deferred** (one agent today;
   change via `config.json` / Open Config File…). Mode/model pickers + chat
   rename + auto titles shipped.
-- Interactive QA: FakeAgent UI tests cover permission answer, chat delete,
-  Install/Login empty-state buttons, rename, and prompt send. Live smoke:
-  user-driven after adapter bumps — (1) Install or PATH agent, (2) Login →
-  Retry, (3) one prompt reply, (4) one real permission Ask, (5) rename +
-  delete chat.

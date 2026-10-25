@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — File watch: non-recursive per-dir watches that skip
+  `node_modules`/build dirs (fixes Linux inotify blowups); status: only
+  deferred item is agent switch; live smoke cleared.
+
 - **2026-10-25** — App id `app.isengard.edtir`; file-watch edges (reload
   keeps selection/scroll, delete closes clean / warns dirty, window
   activation reconciles open tabs); more watch skip dirs; status drops
