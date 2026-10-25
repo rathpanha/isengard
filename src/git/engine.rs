@@ -616,6 +616,7 @@ pub fn build_commit_suggest_prompt(repo: &Path, rel_paths: &[String]) -> String 
          Rules:\n\
          - Reply with ONLY the commit message (subject line, optional short body).\n\
          - No quotes, no markdown fences, no preamble or explanation.\n\
+         - No Co-Authored-By, Claude-Session, or \"Generated with\" attribution trailers.\n\
          - Match the style of recent commits when possible.\n\
          - Imperative mood; keep the subject concise.\n\
          - Do not use tools.\n\n\
@@ -648,7 +649,32 @@ pub fn scrub_commit_message(raw: &str) -> String {
     {
         s = rest.trim().to_owned();
     }
+    s = strip_attribution_trailers(&s);
     truncate_chars(&s, 4_000)
+}
+
+/// Drop Claude/Cursor attribution lines models habitually append.
+fn strip_attribution_trailers(s: &str) -> String {
+    let mut out: Vec<&str> = s
+        .lines()
+        .filter(|line| !is_attribution_line(line))
+        .collect();
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    out.join("\n").trim().to_owned()
+}
+
+fn is_attribution_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    lower.starts_with("co-authored-by:")
+        || lower.starts_with("claude-session:")
+        || lower.contains("generated with [claude")
+        || (t.starts_with('🤖') && lower.contains("generated with"))
 }
 
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -1553,6 +1579,27 @@ DD both_deleted.rs\n";
             "Add widget"
         );
         assert_eq!(scrub_commit_message("\"docs: tweak README\""), "docs: tweak README");
+    }
+
+    #[test]
+    fn scrub_commit_message_strips_attribution_trailers() {
+        let raw = "\
+Add silent model settings\n\
+\n\
+Allow a separate model for Git Suggest.\n\
+\n\
+🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\
+\n\
+Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>\n\
+Claude-Session: https://claude.ai/code/session/abc\n";
+        assert_eq!(
+            scrub_commit_message(raw),
+            "Add silent model settings\n\nAllow a separate model for Git Suggest."
+        );
+        assert_eq!(
+            scrub_commit_message("fix: x\n\nCo-authored-by: Claude <noreply@anthropic.com>"),
+            "fix: x"
+        );
     }
 
     #[test]

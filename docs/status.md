@@ -86,7 +86,8 @@ tabs, highlighted editor, status bar):
   border only between repos); checkboxes for commit selection (select-all
   + per-file); Suggest icons — heuristic (`WandSparkles`) and Claude
   (Material icon; enabled only while Agent `can_silent_prompt`, throwaway
-  session, no heuristic fallback; disabled = no click) / Commit from
+  session, no heuristic fallback; disabled = no click; scrub drops
+  Co-Authored-By / Generated-with / Claude-Session trailers) / Commit from
   selection; Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still

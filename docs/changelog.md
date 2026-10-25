@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Git Claude Suggest scrub strips Co-Authored-By /
+  Generated-with / Claude-Session attribution; repo `.claude/settings.json`
+  disables Claude Code commit/PR attribution for local + cloud sessions.
+
 - **2026-10-23** — Agent header `SlidersHorizontal` settings: row layout
   `Utility model → Model → Version` (more rows later); global
   `agent.silent_model`; **Chat model** inherits the open chat.
