@@ -48,7 +48,7 @@ xz2 = "0.1"
 # Agent Client Protocol (external agents such as Claude Agent). Pinned: the
 # 3.x API moves quickly. `process` spawns the agent; no Tokio — the connection
 # runs on its own thread via `futures::executor::block_on`.
-agent-client-protocol = { version = "=3.4.0", features = ["process"] }
+agent-client-protocol = { version = "=3.4.0", features = ["process", "unstable_subagents"] }
 futures = "0.3"
 base64 = "0.22"
 

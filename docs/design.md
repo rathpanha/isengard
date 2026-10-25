@@ -228,11 +228,15 @@ Add a row here whenever a new shared component is created.
   muted/warning/danger `text_xs` context used/size (e.g. `53K / 200K`;
   `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
   `Plus` New Chat. When the agent advertises a Model option, ghost
-  `SlidersHorizontal` **Agent settings** (Popover, TopRight): stacked rows
-  `Label → controls` (room for more knobs later). First row: **Utility
-  model** → Model picker (`Chat model` or family) → Version picker when
-  split applies — Improve / titles / Git Suggest (`agent.silent_model`;
-  not an editor Preferences panel). Chat-list rows append last-known
+  `SlidersHorizontal` **Agent settings** (Popover, TopRight,
+  `overlay_closable(false)` so nested model menus can be clicked): stacked
+  rows `Label →` upward Popover selects. **Utility model** → Chat model /
+  family (+ Version when split) — Improve / titles / Git Suggest
+  (`agent.silent_model`; not an editor Preferences panel). **Subagent
+  model** → Default / family (+ Version) — `agent.subagent_model` →
+  `CLAUDE_CODE_SUBAGENT_MODEL` + `_FORCE=1` on Claude Agent launch;
+  reconnects. ACP `Default (recommended)` folds into inherit (Chat model /
+  Default), not listed twice. Chat-list rows append last-known
   used/size beside the relative time when available (process memory only).
   Under the header, an
   N Files-style accordion (not Kit Accordion — `size_full` steals transcript
@@ -269,7 +273,11 @@ Add a row here whenever a new shared component is created.
   muted path, right status: Kit `Spinner` while running, `Check` success,
   `CircleX` danger) — consecutive tools (e.g. shell execute) sit tight
   (`MessageScroller` row `pb_2`, tool entry `py_0p5` / card `py_0p5`, not
-  section `pb_8`);   after a turn that changed files (git dirty delta since turn start —
+  section `pb_8`); nested Claude Agent/Explore subagents as bordered
+  “Subagent” rows (title, optional description + live tool activity,
+  Spinner / Check / warning) from ACP `subagent_update` + child-session
+  traffic; footer activity prefers a running subagent’s title · tool;
+  after a turn that changed files (git dirty delta since turn start —
   including shell create/edit/delete — and/or ACP write / Edit/Move/
   Delete tools), a full-width **N Files** strip for the latest turn is
   pinned on top of the composer / chat input (`border_t`, `px_3` like

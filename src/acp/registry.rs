@@ -51,11 +51,24 @@ pub fn resolve_in(
         find_on_path(CLAUDE_BIN, path_var)
     };
     match command {
-        Some(command) => Resolved::Launch(AgentLaunch {
-            command,
-            args: Vec::new(),
-            env: BTreeMap::new(),
-        }),
+        Some(command) => {
+            let mut env = BTreeMap::new();
+            // Claude Code: default (and force) model for Agent/Explore/Plan subagents.
+            if let Some(model) = settings
+                .subagent_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != "inherit")
+            {
+                env.insert("CLAUDE_CODE_SUBAGENT_MODEL".into(), model.to_owned());
+                env.insert("CLAUDE_CODE_SUBAGENT_MODEL_FORCE".into(), "1".into());
+            }
+            Resolved::Launch(AgentLaunch {
+                command,
+                args: Vec::new(),
+                env,
+            })
+        }
         None => Resolved::ClaudeNotInstalled,
     }
 }
@@ -138,6 +151,7 @@ mod tests {
             args: vec!["--experimental-acp".into()],
             env: BTreeMap::from([("A".into(), "1".into())]),
             silent_model: None,
+            subagent_model: None,
         };
         let Resolved::Launch(launch) = resolve_in(&settings, tmp.path(), None) else {
             panic!("expected a launch");
@@ -145,5 +159,32 @@ mod tests {
         assert_eq!(launch.command, PathBuf::from("gemini"));
         assert_eq!(launch.args, ["--experimental-acp"]);
         assert_eq!(launch.env.get("A").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn claude_launch_injects_subagent_model_env() {
+        let tmp = tempfile::tempdir().unwrap();
+        let local = claude_bin_in(&tmp.path().join("agents"));
+        touch(&local);
+        let settings = AgentSettings {
+            subagent_model: Some("haiku".into()),
+            ..AgentSettings::default()
+        };
+        let Resolved::Launch(launch) =
+            resolve_in(&settings, &tmp.path().join("agents"), None)
+        else {
+            panic!("expected a launch");
+        };
+        assert_eq!(
+            launch.env.get("CLAUDE_CODE_SUBAGENT_MODEL").map(String::as_str),
+            Some("haiku")
+        );
+        assert_eq!(
+            launch
+                .env
+                .get("CLAUDE_CODE_SUBAGENT_MODEL_FORCE")
+                .map(String::as_str),
+            Some("1")
+        );
     }
 }

@@ -344,6 +344,11 @@ pub struct AgentSettings {
     /// ids are ignored at prompt time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub silent_model: Option<String>,
+    /// Default model for Claude Code subagents (`CLAUDE_CODE_SUBAGENT_MODEL`).
+    /// `None` → Claude’s built-in order (Explore may use a different model).
+    /// Also sets `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` so Explore/Plan follow it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_model: Option<String>,
 }
 
 /// User-facing settings, persisted as JSON in the platform config directory.

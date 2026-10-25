@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, ClientSessionCapabilities,
+    SubagentCapabilities,
     CloseSessionRequest, CompactionCapabilities, ContentBlock, DeleteSessionRequest,
     FileSystemCapabilities, Implementation, InitializeRequest, LoadSessionRequest, NewSessionRequest,
     PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
@@ -421,7 +422,10 @@ async fn session(
                         .session(
                             ClientSessionCapabilities::new()
                                 .compaction(CompactionCapabilities::new()),
-                        ),
+                        )
+                        // Nested Agent/Explore progress as `subagent_update` +
+                        // child-session tool traffic (Claude Agent ACP).
+                        .subagents(SubagentCapabilities::new()),
                 )
                 .client_info(
                     Implementation::new("isengard", env!("CARGO_PKG_VERSION")).title("Isengard"),

@@ -39,7 +39,8 @@ use crate::acp::schema::{
     AvailableCommand, CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId,
     PermissionOptionKind, PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOptions, SessionModeState, SessionUpdate,
-    StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolKind,
+    StateUpdate, StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
+    ToolKind,
 };
 #[cfg(test)]
 use crate::acp::schema::ToolCallUpdateFields;
@@ -289,6 +290,8 @@ enum Entry {
     Agent(Entity<TextViewState>),
     Thought(Entity<TextViewState>),
     Tool(ToolEntry),
+    /// Nested Agent / Explore / Task child — progress while the main turn waits.
+    Subagent(SubagentEntry),
     Plan(Vec<PlanEntry>),
     /// Collapsible end-of-turn summary of files the agent wrote/deleted.
     FileChanges {
@@ -296,6 +299,24 @@ enum Entry {
         expanded: bool,
     },
     Notice { text: SharedString, error: bool },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SubagentWork {
+    Running,
+    RequiresAction,
+    Idle,
+    Unknown,
+}
+
+struct SubagentEntry {
+    /// Child ACP session id.
+    id: String,
+    title: SharedString,
+    description: Option<SharedString>,
+    work: SubagentWork,
+    /// Latest tool title / short status from the child's own session stream.
+    activity: Option<SharedString>,
 }
 
 fn user_refs_from(
@@ -1504,6 +1525,65 @@ impl AgentPanel {
         self.settings.silent_model = next;
         cx.emit(AgentPanelEvent::SettingsChanged);
         cx.notify();
+    }
+
+    /// Default Claude Code subagent model (`CLAUDE_CODE_SUBAGENT_MODEL`).
+    /// Reloads the agent process so the env is picked up (Explore included).
+    pub fn set_subagent_model(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        let next = id.filter(|s| !s.is_empty());
+        if self.settings.subagent_model == next {
+            return;
+        }
+        self.settings.subagent_model = next;
+        cx.emit(AgentPanelEvent::SettingsChanged);
+        if self.turn_running || self.silent.is_some() {
+            self.reconnect_after_turn = true;
+        } else if self.connection.is_some() {
+            self.start(cx);
+        }
+        cx.notify();
+    }
+
+    fn set_subagent_model_family(&mut self, family: String, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let prefer_version = self
+            .settings
+            .subagent_model
+            .as_deref()
+            .and_then(|id| split.choices.iter().find(|c| c.id == id))
+            .and_then(|c| c.version.clone());
+        let id = pick_silent_model_id(
+            &split.choices,
+            &family,
+            prefer_version.as_deref(),
+            None,
+        )
+        .or_else(|| pick_silent_model_id(&split.choices, &family, None, None));
+        self.set_subagent_model(id, cx);
+    }
+
+    fn set_subagent_model_version(&mut self, version: String, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let Some(family) = self
+            .settings
+            .subagent_model
+            .as_deref()
+            .and_then(|id| split.choices.iter().find(|c| c.id == id))
+            .map(|c| c.family.clone())
+        else {
+            return;
+        };
+        let id = pick_silent_model_id(
+            &split.choices,
+            &family,
+            Some(&version),
+            self.settings.subagent_model.as_deref(),
+        );
+        self.set_subagent_model(id, cx);
     }
 
     /// Pick a utility-model family (keeps version/context when possible).
@@ -2955,6 +3035,131 @@ impl AgentPanel {
         })
     }
 
+    fn subagent_index(&self, session_id: &str) -> Option<usize> {
+        self.entries.iter().rposition(|e| match e {
+            Entry::Subagent(s) => s.id == session_id,
+            _ => false,
+        })
+    }
+
+    fn apply_subagent_update(
+        &mut self,
+        update: crate::acp::schema::SubagentUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = update.session_id.to_string();
+        let work = if update.state.is_undefined() {
+            None
+        } else if update.state.is_null() {
+            Some(SubagentWork::Unknown)
+        } else {
+            match update.state.value() {
+                Some(StateUpdate::Running(_)) => Some(SubagentWork::Running),
+                Some(StateUpdate::RequiresAction(_)) => Some(SubagentWork::RequiresAction),
+                Some(StateUpdate::Idle(_)) => Some(SubagentWork::Idle),
+                Some(StateUpdate::Unknown(_)) | Some(StateUpdate::Other(_)) => {
+                    Some(SubagentWork::Unknown)
+                }
+                None => None,
+                _ => Some(SubagentWork::Unknown),
+            }
+        };
+        // Omitted = unchanged; null = clear; value = replace.
+        let title_patch = if update.title.is_undefined() {
+            None
+        } else if update.title.is_null() {
+            Some(None)
+        } else {
+            update
+                .title
+                .value()
+                .map(|t| Some(SharedString::from(t.clone())))
+        };
+        let desc_patch = if update.description.is_undefined() {
+            None
+        } else if update.description.is_null() {
+            Some(None)
+        } else {
+            update
+                .description
+                .value()
+                .map(|t| Some(SharedString::from(t.clone())))
+        };
+
+        if let Some(ix) = self.subagent_index(&id) {
+            if let Entry::Subagent(entry) = &mut self.entries[ix] {
+                if let Some(Some(t)) = title_patch {
+                    entry.title = t;
+                } else if let Some(None) = title_patch {
+                    entry.title = "Subagent".into();
+                }
+                if let Some(d) = desc_patch {
+                    entry.description = d;
+                }
+                if let Some(w) = work {
+                    entry.work = w;
+                    if matches!(w, SubagentWork::Idle) {
+                        entry.activity = None;
+                    }
+                }
+            }
+            self.touched(ix, cx);
+            cx.notify();
+            return;
+        }
+
+        let title = match title_patch {
+            Some(Some(t)) => t,
+            _ => "Subagent".into(),
+        };
+        let description = match desc_patch {
+            Some(d) => d,
+            None => None,
+        };
+        self.push_entry(
+            Entry::Subagent(SubagentEntry {
+                id,
+                title,
+                description,
+                work: work.unwrap_or(SubagentWork::Running),
+                activity: None,
+            }),
+            cx,
+        );
+        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        cx.notify();
+    }
+
+    /// Tool / status traffic on a child session → update that subagent's row.
+    fn apply_subagent_child_update(
+        &mut self,
+        session: &str,
+        update: SessionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.subagent_index(session) else {
+            return;
+        };
+        let activity = match update {
+            SessionUpdate::ToolCall(call) => Some(SharedString::from(call.title)),
+            SessionUpdate::ToolCallUpdate(u) => u.fields.title.map(SharedString::from),
+            SessionUpdate::AgentThoughtChunk(_) => Some("Thinking…".into()),
+            SessionUpdate::AgentMessageChunk(_) => Some("Writing…".into()),
+            _ => None,
+        };
+        let Some(activity) = activity else {
+            return;
+        };
+        if let Entry::Subagent(entry) = &mut self.entries[ix] {
+            entry.activity = Some(activity);
+            if matches!(entry.work, SubagentWork::Idle | SubagentWork::Unknown) {
+                entry.work = SubagentWork::Running;
+            }
+        }
+        self.touched(ix, cx);
+        cx.notify();
+    }
+
     /// Open-chat turn ended (not a throwaway silent job).
     fn home_turn_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
@@ -3391,6 +3596,9 @@ impl AgentPanel {
                         self.restore_file_change_cards(cx);
                     }
                     self.maybe_start_pending_title(cx);
+                } else if self.subagent_index(&session).is_some() {
+                    // Child Agent/Explore session — fold progress into its row.
+                    self.apply_subagent_child_update(&session, update, cx);
                 }
             }
             AgentEvent::TurnEnded(reason) => {
@@ -3515,6 +3723,9 @@ impl AgentPanel {
                 } else {
                     cx.notify();
                 }
+            }
+            SessionUpdate::SubagentUpdate(update) => {
+                self.apply_subagent_update(update, cx);
             }
             SessionUpdate::UsageUpdate(update) => {
                 let snap = ContextUsage {
@@ -4043,6 +4254,14 @@ fn context_from_model_id(id: &str) -> Option<String> {
     None
 }
 
+/// ACP often lists `Default (recommended)` alongside our synthetic empty
+/// "Default" (no override). Collapse those so the picker isn't doubled.
+fn is_agent_default_model_label(label: &str) -> bool {
+    let t = label.trim();
+    let lower = t.to_ascii_lowercase();
+    lower == "default" || lower.starts_with("default ") || lower.starts_with("default(")
+}
+
 /// `"Sonnet 4.5"` → (`Sonnet`, `Some("4.5")`); `"Opus 5"` → (`Opus`, `Some("5")`).
 fn parse_model_family_version(display: &str) -> (String, Option<String>) {
     let trimmed = display.trim();
@@ -4523,6 +4742,7 @@ fn render_entry(
             )
             .into_any_element(),
         Entry::Tool(tool) => render_tool(panel, tool, cx),
+        Entry::Subagent(sub) => render_subagent(sub, cx),
         Entry::Plan(items) => v_flex()
             .w_full()
             .gap_1()
@@ -4568,7 +4788,7 @@ fn render_entry(
     // Tool / file-change rows are bordered cards — keep outer padding
     // tight so consecutive shell tools don't float apart. Bubbles /
     // markdown keep a touch more air via scroller pb_2.
-    let entry_py = matches!(entry, Entry::Tool(_));
+    let entry_py = matches!(entry, Entry::Tool(_) | Entry::Subagent(_));
     // File-change rows live above the composer — no mid-stream padding.
     if matches!(entry, Entry::FileChanges { .. }) {
         return body;
@@ -4705,6 +4925,76 @@ fn render_file_changes(
         .into_any_element()
 }
 
+fn render_subagent(sub: &SubagentEntry, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let status: AnyElement = match sub.work {
+        SubagentWork::Idle => Icon::new(LucideIcon::Check)
+            .small()
+            .text_color(theme.success)
+            .into_any_element(),
+        SubagentWork::RequiresAction => Icon::new(LucideIcon::CircleAlert)
+            .small()
+            .text_color(theme.warning)
+            .into_any_element(),
+        SubagentWork::Unknown => Icon::new(LucideIcon::CircleQuestionMark)
+            .small()
+            .text_color(theme.muted_foreground)
+            .into_any_element(),
+        SubagentWork::Running => Spinner::new().small().into_any_element(),
+    };
+    v_flex()
+        .w_full()
+        .gap_1()
+        .px_2()
+        .py_0p5()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.muted.opacity(0.25))
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .items_center()
+                .child(
+                    Icon::new(LucideIcon::Bot)
+                        .small()
+                        .text_color(theme.muted_foreground),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("Subagent"),
+                        )
+                        .child(div().text_sm().truncate().child(sub.title.clone()))
+                        .when_some(sub.description.as_ref(), |col, d| {
+                            col.child(
+                                div()
+                                    .text_xs()
+                                    .truncate()
+                                    .text_color(theme.muted_foreground)
+                                    .child(d.clone()),
+                            )
+                        })
+                        .when_some(sub.activity.as_ref(), |col, a| {
+                            col.child(
+                                div()
+                                    .text_xs()
+                                    .truncate()
+                                    .text_color(theme.muted_foreground)
+                                    .child(a.clone()),
+                            )
+                        }),
+                )
+                .child(status),
+        )
+        .into_any_element()
+}
+
 fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let status: AnyElement = match tool.status {
@@ -4819,6 +5109,23 @@ impl AgentPanel {
                 .into(),
             ),
             Status::Ready if self.turn_running => {
+                if let Some(label) = self.entries.iter().rev().find_map(|e| match e {
+                    Entry::Subagent(sub)
+                        if matches!(
+                            sub.work,
+                            SubagentWork::Running | SubagentWork::RequiresAction
+                        ) =>
+                    {
+                        let name = sub.title.as_ref();
+                        Some(match &sub.activity {
+                            Some(a) => format!("{name} · {a}").into(),
+                            None => format!("{name}…").into(),
+                        })
+                    }
+                    _ => None,
+                }) {
+                    return Some(label);
+                }
                 if let Some(title) = self.entries.iter().rev().find_map(|e| match e {
                     Entry::Tool(tool)
                         if matches!(
@@ -4836,6 +5143,7 @@ impl AgentPanel {
                     Some(Entry::Thought(_)) => Some("Thinking…".into()),
                     Some(Entry::Agent(_)) => Some("Writing…".into()),
                     Some(Entry::Plan(_)) => Some("Planning…".into()),
+                    Some(Entry::Subagent(sub)) => Some(format!("{}…", sub.title).into()),
                     _ => Some("Working…".into()),
                 }
             }
@@ -5507,6 +5815,9 @@ impl AgentPanel {
         let panel = cx.entity().downgrade();
         Popover::new("agent-settings")
             .anchor(Anchor::TopRight)
+            // Nested model menus open outside this surface; outside-click
+            // dismiss would eat the pick before on_click runs.
+            .overlay_closable(false)
             .trigger(
                 Button::new("agent-settings-button")
                     .ghost()
@@ -5532,31 +5843,193 @@ impl AgentPanel {
             .gap_2()
             .p_2()
             .child(self.render_utility_model_setting_row(cx))
+            .child(self.render_subagent_model_setting_row(cx))
+            .into_any_element()
+    }
+
+    fn settings_model_families(split: &ModelFamilySplit) -> Vec<(String, String)> {
+        let mut families = Vec::new();
+        for c in &split.choices {
+            if is_agent_default_model_label(&c.family) {
+                continue;
+            }
+            if !families.iter().any(|(id, _)| id == &c.family) {
+                families.push((c.family.clone(), c.family.clone()));
+            }
+        }
+        families
+    }
+
+    /// `Subagent model → [Default|family] [version]` — Claude Code Agent/Explore.
+    fn render_subagent_model_setting_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        // App-level pref — session reconnect must not freeze these controls.
+        let locked = self.turn_running;
+        let mute = cx.theme().muted_foreground;
+        let sub_id = self.settings.subagent_model.as_deref();
+        let split = model_family_split(&self.config_options);
+        let sub_choice = sub_id
+            .and_then(|id| {
+                split
+                    .as_ref()
+                    .and_then(|s| s.choices.iter().find(|c| c.id == id))
+            })
+            .filter(|c| !is_agent_default_model_label(&c.family));
+
+        let model_picker = if let Some(split) = split.as_ref() {
+            let mut choices = Vec::with_capacity(split.choices.len() + 1);
+            choices.push((String::new(), "Default".into()));
+            choices.extend(Self::settings_model_families(split));
+            let current = sub_choice
+                .map(|c| c.family.clone())
+                .unwrap_or_default();
+            let label = if current.is_empty() {
+                "Default"
+            } else {
+                current.as_str()
+            };
+            self.render_bottom_select(
+                "agent-settings-subagent-model",
+                LucideIcon::Bot,
+                "Model",
+                label,
+                &current,
+                &choices,
+                locked,
+                cx,
+                |this, id, cx| {
+                    if id.is_empty() {
+                        this.set_subagent_model(None, cx);
+                    } else {
+                        this.set_subagent_model_family(id, cx);
+                    }
+                },
+            )
+        } else if let Some(opt) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        ) {
+            let mut choices = Vec::with_capacity(opt.choices.len() + 1);
+            choices.push((String::new(), "Default".into()));
+            choices.extend(
+                opt.choices
+                    .into_iter()
+                    .filter(|(_, name)| !is_agent_default_model_label(name)),
+            );
+            let current = match sub_id {
+                None => String::new(),
+                Some(id) => {
+                    if choices.iter().any(|(cid, _)| cid == id) {
+                        id.to_owned()
+                    } else {
+                        String::new()
+                    }
+                }
+            };
+            let label = if current.is_empty() {
+                "Default"
+            } else {
+                choices
+                    .iter()
+                    .find(|(id, _)| id == &current)
+                    .map(|(_, n)| n.as_str())
+                    .unwrap_or(current.as_str())
+            };
+            self.render_bottom_select(
+                "agent-settings-subagent-model",
+                LucideIcon::Bot,
+                "Model",
+                label,
+                &current,
+                &choices,
+                locked,
+                cx,
+                |this, id, cx| {
+                    this.set_subagent_model(if id.is_empty() { None } else { Some(id) }, cx);
+                },
+            )
+        } else {
+            div()
+                .text_xs()
+                .text_color(mute)
+                .child("Connect an agent to pick models")
+                .into_any_element()
+        };
+
+        let version_picker = split.as_ref().and_then(|split| {
+            let family = sub_choice?.family.as_str();
+            let mut versions: Vec<(String, String)> = Vec::new();
+            for c in &split.choices {
+                if c.family != family {
+                    continue;
+                }
+                let Some(ver) = &c.version else {
+                    continue;
+                };
+                if versions.iter().any(|(_, v)| v == ver) {
+                    continue;
+                }
+                versions.push((ver.clone(), ver.clone()));
+            }
+            if versions.is_empty() {
+                return None;
+            }
+            let current = sub_choice
+                .and_then(|c| c.version.clone())
+                .unwrap_or_default();
+            let label = if current.is_empty() {
+                "—"
+            } else {
+                current.as_str()
+            };
+            Some(self.render_bottom_select(
+                "agent-settings-subagent-version",
+                LucideIcon::Tag,
+                "Version",
+                label,
+                &current,
+                &versions,
+                locked,
+                cx,
+                |this, ver, cx| this.set_subagent_model_version(ver, cx),
+            ))
+        });
+
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_1()
+            .child(
+                div()
+                    .id("agent-settings-subagent-label")
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(mute)
+                    .child("Subagent model"),
+            )
+            .child(model_picker)
+            .children(version_picker)
             .into_any_element()
     }
 
     /// `Utility model → [Chat model|family] [version]` (Improve / titles / Git Suggest).
     fn render_utility_model_setting_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let locked = self.config_controls_locked();
+        let locked = self.turn_running;
         let mute = cx.theme().muted_foreground;
         let silent_id = self.settings.silent_model.as_deref();
         let split = model_family_split(&self.config_options);
-        let silent_choice = silent_id.and_then(|id| {
-            split
-                .as_ref()
-                .and_then(|s| s.choices.iter().find(|c| c.id == id))
-        });
+        let silent_choice = silent_id
+            .and_then(|id| {
+                split
+                    .as_ref()
+                    .and_then(|s| s.choices.iter().find(|c| c.id == id))
+            })
+            .filter(|c| !is_agent_default_model_label(&c.family));
 
         let model_picker = if let Some(split) = split.as_ref() {
-            let mut families = Vec::new();
-            for c in &split.choices {
-                if !families.iter().any(|f| f == &c.family) {
-                    families.push(c.family.clone());
-                }
-            }
-            let mut choices = Vec::with_capacity(families.len() + 1);
+            let mut choices = Vec::with_capacity(split.choices.len() + 1);
             choices.push((String::new(), "Chat model".into()));
-            choices.extend(families.into_iter().map(|f| (f.clone(), f)));
+            choices.extend(Self::settings_model_families(split));
             let current = silent_choice
                 .map(|c| c.family.clone())
                 .unwrap_or_default();
@@ -5589,8 +6062,21 @@ impl AgentPanel {
         ) {
             let mut choices = Vec::with_capacity(opt.choices.len() + 1);
             choices.push((String::new(), "Chat model".into()));
-            choices.extend(opt.choices);
-            let current = silent_id.unwrap_or("").to_owned();
+            choices.extend(
+                opt.choices
+                    .into_iter()
+                    .filter(|(_, name)| !is_agent_default_model_label(name)),
+            );
+            let current = match silent_id {
+                None => String::new(),
+                Some(id) => {
+                    if choices.iter().any(|(cid, _)| cid == id) {
+                        id.to_owned()
+                    } else {
+                        String::new()
+                    }
+                }
+            };
             let label = if current.is_empty() {
                 "Chat model"
             } else {
@@ -5614,7 +6100,11 @@ impl AgentPanel {
                 },
             )
         } else {
-            div().into_any_element()
+            div()
+                .text_xs()
+                .text_color(mute)
+                .child("Connect an agent to pick models")
+                .into_any_element()
         };
 
         let version_picker = split.as_ref().and_then(|split| {
@@ -5756,12 +6246,13 @@ impl AgentPanel {
                 let popover_id = popover_id.clone();
                 v_flex()
                     .w(px(200.))
-                    .children(choices.iter().map(|(id, name)| {
+                    .children(choices.iter().enumerate().map(|(ix, (id, name))| {
                         let selected = id == &current;
                         let (panel, popover) = (panel.clone(), popover.clone());
                         let on_pick = on_pick.clone();
                         let id = id.clone();
-                        ListItem::new(SharedString::from(format!("{popover_id}-{id}")))
+                        // Index ids — empty / punctuated choice values break ElementId.
+                        ListItem::new(SharedString::from(format!("{popover_id}-item-{ix}")))
                             .selected(selected)
                             .cursor_pointer()
                             .on_click(move |_, window, cx| {
@@ -6624,6 +7115,21 @@ impl Render for AgentPanel {
             // **N Files** sits on top of the composer (the chat input), not under usage.
             .children(self.render_sticky_file_changes(cx))
             .when(show_composer, |col| col.child(self.render_composer(ready, cx)))
+    }
+}
+
+#[cfg(test)]
+mod default_model_label_tests {
+    use super::is_agent_default_model_label;
+
+    #[test]
+    fn collapses_acp_default_variants() {
+        assert!(is_agent_default_model_label("Default"));
+        assert!(is_agent_default_model_label("Default (recommended)"));
+        assert!(is_agent_default_model_label("default(recommended)"));
+        assert!(!is_agent_default_model_label("Opus"));
+        assert!(!is_agent_default_model_label("Sonnet"));
+        assert!(!is_agent_default_model_label("Fable"));
     }
 }
 

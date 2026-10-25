@@ -125,6 +125,9 @@ tabs, highlighted editor, status bar):
   program exits the panel reconnects by itself (Retry stays as a fallback).
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
   markdown replies + thoughts, tool-call rows (kind icon, path, status),
+  nested subagent rows (Explore/Agent progress while the main turn waits —
+  ACP `clientCapabilities.subagents`; Agent settings **Subagent model**
+  sets Claude’s `CLAUDE_CODE_SUBAGENT_MODEL`),
   end-of-turn **N Files** change summary as a full-width strip on top of
   the composer (above the chat input; latest turn; collapsed by default;
   `+/-` from git worktree delta since turn start — covers shell

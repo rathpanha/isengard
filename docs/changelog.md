@@ -3,6 +3,17 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Agent settings keep dropdown rows; `overlay_closable(false)`
+  so nested model menus don’t get eaten; fold ACP `Default (recommended)`
+  into inherit.
+
+- **2026-10-25** — Subagent model picker: drop ACP `Default (recommended)`
+  so it no longer doubles our empty **Default** (no override).
+
+- **2026-10-25** — Agent subagent progress in chat (ACP `subagents` +
+  child-session tool activity); Agent settings **Subagent model**
+  (`CLAUDE_CODE_SUBAGENT_MODEL` / `_FORCE`).
+
 - **2026-10-25** — Agent composer `/` slash-command suggestions from ACP
   `available_commands_update` (same picker pattern as `@`).
 
