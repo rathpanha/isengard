@@ -425,6 +425,8 @@ src/
   `Harness::has` renders a frame first and only sees registered Kit controls
   (e.g. `Button` ids), not plain `div().id(..)`. The harness points
   `agent.command` at a missing path so tests never launch a real agent.
+  **Required for every new/changed UI feature** in the same change — see
+  [`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc).
 - Commits go on `master` (user's choice). Only commit when the user asks.
 - Doc updates follow [README.md](README.md) (living topic file + one changelog
   bullet).

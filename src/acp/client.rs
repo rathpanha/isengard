@@ -602,7 +602,6 @@ async fn session(
                 let logins = logins.clone();
                 let silent = silent.clone();
                 let can_delete = info.can_delete;
-                let can_close = can_close;
                 let cx2 = cx.clone();
                 cx.spawn(async move {
                     let result = turn.block_task().await;

@@ -555,7 +555,7 @@ fn agent_file_change_card_drops_discarded_paths(cx: &mut TestAppContext) {
     assert!(!cx.read(|cx| panel.read(cx).file_change_summaries_for_test()).is_empty());
 
     panel.update(cx, |panel, cx| {
-        panel.note_discarded_paths(&[path.clone()], cx);
+        panel.note_discarded_paths(std::slice::from_ref(&path), cx);
     });
     assert!(
         cx.read(|cx| panel.read(cx).file_change_summaries_for_test()).is_empty(),
@@ -1587,4 +1587,100 @@ fn agent_install_and_login_screens(cx: &mut TestAppContext) {
     });
     assert!(h.has("agent-retry", cx), "Retry after login");
     assert!(h.has("agent-login-0", cx), "login method button");
+}
+
+#[gpui_kit::test]
+fn tree_create_file_and_folder_land_on_disk(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let root = h.dir.path().to_path_buf();
+    h.open_folder(&root, cx);
+
+    let file = root.join("fresh.txt");
+    let r = h.with_app(cx, |app, w, cx| app.create_file_in(&root, "fresh.txt", w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(file.is_file());
+    assert!(h.tab(&file, cx).is_some(), "new file opens as a tab");
+
+    let dir = root.join("nested");
+    let r = h.with_app(cx, |app, w, cx| app.create_folder_in(&root, "nested", w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(dir.is_dir());
+
+    let r = h.with_app(cx, |app, w, cx| app.create_file_in(&root, "fresh.txt", w, cx));
+    assert!(r.is_err(), "duplicate name refused");
+}
+
+#[gpui_kit::test]
+fn tree_rename_remaps_open_tab(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let path = h.file("old.txt", "body\n");
+    h.open_folder(h.dir.path(), cx);
+    h.open(&path, cx);
+    assert_eq!(h.tab(&path, cx).map(|(_, t)| t), Some("body\n".into()));
+
+    let renamed = h.dir.path().join("new.txt");
+    let r = h.with_app(cx, |app, w, cx| app.rename_path(&path, "new.txt", w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(!path.exists() && renamed.exists());
+    assert!(h.tab(&renamed, cx).is_some());
+    assert!(h.tab(&path, cx).is_none());
+    assert_eq!(
+        h.tab(&renamed, cx).map(|(_, t)| t),
+        Some("body\n".into()),
+        "buffer text follows the rename"
+    );
+}
+
+impl Harness {
+    fn terminal_visible(&self, cx: &mut TestAppContext) -> bool {
+        cx.read(|cx| self.app.read(cx).terminal.read(cx).is_visible())
+    }
+
+    fn terminal_session_count(&self, cx: &mut TestAppContext) -> usize {
+        cx.read(|cx| self.app.read(cx).terminal.read(cx).session_cwds().len())
+    }
+}
+
+#[gpui_kit::test]
+fn terminal_toggle_spawns_session_and_hides(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    assert!(!h.terminal_visible(cx));
+    assert_eq!(h.terminal_session_count(cx), 0);
+
+    // Call the same handlers the keybinding / menu use (test window focus
+    // often misses `ctrl-\`` chords).
+    h.with_app(cx, |app, w, cx| {
+        app.on_toggle_terminal(&crate::app::ToggleTerminal, w, cx);
+    });
+    assert!(h.terminal_visible(cx), "toggle opens the panel");
+    assert_eq!(h.terminal_session_count(cx), 1, "first toggle creates a shell");
+
+    h.with_app(cx, |app, w, cx| {
+        app.on_toggle_terminal(&crate::app::ToggleTerminal, w, cx);
+    });
+    assert!(!h.terminal_visible(cx), "toggle hides without dropping the session");
+    assert_eq!(h.terminal_session_count(cx), 1);
+
+    h.with_app(cx, |app, w, cx| {
+        app.on_toggle_terminal(&crate::app::ToggleTerminal, w, cx);
+    });
+    assert!(h.terminal_visible(cx), "show again reuses the session");
+    assert_eq!(h.terminal_session_count(cx), 1);
+}
+
+#[gpui_kit::test]
+fn terminal_new_adds_another_tab(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.with_app(cx, |app, w, cx| {
+        app.on_toggle_terminal(&crate::app::ToggleTerminal, w, cx);
+    });
+    assert_eq!(h.terminal_session_count(cx), 1);
+
+    h.with_app(cx, |app, w, cx| {
+        app.on_new_terminal(&crate::app::NewTerminal, w, cx);
+    });
+    assert!(h.terminal_visible(cx));
+    assert_eq!(h.terminal_session_count(cx), 2, "New Terminal adds a tab");
 }

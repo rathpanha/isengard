@@ -79,11 +79,12 @@ pub fn load_fonts(cx: &mut App) {
 /// on a muted gray code-block background.
 pub fn text_view_style(cx: &App) -> TextViewStyle {
     let theme = cx.theme();
-    let mut style = TextViewStyle::default();
-    style.highlight_theme = theme.highlight_theme.clone();
-    style.is_dark = true;
-    style.code_block = StyleRefinement::default().bg(theme.muted);
-    style
+    TextViewStyle {
+        highlight_theme: theme.highlight_theme.clone(),
+        is_dark: true,
+        code_block: StyleRefinement::default().bg(theme.muted),
+        ..Default::default()
+    }
 }
 
 /// Applies dark mode, the Nerd Font everywhere, the editor font size, and

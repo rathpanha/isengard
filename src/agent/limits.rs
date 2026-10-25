@@ -276,12 +276,11 @@ enum CredSource {
 
 fn credentials_root() -> Option<(Value, CredSource)> {
     #[cfg(target_os = "macos")]
-    if let Some(raw) = keychain_credentials() {
-        if let Ok(json) = serde_json::from_str::<Value>(raw.trim()) {
-            if json.get("claudeAiOauth").is_some() {
-                return Some((json, CredSource::Keychain));
-            }
-        }
+    if let Some(raw) = keychain_credentials()
+        && let Ok(json) = serde_json::from_str::<Value>(raw.trim())
+        && json.get("claudeAiOauth").is_some()
+    {
+        return Some((json, CredSource::Keychain));
     }
     let path = dirs::home_dir()?.join(".claude").join(".credentials.json");
     let raw = std::fs::read_to_string(path).ok()?;

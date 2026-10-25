@@ -44,6 +44,12 @@ After any `src/` change, `cargo check` / `build` / `run` and
 Upstream dep notices (e.g. `block v0.1.6`) are out of scope — leave them
 visible ([architecture.md](architecture.md)).
 
+### UI test coverage
+
+Any new or changed user-visible behavior must add/update a case in
+[`src/app/ui_tests.rs`](../src/app/ui_tests.rs) in the same change. Rule:
+[`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc).
+
 ### Do not
 
 - Put a Changelog section in status, architecture, or design.

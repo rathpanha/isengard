@@ -423,7 +423,7 @@ fn session_open_entry(tab: &super::tab::EditorTab, cx: &App) -> Option<OpenFileE
     // Diff panes: prefer the left editor's cursor/scroll (same as before).
     let mut view = tab
         .editor_state()
-        .or_else(|| match &tab.body {
+        .or(match &tab.body {
             super::tab::TabBody::Diff { old, .. } => Some(old),
             _ => None,
         })

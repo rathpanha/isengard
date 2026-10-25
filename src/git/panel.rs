@@ -49,7 +49,7 @@ fn commit_manual_max_h() -> Pixels {
 
 /// Height from message text alone (1..=auto-max rows).
 fn commit_auto_h(message: &str) -> Pixels {
-    let rows = message.lines().count().max(1).min(COMMIT_AUTO_MAX_ROWS);
+    let rows = message.lines().count().clamp(1, COMMIT_AUTO_MAX_ROWS);
     px(rows as f32 * COMMIT_ROW_H + COMMIT_PAD).min(commit_auto_max_h())
 }
 

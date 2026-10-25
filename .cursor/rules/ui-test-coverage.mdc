@@ -1,0 +1,35 @@
+---
+description: Every new or changed UI feature needs a ui_tests.rs case
+alwaysApply: true
+---
+
+# UI features need headless coverage
+
+If you change **user-visible behavior** in the editor (panels, menus, shortcuts,
+dialogs, tree, tabs, terminal, agent chrome, save/close flows, …), you must
+extend [`src/app/ui_tests.rs`](src/app/ui_tests.rs) in the **same** change —
+not “tests later.”
+
+## Do
+
+- Add or update a `#[gpui_kit::test]` that fails if the new behavior regresses.
+- Drive the real `IsengardApp` via the existing `Harness` (temp dir, keystrokes /
+  `with_app` helpers). Prefer calling app methods when Kit focus/ids are awkward;
+  still assert disk/session/panel state.
+- Follow patterns already in `ui_tests.rs` and the **UI tests** bullet in
+  [docs/architecture.md](docs/architecture.md) (no real agent, no user config,
+  no blocking `recv` in `background_spawn`).
+- Run the new test (`cargo test <name>`) before finishing.
+
+## Do not
+
+- Ship a UI feature with only unit tests of helpers and no app-level case.
+- Skip coverage because “it’s hard to click” — exercise the same code path the
+  UI uses (`create_file_in`, `rename_path`, `on_toggle_terminal`, …).
+- Launch a real ACP agent or write the user’s `config.json` from tests.
+
+## Out of scope
+
+Pure data/protocol helpers with no UI (e.g. `lsp/edits` string patch, registry
+resolve) may stay as plain `#[test]`s. If the change also wires a menu, shortcut,
+or panel, still add a `ui_tests` case for that wiring.

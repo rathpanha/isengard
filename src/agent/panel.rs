@@ -3106,10 +3106,7 @@ impl AgentPanel {
             Some(Some(t)) => t,
             _ => "Subagent".into(),
         };
-        let description = match desc_patch {
-            Some(d) => d,
-            None => None,
-        };
+        let description = desc_patch.unwrap_or_default();
         self.push_entry(
             Entry::Subagent(SubagentEntry {
                 id,

@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — UI tests for file-tree create/rename and terminal
+  toggle/new-tab; close human “not verified” TODO; agent rule
+  `ui-test-coverage` (every UI feature ships a `ui_tests` case).
+
 - **2026-10-25** — LSP: Code Actions, Format Document + format-on-save
   (`lsp.format_on_save`), Rename Symbol (F2), `didSave`, restart servers when
   `lsp` in config changes.

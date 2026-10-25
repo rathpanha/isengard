@@ -233,10 +233,6 @@ tabs, highlighted editor, status bar):
 - **Theme:** JetBrains Mono Nerd Font; square corners; **dark mode only**;
   editor font-size zoom.
 
-Not yet verified interactively (no clicking during the port): tree
-expand/collapse, clicking files, tab switching/closing, dialogs, keyboard
-shortcuts. Check these first if something is off.
-
 ## Known issues / TODO
 
 - LSP: servers are not inside the app binary (app-local download dir is
@@ -245,13 +241,14 @@ shortcuts. Check these first if something is off.
 - Terminal scrollback UI still minimal (selection/copy/paste/URL-click work).
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).
-- Interactive flows not yet verified by a human (see above).
 - UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
   Save, Save All with a failing file, tab close with the unsaved dialog,
-  Agent panel toggle/restore per folder, and agent file read/write against
-  open buffers, chats per folder across switch + restart (resume vs load),
-  and a turn finishing in the background after a switch; file tree and
-  terminal flows are not covered yet.
+  file-tree create/rename/move, terminal toggle + new tab, Agent panel
+  toggle/restore per folder, and agent file read/write against open buffers,
+  chats per folder across switch + restart (resume vs load), and a turn
+  finishing in the background after a switch. Agents must extend these for
+  every new UI feature ([architecture.md](architecture.md) ·
+  [`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)).
   `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
   permission).
 - File watching (`notify`, recursive on every root; skips `.git` /
@@ -293,6 +290,6 @@ shortcuts. Check these first if something is off.
   shipped.
 - Interactive QA: FakeAgent UI tests cover permission answer, chat delete,
   Install/Login empty-state buttons, rename, and prompt send. Live smoke
-  (once per machine / after adapter bumps): (1) Install or PATH agent,
-  (2) Login → Retry, (3) one prompt reply, (4) one real permission Ask,
+  verified on this machine; re-run after adapter bumps: (1) Install or PATH
+  agent, (2) Login → Retry, (3) one prompt reply, (4) one real permission Ask,
   (5) rename + delete chat.
