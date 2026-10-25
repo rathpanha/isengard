@@ -72,6 +72,10 @@ impl IsengardApp {
         self.restart_fs_watch(window, cx);
         window.set_window_title(&self.window_title());
         self.refresh_menus(cx);
+        // Workspace `settings` overlay font / format-on-save (not written to config.json).
+        theme::apply(&self.effective_config(), Some(window), cx);
+        self.lsp
+            .set_settings(self.effective_config().lsp.clone());
         cx.notify();
     }
 

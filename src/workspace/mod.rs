@@ -1,12 +1,17 @@
 //! VS Code–style workspaces: one or more root folders, optionally saved to a
 //! `.isengard-workspace` file. Pure logic, independent of the UI.
 
+mod settings;
+
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::editor::document;
+
+pub use settings::apply_to_config;
 
 pub const WORKSPACE_EXTENSION: &str = "isengard-workspace";
 
@@ -16,6 +21,8 @@ pub const WORKSPACE_EXTENSION: &str = "isengard-workspace";
 pub struct Workspace {
     folders: Vec<PathBuf>,
     file: Option<PathBuf>,
+    /// From the workspace file `settings` object (empty for folder-only).
+    settings: Map<String, Value>,
 }
 
 /// On-disk format, modelled on `.code-workspace`. `settings` is reserved for
@@ -37,7 +44,13 @@ impl Workspace {
         Self {
             folders: vec![folder.to_path_buf()],
             file: None,
+            settings: Map::new(),
         }
+    }
+
+    /// Per-workspace JSON settings (may be empty).
+    pub fn settings(&self) -> &Map<String, Value> {
+        &self.settings
     }
 
     pub fn is_workspace_file(path: &Path) -> bool {
@@ -225,6 +238,7 @@ impl Workspace {
         let mut workspace = Self {
             folders: Vec::new(),
             file: Some(file.to_path_buf()),
+            settings: parsed.settings,
         };
         for entry in parsed.folders {
             workspace.add_folder(&normalize(&base.join(&entry.path)));
@@ -233,13 +247,18 @@ impl Workspace {
     }
 
     /// Writes the workspace to `file` (folder paths relative to it where possible)
-    /// and makes it this workspace's file. Existing `settings` are preserved.
+    /// and makes it this workspace's file. In-memory `settings` are preserved;
+    /// if empty, keeps any `settings` already on disk at `file`.
     pub fn save_as(&mut self, file: &Path) -> anyhow::Result<()> {
-        let settings = document::read_text(file)
-            .ok()
-            .and_then(|text| serde_json::from_str::<WorkspaceFile>(&text).ok())
-            .map(|existing| existing.settings)
-            .unwrap_or_default();
+        let settings = if !self.settings.is_empty() {
+            self.settings.clone()
+        } else {
+            document::read_text(file)
+                .ok()
+                .and_then(|text| serde_json::from_str::<WorkspaceFile>(&text).ok())
+                .map(|existing| existing.settings)
+                .unwrap_or_default()
+        };
         let base = file.parent().unwrap_or(Path::new(""));
         let contents = WorkspaceFile {
             folders: self
@@ -249,10 +268,11 @@ impl Workspace {
                     path: relative_to(folder, base).to_string_lossy().into_owned(),
                 })
                 .collect(),
-            settings,
+            settings: settings.clone(),
         };
         document::write_text(file, &serde_json::to_string_pretty(&contents)?)?;
         self.file = Some(file.to_path_buf());
+        self.settings = settings;
         Ok(())
     }
 
@@ -477,6 +497,7 @@ mod tests {
             [tmp.path().join("gone")],
             "missing folders are kept"
         );
+        assert_eq!(w.settings().get("tabSize"), Some(&serde_json::json!(4)));
         w.save().unwrap();
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();

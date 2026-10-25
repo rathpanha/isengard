@@ -14,15 +14,15 @@ use gpui_kit::component::input::{
 use gpui_kit::*;
 use lsp_types::notification::{DidChangeTextDocument, Notification as _};
 use lsp_types::request::{
-    CodeActionRequest, CodeActionResolveRequest, Completion, GotoDefinition, HoverRequest,
-    ResolveCompletionItem,
+    CodeActionRequest, CodeActionResolveRequest, Completion, ExecuteCommand, GotoDefinition,
+    HoverRequest, ResolveCompletionItem,
 };
 use lsp_types::{
     CodeAction, CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeActionResponse,
-    CompletionContext, CompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
-    CompletionTriggerKind, DidChangeTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, HoverParams, Location, LocationLink, PartialResultParams,
-    Position as LspPosition, Range as LspRange, TextDocumentContentChangeEvent,
+    Command, CompletionContext, CompletionItem, CompletionParams, CompletionResponse,
+    CompletionTextEdit, CompletionTriggerKind, DidChangeTextDocumentParams, ExecuteCommandParams,
+    GotoDefinitionParams, GotoDefinitionResponse, HoverParams, Location, LocationLink,
+    PartialResultParams, Position as LspPosition, Range as LspRange, TextDocumentContentChangeEvent,
     TextDocumentIdentifier, TextDocumentPositionParams, TextEdit, WorkDoneProgressParams,
     WorkspaceEdit,
 };
@@ -553,8 +553,8 @@ impl CodeActionProvider for DocBridge {
             for item in response {
                 match item {
                     CodeActionOrCommand::CodeAction(action) => actions.push(action),
-                    CodeActionOrCommand::Command(_) => {
-                        // ponytail: command-only actions need executeCommand — skip.
+                    CodeActionOrCommand::Command(cmd) => {
+                        actions.push(code_action_from_command(cmd));
                     }
                 }
             }
@@ -582,21 +582,40 @@ impl CodeActionProvider for DocBridge {
                             .request::<CodeActionResolveRequest>(action)
                             .context("resolve code action")?;
                     }
-                    let Some(edit) = action.edit.take() else {
-                        if action.command.is_some() {
-                            bail!("this code action needs a command Isengard does not run yet");
-                        }
-                        bail!("code action has no edit");
+                    if let Some(edit) = action.edit.take() {
+                        return Ok::<Option<WorkspaceEdit>, anyhow::Error>(Some(edit));
+                    }
+                    let Some(cmd) = action.command.take() else {
+                        bail!("code action has no edit or command");
                     };
-                    Ok::<WorkspaceEdit, anyhow::Error>(edit)
+                    let result = client
+                        .request::<ExecuteCommand>(ExecuteCommandParams {
+                            command: cmd.command,
+                            arguments: cmd.arguments.unwrap_or_default(),
+                            work_done_progress_params: Default::default(),
+                        })
+                        .context("workspace/executeCommand")?;
+                    // Some servers return a WorkspaceEdit; others send
+                    // workspace/applyEdit as a separate request.
+                    Ok(result.and_then(|v| serde_json::from_value::<WorkspaceEdit>(v).ok()))
                 })
                 .await?;
-            let apply = apply.context("workspace edit handler not set")?;
-            window_handle.update(cx, |_, window, cx| {
-                apply(edit, window, cx);
-            })?;
+            if let Some(edit) = edit {
+                let apply = apply.context("workspace edit handler not set")?;
+                window_handle.update(cx, |_, window, cx| {
+                    apply(edit, window, cx);
+                })?;
+            }
             Ok(())
         })
+    }
+}
+
+fn code_action_from_command(cmd: Command) -> CodeAction {
+    CodeAction {
+        title: cmd.title.clone(),
+        command: Some(cmd),
+        ..Default::default()
     }
 }
 

@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Workspace `settings` overlay (font / tab / format-on-save);
+  LSP `executeCommand` + `applyEdit` for command-only code actions; drop
+  click-verify / Wayland-icon TODOs (verified / ignore).
+
+- **2026-10-25** — Status cleanup: drop Open Recent / terminal-scrollback
+  TODOs; cold-start welcome is product design (not a gap); agent switch
+  deferred while there’s only one agent.
+
 - **2026-10-25** — Save All: untitled write failure after the Save dialog
   continues the queue (same as on-disk failures); one toast; `after` still
   blocked.

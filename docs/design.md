@@ -485,6 +485,10 @@ Add a row here whenever a new shared component is created.
   - Naming: a single folder shows its name; a workspace file or several folders
     show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). Used
     for the window / title-bar title only (no duplicate label above the tree).
+  - Workspace file `settings` overlay (workspace wins over user `config.json`,
+    not written back): `editor.fontSize` / `font_size`, `editor.tabSize` /
+    `tabSize` / `tab_size`, `editor.formatOnSave` / `format_on_save` /
+    `lsp.format_on_save`. Other keys are preserved on save but ignored.
   - Session restore: reopening a folder or workspace (welcome recent, Open, or
     CLI) restores from `config.json` `sessions`: open tabs (cursor + scroll;
     dirty / untitled buffer text up to 512 KiB; Source Control diff/conflict

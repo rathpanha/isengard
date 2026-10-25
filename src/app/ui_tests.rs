@@ -1807,3 +1807,33 @@ fn quit_asks_to_save_untitled_multi_root_workspace(cx: &mut TestAppContext) {
     h.click("dialog-cancel", cx);
     assert!(!h.has("dialog-secondary", cx));
 }
+
+#[gpui_kit::test]
+fn workspace_settings_overlay_font_tab_and_format(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let root = h.folder("proj");
+    let ws = h.dir.path().join(format!("proj.{}", crate::workspace::WORKSPACE_EXTENSION));
+    std::fs::write(
+        &ws,
+        r#"{
+  "folders": [{ "path": "proj" }],
+  "settings": {
+    "editor.fontSize": 20,
+    "tabSize": 4,
+    "editor.formatOnSave": false
+  }
+}"#,
+    )
+    .unwrap();
+    // Folder path in the file is relative to the workspace file's directory.
+    assert_eq!(root, h.dir.path().join("proj"));
+
+    h.with_app(cx, |app, window, cx| {
+        app.open_workspace_file(&ws, window, cx);
+        let eff = app.effective_config();
+        assert_eq!(eff.font_size, 20.0);
+        assert_eq!(eff.tab_size, 4);
+        assert!(!eff.lsp.format_on_save);
+        assert_eq!(app.config.font_size, AppConfig::default().font_size, "user config untouched");
+    });
+}

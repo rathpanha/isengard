@@ -279,6 +279,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_tab_size() -> u32 {
+    2
+}
+
 /// Per-language LSP overrides under `lsp.languages.<id>` (ids from
 /// [`crate::lsp::registry::config_key`], e.g. `rust`, `python`, `typescript`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -361,6 +365,9 @@ pub struct AgentSettings {
 pub struct AppConfig {
     /// Code editor font size in pixels.
     pub font_size: f32,
+    /// Editor tab width (spaces). Overridable per workspace file.
+    #[serde(default = "default_tab_size")]
+    pub tab_size: u32,
     /// Agent panel launch command — see [`AgentSettings`].
     #[serde(default)]
     pub agent: AgentSettings,
@@ -396,6 +403,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             font_size: DEFAULT_EDITOR_FONT_SIZE,
+            tab_size: default_tab_size(),
             agent: AgentSettings::default(),
             agent_prefs: AgentPrefs::default(),
             lsp: LspSettings::default(),

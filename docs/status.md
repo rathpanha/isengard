@@ -15,14 +15,16 @@ tabs, highlighted editor, status bar):
   (relative folder paths); Add Folder / Open / Save As / Close Folder or
   Close Workspace (label tracks single-folder vs named/multi-root); root
   context menu remove; switching or quitting closes tabs (unsaved +
-  untitled-workspace prompts). File **Save As…** (`⌘⇧S` / `Ctrl+Shift+S`)
-  writes a copy and rebinds the tab (original file untouched). Session
-  restore (tabs with cursor/scroll + expanded tree dirs) per
-  folder/workspace in `config.json` `sessions` (tabs + dirty/untitled
-  text, sidebar strip, search query, git drafts/selection; terminal
-  layout/cwds only — clean shells; cold start still welcome) — see design
-  for restore rules. Save cancelled mid-close/quit toasts instead of
-  failing silently.
+  untitled-workspace prompts). Workspace file `settings` overlays
+  `editor.fontSize` / `font_size`, `editor.tabSize` / `tabSize`,
+  `editor.formatOnSave` (does not rewrite user `config.json`). File
+  **Save As…** (`⌘⇧S` / `Ctrl+Shift+S`) writes a copy and rebinds the tab
+  (original file untouched). Session restore (tabs with cursor/scroll +
+  expanded tree dirs) per folder/workspace in `config.json` `sessions`
+  (tabs + dirty/untitled text, sidebar strip, search query, git
+  drafts/selection; terminal layout/cwds only — clean shells; cold start
+  still welcome) — see design for restore rules. Save cancelled
+  mid-close/quit toasts instead of failing silently.
 - **File tree:** Kit `Tree` while a workspace is open; lazy load; dirs first,
   case-insensitive; hides `.git` / `.DS_Store`; full Material Icon Theme;
   gitignored rows shown muted; dirty git paths tint the label (modified/
@@ -70,7 +72,9 @@ tabs, highlighted editor, status bar):
   Rename Symbol (F2 in editor, dialog), `textDocument/didSave` after write.
   Saving `config.json` with `lsp` changes restarts servers and re-attaches
   open tabs. `config.json` → `lsp`; Open Config File…. Untitled buffers skip
-  LSP until saved.
+  LSP until saved. Command-only code actions run via
+  `workspace/executeCommand` (and `workspace/applyEdit` when the server
+  pushes edits).
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
@@ -238,11 +242,7 @@ tabs, highlighted editor, status bar):
 ## Known issues / TODO
 
 - LSP: servers are not inside the app binary (app-local download dir is
-  separate). Command-only code actions (`workspace/executeCommand`) are not
-  run — edit-bearing quick fixes / refactors are.
-- Terminal scrollback UI still minimal (selection/copy/paste/URL-click work).
-  Workspace switch clears all terminal tabs (re-prompts for a root if the
-  panel was open).
+  separate).
 - UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
   Save, Save As, Save All with a failing on-disk or untitled write, dirty-session
   restore across folder switch, quit’s untitled multi-root workspace prompt,
@@ -261,34 +261,29 @@ tabs, highlighted editor, status bar):
   a clean tab resets its cursor/scroll/undo (same as the agent-write reload).
   Deleted files keep their open buffer. Changes made while the app is closed
   are not noticed.
-- No "Open Recent" in the native menu (welcome screen only). Tree New File
-  creates on disk after the inline name (distinct from menu New File /
-  `⌘N`, which stays untitled until Save). Tree Delete always goes to Trash.
-  Gitignore rules refresh on folder open / expand, not on every save of
-  `.gitignore`. `.env` / `.gitignore` / lockfiles / Dockerfile use
+- Tree New File creates on disk after the inline name (distinct from menu
+  New File / `⌘N`, which stays untitled until Save). Tree Delete always goes
+  to Trash. Gitignore rules refresh on folder open / expand, not on every
+  save of `.gitignore`. `.env` / `.gitignore` / lockfiles / Dockerfile use
   Bash/JSON/TOML aliases (no dedicated Dockerfile grammar compatible with
   GPUI's tree-sitter); GraphQL and TSX highlights are patched in
   `editor::highlights` because GPUI Kit ships an empty GraphQL query and
   only a TS-keyword delta for TSX.
-- Workspaces: not yet verified by clicking — Add Folder, Save Workspace As,
-  root context menu, switch dialogs. Workspace `settings` are stored but
-  not applied. Session restore does not auto-open last workspace on launch
-  (cold start stays welcome).
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
 - App icons for `cargo run`: macOS Dock + Windows `.exe` embed + Linux X11
-  window icon are implemented; Wayland still needs
-  `scripts/install-dev-icon.sh` once. Windows embed and Wayland panel matching
-  are not verified on every machine/DE.
-- `package.metadata.bundle.identifier` (`dev.isengard.editor`) is a placeholder.
+  window icon; Wayland uses `app_id` + optional
+  `scripts/install-dev-icon.sh` (see architecture). Not verified on every DE.
+- `package.metadata.bundle.identifier` (`dev.isengard.editor`) is still a
+  local-dev placeholder until a real reverse-DNS id is chosen.
 - Syntax highlight theme (`assets/themes/`, Ayu Darker) is GPL-3.0; the project
   as a whole is also **GPL-3.0-only** (`LICENSE`, `Cargo.toml`). See
   [CONTRIBUTING.md](../CONTRIBUTING.md) — forks are fine, PRs are not accepted.
 
 ## Roadmap — Agent panel after v1
 
-- Process-level agent switch in the panel (today: `config.json` /
-  Open Config File… only). Mode/model pickers + chat rename + auto titles
-  shipped.
+- Process-level agent switch in the panel — **deferred** (one agent today;
+  change via `config.json` / Open Config File…). Mode/model pickers + chat
+  rename + auto titles shipped.
 - Interactive QA: FakeAgent UI tests cover permission answer, chat delete,
   Install/Login empty-state buttons, rename, and prompt send. Live smoke
   verified on this machine; re-run after adapter bumps: (1) Install or PATH

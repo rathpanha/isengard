@@ -60,6 +60,25 @@ impl IsengardApp {
                 };
                 crate::lsp::apply_diagnostics(&state, params, cx);
             }
+            LspEvent::ApplyEdit(edit) => {
+                let weak = cx.weak_entity();
+                cx.spawn(async move |_, cx| {
+                    cx.update(|cx| {
+                        let Some(window) = cx
+                            .active_window()
+                            .or_else(|| cx.windows().into_iter().next())
+                        else {
+                            return;
+                        };
+                        let _ = window.update(cx, |_root, window, cx| {
+                            let _ = weak.update(cx, |this, cx| {
+                                this.apply_workspace_edit(edit, window, cx);
+                            });
+                        });
+                    });
+                })
+                .detach();
+            }
         }
     }
 
@@ -101,7 +120,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.lsp.set_settings(self.config.lsp.clone());
+        self.lsp
+            .set_settings(self.effective_config().lsp.clone());
         self.lsp.set_folders(self.workspace.folders().to_vec());
         let text = state.read(cx).value().to_string();
         let app = cx.entity().downgrade();
@@ -826,7 +846,8 @@ impl IsengardApp {
         let previous = self.config.lsp.clone();
         self.config = AppConfig::load_from(&config_path);
         if self.config.lsp == previous {
-            self.lsp.set_settings(self.config.lsp.clone());
+            self.lsp
+            .set_settings(self.effective_config().lsp.clone());
             return;
         }
         self.restart_lsp_servers(window, cx);
@@ -837,7 +858,8 @@ impl IsengardApp {
         let paths = self.lsp.attached_paths();
         self.clear_lsp_providers_for_paths(&paths, cx);
         self.lsp.shutdown_all();
-        self.lsp.set_settings(self.config.lsp.clone());
+        self.lsp
+            .set_settings(self.effective_config().lsp.clone());
         self.lsp.set_folders(self.workspace.folders().to_vec());
         let reattach: Vec<(PathBuf, Language, Entity<EditorState>)> = self
             .tabs

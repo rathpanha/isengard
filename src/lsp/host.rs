@@ -16,16 +16,17 @@ use lsp_types::notification::{
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::{
-    CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
-    CodeActionLiteralSupport, ClientCapabilities,
+    ApplyWorkspaceEditParams, CodeActionClientCapabilities, CodeActionKind,
+    CodeActionKindLiteralSupport, CodeActionLiteralSupport, ClientCapabilities,
     CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
     CompletionItemKindCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
-    FormattingOptions, GeneralClientCapabilities, HoverClientCapabilities, InitializeParams,
-    MarkupKind, PositionEncodingKind, PublishDiagnosticsParams, RenameClientCapabilities,
-    TextDocumentClientCapabilities, TextDocumentContentChangeEvent, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, TextDocumentSyncClientCapabilities, TextEdit,
-    WorkspaceClientCapabilities, WorkspaceFolder,
+    ExecuteCommandClientCapabilities, FormattingOptions, GeneralClientCapabilities,
+    HoverClientCapabilities, InitializeParams, MarkupKind, PositionEncodingKind,
+    PublishDiagnosticsParams, RenameClientCapabilities, TextDocumentClientCapabilities,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextDocumentSyncClientCapabilities, TextEdit,
+    WorkspaceClientCapabilities, WorkspaceEditClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
 
@@ -42,6 +43,8 @@ use crate::editor::language::Language;
 #[derive(Debug)]
 pub enum LspEvent {
     Diagnostics(PublishDiagnosticsParams),
+    /// Server asked us to apply an edit (`workspace/applyEdit`).
+    ApplyEdit(lsp_types::WorkspaceEdit),
 }
 
 /// First-time "server missing" signal for the host UI (install dialog / toast).
@@ -870,6 +873,15 @@ impl LspHost {
                                     json!(vec![json!({}); count])
                                 }
                                 "workspace/workspaceFolders" => json!(folders_for_config),
+                                "workspace/applyEdit" => {
+                                    if let Ok(p) = serde_json::from_value::<
+                                        ApplyWorkspaceEditParams,
+                                    >(params)
+                                    {
+                                        let _ = events_tx.send(LspEvent::ApplyEdit(p.edit));
+                                    }
+                                    json!({ "applied": true })
+                                }
                                 "client/registerCapability" | "client/unregisterCapability" => {
                                     Value::Null
                                 }
@@ -918,6 +930,14 @@ fn initialization_options(command: &str) -> Option<Value> {
 fn client_capabilities() -> ClientCapabilities {
     ClientCapabilities {
         workspace: Some(WorkspaceClientCapabilities {
+            apply_edit: Some(true),
+            workspace_edit: Some(WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                ..Default::default()
+            }),
+            execute_command: Some(ExecuteCommandClientCapabilities {
+                dynamic_registration: Some(false),
+            }),
             workspace_folders: Some(true),
             configuration: Some(true),
             ..Default::default()

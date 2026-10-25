@@ -62,10 +62,7 @@ impl IsengardApp {
                 .line_number(true)
                 .indent_guides(true)
                 .soft_wrap(false)
-                .tab_size(TabSize {
-                    tab_size: 2,
-                    hard_tabs: false,
-                })
+                .tab_size(self.editor_tab_size())
                 .default_value(text)
         });
         let subscriptions = vec![
@@ -321,7 +318,7 @@ impl IsengardApp {
             self.prompt_save_untitled(path, Rc::new(after), None, abort_message, window, cx);
             return;
         }
-        if self.config.lsp.format_on_save && self.lsp.is_attached(&path) {
+        if self.effective_config().lsp.format_on_save && self.lsp.is_attached(&path) {
             self.format_then_save(path, Rc::new(after), window, cx);
             return;
         }
@@ -597,7 +594,7 @@ impl IsengardApp {
                 );
                 return;
             }
-            if self.config.lsp.format_on_save && self.lsp.is_attached(&path) {
+            if self.effective_config().lsp.format_on_save && self.lsp.is_attached(&path) {
                 let rest = paths[1..].to_vec();
                 let after = after.clone();
                 self.format_then_save(
@@ -922,10 +919,7 @@ impl IsengardApp {
                 .line_number(true)
                 .indent_guides(true)
                 .soft_wrap(false)
-                .tab_size(TabSize {
-                    tab_size: 2,
-                    hard_tabs: false,
-                })
+                .tab_size(self.editor_tab_size())
                 .default_value(initial.to_owned())
         });
         let subscriptions = vec![
@@ -1214,9 +1208,23 @@ impl IsengardApp {
     }
 
     pub(super) fn apply_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        theme::apply(&self.config, Some(window), cx);
+        theme::apply(&self.effective_config(), Some(window), cx);
         self.config.save();
         cx.notify();
+    }
+
+    /// User `config.json` plus overlay from the open `.isengard-workspace` settings.
+    pub(super) fn effective_config(&self) -> AppConfig {
+        let mut config = self.config.clone();
+        crate::workspace::apply_to_config(self.workspace.settings(), &mut config);
+        config
+    }
+
+    pub(super) fn editor_tab_size(&self) -> TabSize {
+        TabSize {
+            tab_size: self.effective_config().tab_size.max(1) as usize,
+            hard_tabs: false,
+        }
     }
 }
 
