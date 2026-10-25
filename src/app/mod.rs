@@ -56,7 +56,7 @@ pub(super) use gpui_kit::component::{
     dialog::DialogFooter,
     h_flex,
     input::{
-        Editor, EditorState, InputEvent, InputState, Position, RangeDecoration,
+        Editor, EditorState, Input, InputEvent, InputState, Position, RangeDecoration,
         RangeDecorationCollection, RangeDecorationStyle, Rope, RopeExt as _, TabSize,
     },
     list::ListItem,
@@ -121,7 +121,8 @@ pub use actions::{
     About, AddFolderToWorkspace, AddSelectionToAgent, CloseAllTabs, CloseOtherTabs, CloseTab,
     CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
     IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
-    OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, ResetFontSize, Save, SaveAll,
+    FormatDocument, OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, RenameSymbol,
+    ResetFontSize, Save, SaveAll,
     SaveWorkspaceAs, NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel,
     TogglePreview, ToggleSidebar, ToggleTerminal,
 };
@@ -461,6 +462,12 @@ impl IsengardApp {
         };
 
         app.lsp.set_settings(app.config.lsp.clone());
+        let app_weak = cx.weak_entity();
+        app.lsp.set_workspace_edit_handler(Rc::new(move |edit, window, cx| {
+            let _ = app_weak.update(cx, |this, cx| {
+                this.apply_workspace_edit(edit, window, cx);
+            });
+        }));
         app.start_lsp_event_pump(cx);
 
         // Otherwise start on the welcome screen.

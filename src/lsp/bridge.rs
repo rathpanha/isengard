@@ -1,28 +1,34 @@
-//! Kit `CompletionProvider` / `HoverProvider` / `DefinitionProvider` over an [`LspClient`].
+//! Kit completion / hover / definition / code-action providers over an [`LspClient`].
 
 use std::cell::Cell;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result, bail};
 use gpui_kit::component::input::{
-    CompletionProvider, DefinitionProvider, EditorState, HoverProvider, Rope, RopeExt as _,
-    ShowDocumentHandler,
+    CodeActionProvider, CompletionProvider, DefinitionProvider, EditorState, HoverProvider, Rope,
+    RopeExt as _, ShowDocumentHandler,
 };
 use gpui_kit::*;
 use lsp_types::notification::{DidChangeTextDocument, Notification as _};
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest, ResolveCompletionItem};
+use lsp_types::request::{
+    CodeActionRequest, CodeActionResolveRequest, Completion, GotoDefinition, HoverRequest,
+    ResolveCompletionItem,
+};
 use lsp_types::{
-    CompletionContext, CompletionItem, CompletionParams, CompletionResponse,
-    CompletionTextEdit, CompletionTriggerKind, DidChangeTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, HoverParams, Location, LocationLink,
-    PartialResultParams, Position as LspPosition, Range as LspRange,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentPositionParams,
-    TextEdit, WorkDoneProgressParams,
+    CodeAction, CodeActionContext, CodeActionOrCommand, CodeActionParams, CodeActionResponse,
+    CompletionContext, CompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
+    CompletionTriggerKind, DidChangeTextDocumentParams, GotoDefinitionParams,
+    GotoDefinitionResponse, HoverParams, Location, LocationLink, PartialResultParams,
+    Position as LspPosition, Range as LspRange, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentPositionParams, TextEdit, WorkDoneProgressParams,
+    WorkspaceEdit,
 };
 
 use super::client::LspClient;
+use super::host::WorkspaceEditHandler;
 use super::uri::path_to_uri;
 
 /// Forwards editor LSP hooks to one running language server for a single document URI.
@@ -34,6 +40,8 @@ pub struct DocBridge {
     /// Bumps on every completion request so a slow older reply cannot overwrite
     /// a newer menu (Kit applies whichever Task finishes last).
     pub completion_gen: Arc<AtomicU64>,
+    /// App-side WorkspaceEdit apply (code actions).
+    pub apply_workspace_edit: Option<WorkspaceEditHandler>,
 }
 
 impl CompletionProvider for DocBridge {
@@ -488,6 +496,108 @@ pub fn install_tab_accepts_completion<T: 'static>(
             }
         })
     })
+}
+
+impl CodeActionProvider for DocBridge {
+    fn id(&self) -> SharedString {
+        "isengard-lsp".into()
+    }
+
+    fn code_actions(
+        &self,
+        state: Entity<EditorState>,
+        range: Range<usize>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        let client = self.client.clone();
+        let version = self.version.clone();
+        let uri = self.uri.clone();
+        let editor = state.read(cx);
+        let rope = Rope::from(editor.value().as_str());
+        let doc = rope.to_string();
+        let start = rope.offset_to_position(range.start.min(rope.len()));
+        let end = rope.offset_to_position(range.end.min(rope.len()));
+        let lsp_range = LspRange {
+            start,
+            end: if end < start { start } else { end },
+        };
+        cx.background_spawn(async move {
+            let version = version.fetch_add(1, Ordering::SeqCst) + 1;
+            client.notify(
+                DidChangeTextDocument::METHOD,
+                DidChangeTextDocumentParams {
+                    text_document: lsp_types::VersionedTextDocumentIdentifier {
+                        uri: uri.clone(),
+                        version,
+                    },
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: doc,
+                    }],
+                },
+            )?;
+            let response: Option<CodeActionResponse> =
+                client.request::<CodeActionRequest>(CodeActionParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    range: lsp_range,
+                    context: CodeActionContext::default(),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                })?;
+            let Some(response) = response else {
+                return Ok(Vec::new());
+            };
+            let mut actions = Vec::new();
+            for item in response {
+                match item {
+                    CodeActionOrCommand::CodeAction(action) => actions.push(action),
+                    CodeActionOrCommand::Command(_) => {
+                        // ponytail: command-only actions need executeCommand — skip.
+                    }
+                }
+            }
+            Ok(actions)
+        })
+    }
+
+    fn perform_code_action(
+        &self,
+        _state: Entity<EditorState>,
+        action: CodeAction,
+        _push_to_history: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let apply = self.apply_workspace_edit.clone();
+        let window_handle = window.window_handle();
+        cx.spawn(async move |cx| {
+            let edit = cx
+                .background_spawn(async move {
+                    let mut action = action;
+                    if action.edit.is_none() && action.data.is_some() {
+                        action = client
+                            .request::<CodeActionResolveRequest>(action)
+                            .context("resolve code action")?;
+                    }
+                    let Some(edit) = action.edit.take() else {
+                        if action.command.is_some() {
+                            bail!("this code action needs a command Isengard does not run yet");
+                        }
+                        bail!("code action has no edit");
+                    };
+                    Ok::<WorkspaceEdit, anyhow::Error>(edit)
+                })
+                .await?;
+            let apply = apply.context("workspace edit handler not set")?;
+            window_handle.update(cx, |_, window, cx| {
+                apply(edit, window, cx);
+            })?;
+            Ok(())
+        })
+    }
 }
 
 impl HoverProvider for DocBridge {

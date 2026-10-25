@@ -278,24 +278,30 @@ impl IsengardApp {
     }
 
     /// Writes an on-disk tab. Untitled buffers must go through [`Self::request_save`].
-    pub(super) fn save_tab(&mut self, path: &Path, cx: &mut Context<Self>) -> anyhow::Result<()> {
+    pub(super) fn save_tab(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
         if document::is_untitled(path) {
             anyhow::bail!("untitled buffer needs a path");
         }
-        let saved_path = {
+        let (saved_path, text) = {
             let Some(tab) = self.tabs.find_mut(|t| t.path == path) else {
                 return Ok(());
             };
             let Some(state) = tab.editor_state() else {
                 return Ok(());
             };
-            let text = state.read(cx).value();
+            let text = state.read(cx).value().to_string();
             let saved_path = tab.path.clone();
             document::write_text(&saved_path, &text)?;
             tab.mark_saved(cx);
-            saved_path
+            (saved_path, text)
         };
-        self.reload_lsp_settings_if_config(&saved_path);
+        self.lsp.did_save(&saved_path, Some(&text));
+        self.reload_lsp_settings_if_config(&saved_path, window, cx);
         cx.notify();
         Ok(())
     }
@@ -315,7 +321,11 @@ impl IsengardApp {
             self.prompt_save_untitled(path, Rc::new(after), abort_message, window, cx);
             return;
         }
-        match self.save_tab(&path, cx) {
+        if self.config.lsp.format_on_save && self.lsp.is_attached(&path) {
+            self.format_then_save(path, Rc::new(after), window, cx);
+            return;
+        }
+        match self.save_tab(&path, window, cx) {
             Ok(()) => after(self, path, window, cx),
             Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
         }
@@ -512,7 +522,27 @@ impl IsengardApp {
                 );
                 return;
             }
-            if let Err(err) = self.save_tab(&path, cx) {
+            if self.config.lsp.format_on_save && self.lsp.is_attached(&path) {
+                let rest = paths[1..].to_vec();
+                let after = after.clone();
+                self.format_then_save(
+                    path,
+                    Rc::new(move |this, _, window, cx| {
+                        this.request_save_queue(
+                            rest.clone(),
+                            failures.clone(),
+                            after.clone(),
+                            abort_message,
+                            window,
+                            cx,
+                        );
+                    }),
+                    window,
+                    cx,
+                );
+                return;
+            }
+            if let Err(err) = self.save_tab(&path, window, cx) {
                 failures.push(format!("{}: {err:#}", document::tab_label(&path)));
             }
             paths.remove(0);

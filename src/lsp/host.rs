@@ -12,16 +12,19 @@ use gpui_kit::base::input::Diagnostic;
 use gpui_kit::component::input::EditorState;
 use gpui_kit::*;
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
-    PublishDiagnostics,
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
+    Notification as _, PublishDiagnostics,
 };
 use lsp_types::{
-    ClientCapabilities, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, CompletionItemKindCapability,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    GeneralClientCapabilities, HoverClientCapabilities, InitializeParams, MarkupKind,
-    PositionEncodingKind, PublishDiagnosticsParams, TextDocumentClientCapabilities,
-    TextDocumentContentChangeEvent, TextDocumentItem, TextDocumentSyncClientCapabilities,
+    CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
+    CodeActionLiteralSupport, ClientCapabilities,
+    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
+    CompletionItemKindCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
+    FormattingOptions, GeneralClientCapabilities, HoverClientCapabilities, InitializeParams,
+    MarkupKind, PositionEncodingKind, PublishDiagnosticsParams, RenameClientCapabilities,
+    TextDocumentClientCapabilities, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextDocumentSyncClientCapabilities, TextEdit,
     WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
@@ -92,6 +95,10 @@ struct RunningServer {
     versions: HashMap<PathBuf, Arc<AtomicI32>>,
 }
 
+/// Apply a [`lsp_types::WorkspaceEdit`] on the UI thread (open tabs + disk).
+pub type WorkspaceEditHandler =
+    Rc<dyn Fn(lsp_types::WorkspaceEdit, &mut Window, &mut App)>;
+
 /// Owns language servers for the current window workspace.
 pub struct LspHost {
     folders: Vec<PathBuf>,
@@ -106,6 +113,8 @@ pub struct LspHost {
     ready_cache: RefCell<HashMap<String, bool>>,
     events_tx: flume::Sender<LspEvent>,
     events_rx: flume::Receiver<LspEvent>,
+    /// Set by the app once — code actions / rename land here.
+    workspace_edit_handler: Option<WorkspaceEditHandler>,
 }
 
 impl Default for LspHost {
@@ -120,6 +129,7 @@ impl Default for LspHost {
             ready_cache: RefCell::new(HashMap::new()),
             events_tx,
             events_rx,
+            workspace_edit_handler: None,
         }
     }
 }
@@ -140,6 +150,11 @@ impl LspHost {
 
     pub fn settings(&self) -> &LspSettings {
         &self.settings
+    }
+
+    /// Register the app-side WorkspaceEdit applier (code actions / rename).
+    pub fn set_workspace_edit_handler(&mut self, handler: WorkspaceEditHandler) {
+        self.workspace_edit_handler = Some(handler);
     }
 
     pub fn shutdown_all(&mut self) {
@@ -528,6 +543,7 @@ impl LspHost {
             uri,
             version,
             completion_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            apply_workspace_edit: self.workspace_edit_handler.clone(),
         });
         let show = show_document_handler(path.to_path_buf(), app, open_location);
 
@@ -535,7 +551,8 @@ impl LspHost {
             let lsp = state.lsp_mut();
             lsp.completion_provider = Some(bridge.clone());
             lsp.hover_provider = Some(bridge.clone());
-            lsp.definition_provider = Some(bridge);
+            lsp.definition_provider = Some(bridge.clone());
+            lsp.code_action_providers = vec![bridge];
             lsp.show_document = Some(show);
             // List can grow for "Auto import from '…'" labels; docs capped in Kit.
             lsp.completion_menu.max_width = gpui_kit::px(400.);
@@ -589,6 +606,183 @@ impl LspHost {
             );
             return;
         }
+    }
+
+    /// Notify the server that the document was saved (after a successful write).
+    pub fn did_save(&mut self, path: &Path, text: Option<&str>) {
+        if document::is_untitled(path) {
+            return;
+        }
+        let Some(uri) = try_path_uri(path) else {
+            return;
+        };
+        for server in self.servers.values() {
+            if !server.versions.contains_key(path) {
+                continue;
+            }
+            let _ = server.client.notify(
+                DidSaveTextDocument::METHOD,
+                DidSaveTextDocumentParams {
+                    text_document: TextDocumentIdentifier { uri },
+                    text: text.map(|t| t.to_owned()),
+                },
+            );
+            return;
+        }
+    }
+
+    /// Client attached to `path`, if any.
+    pub fn client_for_path(&self, path: &Path) -> Option<Arc<LspClient>> {
+        self.servers.values().find_map(|s| {
+            s.versions
+                .contains_key(path)
+                .then(|| s.client.clone())
+        })
+    }
+
+    /// Version clock for `path` (shared with [`DocBridge`]).
+    pub fn version_for_path(&self, path: &Path) -> Option<Arc<AtomicI32>> {
+        self.servers
+            .values()
+            .find_map(|s| s.versions.get(path).cloned())
+    }
+
+    /// Whether any running server has this document open.
+    pub fn is_attached(&self, path: &Path) -> bool {
+        self.client_for_path(path).is_some()
+    }
+
+    /// `textDocument/formatting` for an attached document (blocking RPC).
+    pub fn format_document(&self, path: &Path, text: &str) -> anyhow::Result<Vec<TextEdit>> {
+        let client = self
+            .client_for_path(path)
+            .context("no language server for document")?;
+        let version = self
+            .version_for_path(path)
+            .context("document not open in language server")?;
+        let uri = path_to_uri(path)?;
+        let version = version.fetch_add(1, Ordering::SeqCst) + 1;
+        client.notify(
+            DidChangeTextDocument::METHOD,
+            DidChangeTextDocumentParams {
+                text_document: lsp_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: text.to_owned(),
+                }],
+            },
+        )?;
+        let edits = client.request::<lsp_types::request::Formatting>(DocumentFormattingParams {
+            text_document: TextDocumentIdentifier { uri },
+            options: FormattingOptions {
+                tab_size: 4,
+                insert_spaces: true,
+                ..Default::default()
+            },
+            work_done_progress_params: Default::default(),
+        })?;
+        Ok(edits.unwrap_or_default())
+    }
+
+    /// Paths currently open in any language server (for restart / clear).
+    pub fn attached_paths(&self) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        for server in self.servers.values() {
+            paths.extend(server.versions.keys().cloned());
+        }
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
+    /// Sync buffer then `textDocument/rename` (blocking RPC).
+    pub fn rename_symbol(
+        &self,
+        path: &Path,
+        text: &str,
+        position: lsp_types::Position,
+        new_name: &str,
+    ) -> anyhow::Result<lsp_types::WorkspaceEdit> {
+        let client = self
+            .client_for_path(path)
+            .context("no language server for document")?;
+        let version = self
+            .version_for_path(path)
+            .context("document not open in language server")?;
+        let uri = path_to_uri(path)?;
+        let version = version.fetch_add(1, Ordering::SeqCst) + 1;
+        client.notify(
+            DidChangeTextDocument::METHOD,
+            DidChangeTextDocumentParams {
+                text_document: lsp_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: text.to_owned(),
+                }],
+            },
+        )?;
+        let edit = client.request::<lsp_types::request::Rename>(lsp_types::RenameParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position,
+            },
+            new_name: new_name.to_owned(),
+            work_done_progress_params: Default::default(),
+        })?;
+        edit.context("language server returned no rename edit")
+    }
+
+    /// Optional `textDocument/prepareRename` — returns the default name placeholder.
+    pub fn prepare_rename(
+        &self,
+        path: &Path,
+        text: &str,
+        position: lsp_types::Position,
+    ) -> anyhow::Result<Option<String>> {
+        let client = self
+            .client_for_path(path)
+            .context("no language server for document")?;
+        let version = self
+            .version_for_path(path)
+            .context("document not open in language server")?;
+        let uri = path_to_uri(path)?;
+        let version = version.fetch_add(1, Ordering::SeqCst) + 1;
+        client.notify(
+            DidChangeTextDocument::METHOD,
+            DidChangeTextDocumentParams {
+                text_document: lsp_types::VersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: text.to_owned(),
+                }],
+            },
+        )?;
+        let result = client.request::<lsp_types::request::PrepareRenameRequest>(
+            TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position,
+            },
+        )?;
+        Ok(match result {
+            Some(lsp_types::PrepareRenameResponse::Range(_)) => None,
+            Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. }) => {
+                Some(placeholder)
+            }
+            Some(lsp_types::PrepareRenameResponse::DefaultBehavior { .. }) => None,
+            None => None,
+        })
     }
 
     fn build_init(&self, command: &str) -> anyhow::Result<InitializeParams> {
@@ -774,6 +968,36 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             definition: Some(Default::default()),
             publish_diagnostics: Some(Default::default()),
+            code_action: Some(CodeActionClientCapabilities {
+                dynamic_registration: Some(false),
+                code_action_literal_support: Some(CodeActionLiteralSupport {
+                    code_action_kind: CodeActionKindLiteralSupport {
+                        value_set: vec![
+                            CodeActionKind::EMPTY.as_str().into(),
+                            CodeActionKind::QUICKFIX.as_str().into(),
+                            CodeActionKind::REFACTOR.as_str().into(),
+                            CodeActionKind::REFACTOR_EXTRACT.as_str().into(),
+                            CodeActionKind::REFACTOR_INLINE.as_str().into(),
+                            CodeActionKind::REFACTOR_REWRITE.as_str().into(),
+                            CodeActionKind::SOURCE.as_str().into(),
+                            CodeActionKind::SOURCE_ORGANIZE_IMPORTS.as_str().into(),
+                        ],
+                    },
+                }),
+                is_preferred_support: Some(true),
+                data_support: Some(true),
+                resolve_support: Some(lsp_types::CodeActionCapabilityResolveSupport {
+                    properties: vec!["edit".into()],
+                }),
+                ..Default::default()
+            }),
+            rename: Some(RenameClientCapabilities {
+                dynamic_registration: Some(false),
+                prepare_support: Some(true),
+                ..Default::default()
+            }),
+            formatting: Some(Default::default()),
+            range_formatting: Some(Default::default()),
             ..Default::default()
         }),
         general: Some(GeneralClientCapabilities {

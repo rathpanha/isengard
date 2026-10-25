@@ -306,6 +306,9 @@ pub struct LspSettings {
     /// Master switch for all language servers.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Run `textDocument/formatting` before writing a disk-backed tab.
+    #[serde(default = "default_true")]
+    pub format_on_save: bool,
     /// Per-language enable / command / args overrides.
     #[serde(default)]
     pub languages: BTreeMap<String, LspLanguageSettings>,
@@ -319,6 +322,7 @@ impl Default for LspSettings {
     fn default() -> Self {
         Self {
             enabled: true,
+            format_on_save: true,
             languages: BTreeMap::new(),
             known: Vec::new(),
         }

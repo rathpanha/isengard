@@ -3,9 +3,10 @@ use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::app::{
     About, AddFolderToWorkspace, AddSelectionToAgent, CloseTab, CloseWorkspace, DecreaseFontSize,
-    FindInFiles, IncreaseFontSize, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
-    OpenFolder, OpenWorkspace, Quit, ResetFontSize, Save, SaveAll, SaveWorkspaceAs, ShowFileTree,
-    ShowGit, ToggleAgentPanel, TogglePreview, ToggleSidebar, ToggleTerminal,
+    FindInFiles, FormatDocument, IncreaseFontSize, NewFile, NewTerminal, NewWorkspace,
+    OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit, RenameSymbol, ResetFontSize, Save,
+    SaveAll, SaveWorkspaceAs, ShowFileTree, ShowGit, ToggleAgentPanel, TogglePreview,
+    ToggleSidebar, ToggleTerminal,
 };
 
 /// What the window currently has open — drives which menu items exist.
@@ -145,6 +146,9 @@ fn edit_items(ctx: MenuContext) -> Vec<MenuItem> {
             MenuItem::action("Find", input::Search),
             MenuItem::action("Select All", input::SelectAll),
             MenuItem::separator(),
+            MenuItem::action("Format Document", FormatDocument),
+            MenuItem::action("Rename Symbol", RenameSymbol),
+            MenuItem::separator(),
             MenuItem::action("Add Selection to Agent", AddSelectionToAgent),
         ]);
     }
@@ -247,6 +251,8 @@ mod tests {
         let edit = labels(&edit_items);
         assert!(edit.contains(&"Find in Files"));
         assert!(edit.contains(&"Find"));
+        assert!(edit.contains(&"Format Document"));
+        assert!(edit.contains(&"Rename Symbol"));
 
         let view_items = view_items(ctx);
         let view = labels(&view_items);

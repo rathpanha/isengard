@@ -1212,12 +1212,6 @@ impl AgentPanel {
         &self.roots
     }
 
-    /// Composer text (tests).
-    #[cfg(test)]
-    pub fn composer_text_for_test(&self, cx: &App) -> String {
-        self.input.read(cx).value().to_string()
-    }
-
     /// Labels of inline `@` tokens in the composer (tests).
     #[cfg(test)]
     pub fn prompt_mention_names_for_test(&self, cx: &App) -> Vec<String> {

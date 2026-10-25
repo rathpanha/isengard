@@ -301,12 +301,76 @@ impl IsengardApp {
                 lsp.completion_provider = None;
                 lsp.hover_provider = None;
                 lsp.definition_provider = None;
+                lsp.code_action_providers.clear();
                 lsp.show_document = None;
                 if let Some(diags) = state.diagnostics_mut() {
                     diags.clear();
                 }
                 cx.notify();
             });
+        }
+    }
+
+    /// Apply an LSP WorkspaceEdit to open tabs and (for closed files) disk.
+    pub(super) fn apply_workspace_edit(
+        &mut self,
+        edit: lsp_types::WorkspaceEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let files = match crate::lsp::workspace_edit_file_edits(&edit) {
+            Ok(files) => files,
+            Err(err) => {
+                notify_error(format!("Could not apply edit: {err:#}"), window, cx);
+                return;
+            }
+        };
+        if files.is_empty() {
+            return;
+        }
+        let mut touched = false;
+        for (path, edits) in files {
+            if let Some(state) = self
+                .tabs
+                .iter()
+                .find(|t| t.path == path)
+                .and_then(|t| t.editor_state())
+                .cloned()
+            {
+                state.update(cx, |state, cx| {
+                    state.apply_lsp_edits(&edits, window, cx);
+                });
+                // Keep the language server in sync with the buffer.
+                let text = state.read(cx).value().to_string();
+                self.lsp.did_change(&path, &text);
+                touched = true;
+                continue;
+            }
+            // Closed file: patch on disk.
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    let next = crate::lsp::apply_text_edits(&text, &edits);
+                    if let Err(err) = crate::editor::document::write_text(&path, &next) {
+                        notify_error(
+                            format!("Could not write {}: {err:#}", path.display()),
+                            window,
+                            cx,
+                        );
+                    } else {
+                        touched = true;
+                    }
+                }
+                Err(err) => notify_error(
+                    format!("Could not read {}: {err}", path.display()),
+                    window,
+                    cx,
+                ),
+            }
+        }
+        if touched {
+            self.refresh_git_panel(window, cx);
+            let roots: Vec<_> = self.workspace.folders().to_vec();
+            self.file_tree.refresh_loaded_dirs(roots.iter().map(|p| p.as_path()), cx);
         }
     }
 
@@ -524,16 +588,294 @@ impl IsengardApp {
         })
         .detach();
     }
-    pub(super) fn reload_lsp_settings_if_config(&mut self, path: &Path) {
+    /// Format buffer via LSP then write. Format errors fall back to plain save.
+    pub(super) fn format_then_save(
+        &mut self,
+        path: PathBuf,
+        after: AfterSave,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self
+            .tabs
+            .iter()
+            .find(|t| t.path == path)
+            .and_then(|t| t.editor_state())
+            .cloned()
+        else {
+            let _ = self.save_tab(&path, window, cx);
+            after(self, path, window, cx);
+            return;
+        };
+        let text = state.read(cx).value().to_string();
+        if !self.lsp.is_attached(&path) {
+            match self.save_tab(&path, window, cx) {
+                Ok(()) => after(self, path, window, cx),
+                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+            }
+            return;
+        }
+        // Snapshot host methods need &self — clone client path work onto background.
+        let format_path = path.clone();
+        let edits = {
+            match self.lsp.format_document(&format_path, &text) {
+                Ok(edits) => edits,
+                Err(err) => {
+                    notify_warning(format!("Format on save skipped: {err:#}"), window, cx);
+                    match self.save_tab(&path, window, cx) {
+                        Ok(()) => after(self, path, window, cx),
+                        Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+                    }
+                    return;
+                }
+            }
+        };
+        if !edits.is_empty() {
+            state.update(cx, |state, cx| {
+                state.apply_lsp_edits(&edits, window, cx);
+            });
+            let new_text = state.read(cx).value().to_string();
+            self.lsp.did_change(&path, &new_text);
+        }
+        match self.save_tab(&path, window, cx) {
+            Ok(()) => after(self, path, window, cx),
+            Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+        }
+    }
+
+    pub(super) fn on_format_document(
+        &mut self,
+        _: &FormatDocument,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.format_active_document(window, cx);
+    }
+
+    pub(super) fn on_rename_symbol(
+        &mut self,
+        _: &RenameSymbol,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        let path = tab.path.clone();
+        if document::is_untitled(&path) {
+            return notify_warning("Save the file before renaming a symbol", window, cx);
+        }
+        let Some(state) = tab.editor_state().cloned() else {
+            return;
+        };
+        if !self.lsp.is_attached(&path) {
+            return notify_warning("No language server for this file", window, cx);
+        }
+
+        let editor = state.read(cx);
+        let text = editor.value().to_string();
+        let rope = Rope::from(text.as_str());
+        let range = editor.selected_range();
+        let selection_name = if range.start < range.end {
+            Some(rope.slice(range.start..range.end.min(rope.len())).to_string())
+        } else {
+            None
+        };
+        let cursor = editor.cursor_position();
+        let position = lsp_types::Position {
+            line: cursor.line,
+            character: cursor.character,
+        };
+
+        let mut default_name = selection_name.filter(|s| !s.is_empty());
+        if default_name.is_none()
+            && let Ok(placeholder) = self.lsp.prepare_rename(&path, &text, position)
+        {
+            default_name = placeholder;
+        }
+        if default_name.is_none() {
+            let rope = Rope::from(text.as_str());
+            let kit_pos = Position {
+                line: position.line,
+                character: position.character,
+            };
+            let offset = rope.position_to_offset(&kit_pos);
+            default_name = Some(ident_at(&rope, offset));
+        }
+        let default_name = default_name.unwrap_or_default();
+        if default_name.is_empty() {
+            return notify_warning("No symbol under the cursor", window, cx);
+        }
+
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(default_name));
+        input.update(cx, |input, cx| input.focus(window, cx));
+        let app = cx.entity().downgrade();
+        let rename_path = path.clone();
+        let rename_text = text;
+        let rename_pos = position;
+        window.open_dialog(cx, move |dialog, window, _| {
+            let (app_ok, app_cancel) = (app.clone(), app.clone());
+            let (input_ok, input_view) = (input.clone(), input.clone());
+            let path = rename_path.clone();
+            let doc = rename_text.clone();
+            center_dialog(
+                dialog
+                    .title("Rename Symbol")
+                    .child(Input::new(&input_view).w_full().min_w(px(280.)))
+                    .footer(
+                        DialogFooter::new()
+                            .gap_2()
+                            .child(
+                                Button::new("rename-symbol-cancel")
+                                    .cursor_pointer()
+                                    .outline()
+                                    .label("Cancel")
+                                    .on_click(move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let _ = app_cancel;
+                                    }),
+                            )
+                            .child(
+                                Button::new("rename-symbol-ok")
+                                    .cursor_pointer()
+                                    .primary()
+                                    .label("Rename")
+                                    .on_click(move |_, window, cx| {
+                                        let new_name = input_ok.read(cx).value().to_string();
+                                        window.close_dialog(cx);
+                                        let path = path.clone();
+                                        let doc = doc.clone();
+                                        _ = app_ok.update(cx, |this, cx| {
+                                            this.perform_rename_symbol(
+                                                &path, &doc, rename_pos, &new_name, window, cx,
+                                            );
+                                        });
+                                    }),
+                            ),
+                    ),
+                window,
+            )
+        });
+    }
+
+    fn perform_rename_symbol(
+        &mut self,
+        path: &Path,
+        text: &str,
+        position: lsp_types::Position,
+        new_name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return;
+        }
+        match self.lsp.rename_symbol(path, text, position, new_name) {
+            Ok(edit) => self.apply_workspace_edit(edit, window, cx),
+            Err(err) => notify_error(format!("Rename failed: {err:#}"), window, cx),
+        }
+    }
+
+    /// Format the active text tab without saving.
+    pub(super) fn format_active_document(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.active() else {
+            return;
+        };
+        let path = tab.path.clone();
+        if document::is_untitled(&path) {
+            return notify_warning("Save the file before formatting", window, cx);
+        }
+        let Some(state) = tab.editor_state().cloned() else {
+            return;
+        };
+        if !self.lsp.is_attached(&path) {
+            return notify_warning("No language server for this file", window, cx);
+        }
+        let text = state.read(cx).value().to_string();
+        match self.lsp.format_document(&path, &text) {
+            Ok(edits) if edits.is_empty() => {}
+            Ok(edits) => {
+                state.update(cx, |state, cx| {
+                    state.apply_lsp_edits(&edits, window, cx);
+                });
+                let new_text = state.read(cx).value().to_string();
+                self.lsp.did_change(&path, &new_text);
+                cx.notify();
+            }
+            Err(err) => notify_error(format!("Format failed: {err:#}"), window, cx),
+        }
+    }
+
+    pub(super) fn reload_lsp_settings_if_config(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(config_path) = AppConfig::default_path() else {
             return;
         };
         if path != config_path {
             return;
         }
+        let previous = self.config.lsp.clone();
         self.config = AppConfig::load_from(&config_path);
-        self.lsp.set_settings(self.config.lsp.clone());
-        // Already-running servers keep old settings until workspace switch /
-        // reopen; new attaches use the updated map.
+        if self.config.lsp == previous {
+            self.lsp.set_settings(self.config.lsp.clone());
+            return;
+        }
+        self.restart_lsp_servers(window, cx);
     }
+
+    /// Shut down every language server and re-attach open text tabs.
+    pub(super) fn restart_lsp_servers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.lsp.attached_paths();
+        self.clear_lsp_providers_for_paths(&paths, cx);
+        self.lsp.shutdown_all();
+        self.lsp.set_settings(self.config.lsp.clone());
+        self.lsp.set_folders(self.workspace.folders().to_vec());
+        let reattach: Vec<(PathBuf, Language, Entity<EditorState>)> = self
+            .tabs
+            .iter()
+            .filter_map(|t| {
+                let state = t.editor_state()?.clone();
+                let language = Language::from_path(&t.path);
+                Some((t.path.clone(), language, state))
+            })
+            .collect();
+        for (path, language, state) in reattach {
+            self.lsp_attach_tab(&path, language, &state, window, cx);
+        }
+        cx.notify();
+    }
+}
+
+/// Identifier under `offset` (letters, digits, `_`).
+fn ident_at(rope: &Rope, offset: usize) -> String {
+    let text = rope.to_string();
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let mut i = offset.min(bytes.len());
+    if i > 0 && !is_ident_byte(bytes[i.saturating_sub(1)]) && (i >= bytes.len() || !is_ident_byte(bytes[i])) {
+        // caret after a non-ident — nothing to grab
+    }
+    while i > 0 && is_ident_byte(bytes[i - 1]) {
+        i -= 1;
+    }
+    let start = i;
+    while i < bytes.len() && is_ident_byte(bytes[i]) {
+        i += 1;
+    }
+    text[start..i].to_owned()
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }

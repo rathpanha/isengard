@@ -63,8 +63,12 @@ tabs, highlighted editor, status bar):
   Status bar: one LSP icon → short list with Install / Remove (Remove deletes
   app-local files only; ready/PATH probes are cached — never re-run every
   paint). Go-to-definition defers cross-file opens (avoids GPUI nested-update
-  panic). `config.json` → `lsp`; Open Config File…. Untitled buffers skip LSP
-  until saved.
+  panic). Code Actions (editor context menu / Kit), Format Document
+  (`⇧⌘I` / `Ctrl+Shift+I`; format-on-save default on via `lsp.format_on_save`),
+  Rename Symbol (F2 in editor, dialog), `textDocument/didSave` after write.
+  Saving `config.json` with `lsp` changes restarts servers and re-attaches
+  open tabs. `config.json` → `lsp`; Open Config File…. Untitled buffers skip
+  LSP until saved.
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
@@ -235,10 +239,9 @@ shortcuts. Check these first if something is off.
 
 ## Known issues / TODO
 
-- LSP: no code actions, rename, format-on-save, or servers inside the app
-  binary (app-local download dir is separate). Changing `lsp` in config
-  applies to newly attached buffers; already-running servers need a workspace
-  switch / reopen to pick up a different command.
+- LSP: servers are not inside the app binary (app-local download dir is
+  separate). Command-only code actions (`workspace/executeCommand`) are not
+  run — edit-bearing quick fixes / refactors are.
 - Terminal scrollback UI still minimal (selection/copy/paste/URL-click work).
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).

@@ -7,6 +7,7 @@
 
 mod bridge;
 mod client;
+mod edits;
 mod host;
 mod install;
 mod protocol;
@@ -15,6 +16,7 @@ mod uri;
 
 pub use bridge::install_tab_accepts_completion;
 pub use client::LspClient;
+pub use edits::{apply_text_edits, workspace_edit_file_edits};
 pub use host::{
     AttachOutcome, CatalogServer, LspEvent, LspHost, MissingServerOffer, ServerDisplayStatus,
     apply_diagnostics, path_for_diagnostics,

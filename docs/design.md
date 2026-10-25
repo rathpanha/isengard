@@ -132,6 +132,10 @@ Add a row here whenever a new shared component is created.
   available) plus **Add Selection to Agent** (same as `⌘L` / Edit menu).
   On Linux the Kit NativeMenu fallback keeps editor focus so the selection
   highlight stays (gpui-base only paints selection while focused).
+- **LSP Format / Rename:** Edit → **Format Document** (`⌘⇧I` / `Ctrl+Shift+I`);
+  Edit → **Rename Symbol** (`F2` while the editor Input is focused — Tree
+  keeps `F2` for path rename). Format-on-save defaults on
+  (`config.json` `lsp.format_on_save`); disable there if unwanted.
 - **Terminal context menu:** right-click → Copy, Paste, **Add Selection to
   Agent** (`⌘L` / `Ctrl+L` with terminal focus attaches the selection as a
   `Terminal` snippet chip). Right-click does not clear the selection.
