@@ -107,7 +107,8 @@ impl TerminalPanel {
             .count()
     }
 
-    /// Respawn tabs from saved cwds (skips missing directories).
+    /// Respawn tabs from saved cwds (skips missing directories). Fresh shells —
+    /// no scrollback replay.
     pub fn restore_sessions(
         &mut self,
         cwds: &[PathBuf],

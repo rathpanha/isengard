@@ -17,6 +17,8 @@ use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::file_tree::{material_icon, tree_icon};
 
+use crate::config::GitRepoSession;
+
 use super::engine::{
     ConflictSide, GitChange, RepoOp, RepoStatus, accept_conflict_side, commit_paths,
     write_resolved_conflict,
@@ -107,6 +109,8 @@ pub enum GitPanelEvent {
     ToastSuccess(String),
     /// Porcelain reload finished — file tree can tint dirty paths.
     StatusUpdated,
+    /// Commit draft / selection / box height changed — persist session.
+    UiChanged,
 }
 
 struct RepoSection {
@@ -138,6 +142,8 @@ pub struct GitPanel {
     agent_ready: bool,
     /// Commit-box bottom-edge drag (pixel floor past the auto cap).
     msg_resize: Option<MsgResize>,
+    /// Applied on the next [`Self::apply_statuses`] (async load after restore).
+    pending_session_ui: Option<Vec<GitRepoSession>>,
     _message_subs: Vec<Subscription>,
 }
 
@@ -152,8 +158,76 @@ impl GitPanel {
             active_path: None,
             agent_ready: false,
             msg_resize: None,
+            pending_session_ui: None,
             _message_subs: Vec::new(),
         }
+    }
+
+    /// Snapshot drafts / selections / commit-box floors for session persist.
+    pub fn snapshot_session_ui(&self, cx: &App) -> Vec<GitRepoSession> {
+        self.sections
+            .iter()
+            .filter_map(|section| {
+                let message = section.message.read(cx).value().to_string();
+                let selected: Vec<String> = section.selected.iter().cloned().collect();
+                let floor: f32 = section.message_floor_h.into();
+                if message.trim().is_empty() && selected.is_empty() && floor == 0.0 {
+                    return None;
+                }
+                Some(GitRepoSession {
+                    root: section.status.root.clone(),
+                    message,
+                    selected,
+                    message_floor_h: floor,
+                })
+            })
+            .collect()
+    }
+
+    /// Queue or apply restored Source Control UI (async status may still be loading).
+    pub fn restore_session_ui(
+        &mut self,
+        repos: Vec<GitRepoSession>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if repos.is_empty() {
+            self.pending_session_ui = None;
+            return;
+        }
+        if self.sections.is_empty() {
+            self.pending_session_ui = Some(repos);
+            return;
+        }
+        self.apply_session_ui(&repos, window, cx);
+        self.pending_session_ui = None;
+    }
+
+    fn apply_session_ui(
+        &mut self,
+        repos: &[GitRepoSession],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for repo in repos {
+            let Some(section) = self
+                .sections
+                .iter_mut()
+                .find(|s| s.status.root == repo.root)
+            else {
+                continue;
+            };
+            section.message_floor_h = px(repo.message_floor_h);
+            section.selected = merge_selection(
+                Some(repo.selected.iter().cloned().collect()),
+                &section.status.changes,
+            );
+            let draft = repo.message.clone();
+            section.message.update(cx, |state, cx| {
+                state.set_value(draft, window, cx);
+            });
+        }
+        cx.notify();
     }
 
     fn set_message_floor_h(&mut self, section_i: usize, floor: Pixels, cx: &mut Context<Self>) {
@@ -165,6 +239,7 @@ impl GitPanel {
             return;
         }
         section.message_floor_h = floor;
+        cx.emit(GitPanelEvent::UiChanged);
         cx.notify();
     }
 
@@ -252,6 +327,9 @@ impl GitPanel {
             old_selection.insert(section.status.root.clone(), section.selected.clone());
             old_floor_h.insert(section.status.root.clone(), section.message_floor_h);
         }
+        let pending = self.pending_session_ui.take().unwrap_or_default();
+        let pending_by_root: HashMap<PathBuf, &GitRepoSession> =
+            pending.iter().map(|r| (r.root.clone(), r)).collect();
 
         let first_paint = self.sections.is_empty();
         self._message_subs.clear();
@@ -264,7 +342,13 @@ impl GitPanel {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| status.root.display().to_string())
             });
+            let pending_ui = pending_by_root.get(&status.root).copied();
             let mut draft = old_messages.remove(&status.root).unwrap_or_default();
+            if draft.trim().is_empty()
+                && let Some(ui) = pending_ui
+            {
+                draft = ui.message.clone();
+            }
             if draft.trim().is_empty()
                 && matches!(status.op, Some(RepoOp::Merge) | Some(RepoOp::CherryPick))
                 && let Some(msg) = read_merge_msg(&status.root)
@@ -272,9 +356,18 @@ impl GitPanel {
                 draft = msg;
             }
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
-            let selected =
-                merge_selection(old_selection.remove(&status.root), &status.changes);
-            let message_floor_h = old_floor_h.remove(&status.root).unwrap_or(px(0.));
+            let selected = if let Some(ui) = pending_ui {
+                merge_selection(
+                    Some(ui.selected.iter().cloned().collect()),
+                    &status.changes,
+                )
+            } else {
+                merge_selection(old_selection.remove(&status.root), &status.changes)
+            };
+            let message_floor_h = pending_ui
+                .map(|ui| px(ui.message_floor_h))
+                .or_else(|| old_floor_h.remove(&status.root))
+                .unwrap_or(px(0.));
             let message = cx.new(|cx| {
                 let mut state = TextareaState::new(window, cx).placeholder("Commit message");
                 if !draft.is_empty() {
@@ -284,6 +377,7 @@ impl GitPanel {
             });
             let sub = cx.subscribe(&message, |_this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
+                    cx.emit(GitPanelEvent::UiChanged);
                     cx.notify();
                 }
             });
@@ -469,6 +563,7 @@ impl GitPanel {
         } else {
             section.selected.remove(rel_path);
         }
+        cx.emit(GitPanelEvent::UiChanged);
         cx.notify();
     }
 
@@ -486,6 +581,7 @@ impl GitPanel {
         } else {
             section.selected.clear();
         }
+        cx.emit(GitPanelEvent::UiChanged);
         cx.notify();
     }
 

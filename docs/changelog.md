@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Session restore: sidebar strip, search query, git
+  drafts/selection/box height, dirty/untitled text; terminal layout/cwds
+  only (fresh shells, no scrollback).
+
 - **2026-10-25** — Git commit box: pixel height floor (auto 1→6 rows, drag
   to 20) instead of Kit `auto_grow` mid-drag — stops snap-back past the
   auto cap.

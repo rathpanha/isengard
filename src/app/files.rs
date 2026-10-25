@@ -92,6 +92,7 @@ impl IsengardApp {
                     // Buffer changed: occurrences may move even if range stays.
                     this.selection_match_last_range.remove(&state.entity_id());
                     this.schedule_selection_matches(&state, cx);
+                    this.schedule_persist_session(cx);
                     cx.notify();
                 }
             }),
@@ -763,6 +764,18 @@ impl IsengardApp {
             }
             id += 1;
         };
+        self.open_untitled_at(path, save_dir, "", window, cx);
+    }
+
+    /// Restore or create an untitled tab at a specific `untitled:N` path.
+    pub(super) fn open_untitled_at(
+        &mut self,
+        path: PathBuf,
+        save_dir: Option<PathBuf>,
+        initial: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let language = Language::from_path(Path::new("untitled.txt"));
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -774,7 +787,7 @@ impl IsengardApp {
                     tab_size: 2,
                     hard_tabs: false,
                 })
-                .default_value("")
+                .default_value(initial.to_owned())
         });
         let subscriptions = vec![
             cx.subscribe(&state, |this, state, event: &InputEvent, cx| {
@@ -789,6 +802,7 @@ impl IsengardApp {
                     }
                     this.selection_match_last_range.remove(&state.entity_id());
                     this.schedule_selection_matches(&state, cx);
+                    this.schedule_persist_session(cx);
                     cx.notify();
                 }
             }),
@@ -798,7 +812,9 @@ impl IsengardApp {
             install_tab_accepts_completion(&state, cx),
         ];
         self.ensure_selection_match_collection(&state, cx);
-        let saved = state.read(cx).text().clone();
+        // Empty `saved` baseline so any restored text counts as dirty.
+        let saved = Rope::new();
+        let is_modified = !initial.is_empty();
         self.tabs.push(EditorTab {
             path,
             body: TabBody::Text {
@@ -808,12 +824,13 @@ impl IsengardApp {
                 rendered_preview: false,
                 _subscriptions: subscriptions,
             },
-            is_modified: false,
+            is_modified,
             preview: false,
             untitled_save_dir: save_dir,
         });
         self.focus_active_editor(window, cx);
         self.refresh_menus(cx);
+        self.schedule_persist_session(cx);
         cx.notify();
     }
 

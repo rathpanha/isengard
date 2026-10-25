@@ -76,7 +76,8 @@ pub(super) use serde::Deserialize;
 pub(super) use crate::agent::{AgentPanel, AgentPanelEvent};
 pub(super) use crate::config::{
     AppConfig, DEFAULT_AGENT_WIDTH, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_TERMINAL_HEIGHT, FileViewState, OpenFileEntry, WorkspaceSession,
+    DEFAULT_TERMINAL_HEIGHT, FileViewState, MAX_SESSION_UNSAVED_BYTES, OpenFileEntry,
+    SidebarPanel, WorkspaceSession,
 };
 pub(super) use crate::editor::document;
 pub(super) use crate::editor::language::Language;
@@ -174,6 +175,26 @@ pub(super) enum SidebarView {
     Git,
 }
 
+impl From<SidebarView> for SidebarPanel {
+    fn from(view: SidebarView) -> Self {
+        match view {
+            SidebarView::Files => Self::Files,
+            SidebarView::Search => Self::Search,
+            SidebarView::Git => Self::Git,
+        }
+    }
+}
+
+impl From<SidebarPanel> for SidebarView {
+    fn from(panel: SidebarPanel) -> Self {
+        match panel {
+            SidebarPanel::Files => Self::Files,
+            SidebarPanel::Search => Self::Search,
+            SidebarPanel::Git => Self::Git,
+        }
+    }
+}
+
 pub struct IsengardApp {
     config: AppConfig,
     focus_handle: FocusHandle,
@@ -222,6 +243,8 @@ pub struct IsengardApp {
     restoring_session: bool,
     /// Debounce token for persisting window bounds while resizing.
     window_geometry_generation: u64,
+    /// Debounce token for persisting session (dirty buffers, search, git UI).
+    session_persist_generation: u64,
     /// Inline rename / new-file / new-folder field over a tree row (not a modal).
     tree_edit: Option<TreeInlineEdit>,
     /// Language servers for the current workspace (rust-analyzer MVP).
@@ -257,6 +280,7 @@ impl IsengardApp {
                 match event {
                     SearchPanelEvent::QueryChanged(query) => {
                         this.schedule_search(query.clone(), cx);
+                        this.schedule_persist_session(cx);
                     }
                     SearchPanelEvent::OpenMatch(hit) => {
                         this.open_search_match(hit, window, cx);
@@ -361,6 +385,9 @@ impl IsengardApp {
                         this.file_tree.set_git_dirty(dirty, cx);
                         cx.notify();
                     }
+                    GitPanelEvent::UiChanged => {
+                        this.schedule_persist_session(cx);
+                    }
                 }
             });
 
@@ -419,6 +446,7 @@ impl IsengardApp {
             allow_quit: false,
             restoring_session: false,
             window_geometry_generation: 0,
+            session_persist_generation: 0,
             tree_edit: None,
             lsp: LspHost::default(),
             fs_watch: None,

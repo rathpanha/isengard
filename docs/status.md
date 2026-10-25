@@ -16,8 +16,11 @@ tabs, highlighted editor, status bar):
   Close Workspace (label tracks single-folder vs named/multi-root); root
   context menu remove; switching closes tabs (unsaved + untitled-workspace
   prompts). Session restore (tabs with cursor/scroll + expanded tree dirs)
-  per folder/workspace in `config.json` `sessions` — see design for restore
-  rules. Save cancelled mid-close/quit toasts instead of failing silently.
+  per folder/workspace in `config.json` `sessions` (tabs + dirty/untitled
+  text, sidebar strip, search query, git drafts/selection; terminal
+  layout/cwds only — clean shells; cold start still welcome) — see design
+  for restore rules. Save cancelled mid-close/quit toasts instead of
+  failing silently.
 - **File tree:** Kit `Tree` while a workspace is open; lazy load; dirs first,
   case-insensitive; hides `.git` / `.DS_Store`; full Material Icon Theme;
   gitignored rows shown muted; dirty git paths tint the label (modified/
@@ -66,11 +69,12 @@ tabs, highlighted editor, status bar):
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating
   a session, not when restoring a minimized panel. Tab cwds, visibility,
-  and height persist per workspace session; drag tabs within the strip to
-  reorder. Mouse drag selects (double = word, triple = line); copy/paste via
-  OS terminal chords (`⌘C`/`⌘V` or `Ctrl+Shift+C`/`V`, chord wins over Toggle
-  Preview when focused); URL hover continuous underline + pointer;
-  Ctrl/Cmd+click opens. Scrollback UI still minimal.
+  and height persist per workspace session (fresh shells on restore — no
+  scrollback); drag tabs within the strip to reorder. Mouse drag selects
+  (double = word, triple = line); copy/paste via OS terminal chords
+  (`⌘C`/`⌘V` or `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when
+  focused); URL hover continuous underline + pointer; Ctrl/Cmd+click opens.
+  Scrollback UI still minimal.
 - **Sidebar:** hide/show without closing the workspace (View > Toggle
   Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist
   per workspace session. Explorer ↔ Search ↔ Source Control via top strip

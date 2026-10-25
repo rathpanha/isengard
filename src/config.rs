@@ -21,6 +21,8 @@ pub const DEFAULT_AGENT_WIDTH: f32 = 380.0;
 pub const MAX_RECENT: usize = 8;
 /// Cap for persisted workspace sessions (tabs + tree expand).
 pub const MAX_SESSIONS: usize = 16;
+/// Max bytes of unsaved buffer text stored per tab in `sessions`.
+pub const MAX_SESSION_UNSAVED_BYTES: usize = 512 * 1024;
 
 /// Cursor + scroll for one open text tab (images omit these / use defaults).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -30,6 +32,66 @@ pub struct FileViewState {
     pub cursor_character: u32,
     pub scroll_x: f32,
     pub scroll_y: f32,
+    /// Dirty / untitled buffer text (omitted when clean on-disk tabs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsaved_text: Option<String>,
+    /// Save-dialog folder for an `untitled:` tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub untitled_save_dir: Option<PathBuf>,
+}
+
+/// Which left sidebar strip is selected (Explorer / Source Control / Search).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarPanel {
+    #[default]
+    Files,
+    Search,
+    Git,
+}
+
+/// Project Search fields (results are recomputed on restore).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SearchSessionState {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pattern: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub replace: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub case_sensitive: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub whole_word: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_regex: bool,
+}
+
+impl SearchSessionState {
+    pub fn is_empty(&self) -> bool {
+        self.pattern.is_empty()
+            && self.replace.is_empty()
+            && !self.case_sensitive
+            && !self.whole_word
+            && !self.use_regex
+    }
+}
+
+/// Source Control UI for one git root (draft + selection + commit-box floor).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitRepoSession {
+    pub root: PathBuf,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected: Vec<String>,
+    /// Commit box drag floor in px (`0` = auto height only).
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub message_floor_h: f32,
+}
+
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
 }
 
 /// One open tab in a session. Plain path strings from older configs still load.
@@ -112,6 +174,15 @@ pub struct WorkspaceSession {
     /// Composer Mode / Model / Effort / … last picked in this folder/workspace.
     #[serde(skip_serializing_if = "AgentPrefs::is_empty")]
     pub agent_prefs: AgentPrefs,
+    /// Explorer / Source Control / Search strip selection.
+    #[serde(default)]
+    pub sidebar_panel: SidebarPanel,
+    /// Project Search query + toggles (hit list is rebuilt on restore).
+    #[serde(default, skip_serializing_if = "SearchSessionState::is_empty")]
+    pub search: SearchSessionState,
+    /// Commit drafts / selections / box height per git root.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub git_repos: Vec<GitRepoSession>,
 }
 
 /// Agent composer choices re-applied to every chat the panel opens (new,
@@ -197,6 +268,9 @@ impl Default for WorkspaceSession {
             agent_chats: Vec::new(),
             agent_active: None,
             agent_prefs: AgentPrefs::default(),
+            sidebar_panel: SidebarPanel::default(),
+            search: SearchSessionState::default(),
+            git_repos: Vec::new(),
         }
     }
 }
@@ -557,6 +631,7 @@ mod tests {
                         cursor_character: 5,
                         scroll_x: 0.0,
                         scroll_y: -40.0,
+                        ..Default::default()
                     },
                 )],
                 active: Some(PathBuf::from("/code/app/main.rs")),
@@ -654,6 +729,52 @@ mod tests {
         assert_eq!(session.agent_width, DEFAULT_AGENT_WIDTH);
         assert!(session.agent_chats.is_empty());
         assert_eq!(session.agent_active, None);
+        assert_eq!(session.sidebar_panel, SidebarPanel::Files);
+        assert!(session.search.is_empty());
+        assert!(session.git_repos.is_empty());
+    }
+
+    #[test]
+    fn session_sidebar_search_git_unsaved_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.put_session(
+            "/code/app".into(),
+            WorkspaceSession {
+                sidebar_panel: SidebarPanel::Git,
+                search: SearchSessionState {
+                    pattern: "foo".into(),
+                    case_sensitive: true,
+                    ..Default::default()
+                },
+                git_repos: vec![GitRepoSession {
+                    root: PathBuf::from("/code/app"),
+                    message: "wip".into(),
+                    selected: vec!["a.rs".into()],
+                    message_floor_h: 120.0,
+                }],
+                open_files: vec![OpenFileEntry::with_view(
+                    PathBuf::from("/code/app/a.rs"),
+                    FileViewState {
+                        unsaved_text: Some("edited".into()),
+                        untitled_save_dir: None,
+                        ..Default::default()
+                    },
+                )],
+                ..Default::default()
+            },
+        );
+        config.save_to(&path).unwrap();
+        let session = AppConfig::load_from(&path).session("/code/app").unwrap().clone();
+        assert_eq!(session.sidebar_panel, SidebarPanel::Git);
+        assert_eq!(session.search.pattern, "foo");
+        assert!(session.search.case_sensitive);
+        assert_eq!(session.git_repos[0].message, "wip");
+        assert_eq!(
+            session.open_files[0].view().unsaved_text.as_deref(),
+            Some("edited")
+        );
     }
 
     #[test]

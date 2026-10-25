@@ -59,7 +59,30 @@ impl IsengardApp {
         )
     }
 
-    /// Writes the current tabs + cursor/scroll + expanded dirs + terminals under this workspace's key.
+    /// Debounced session write (dirty buffers, search, git UI, layout).
+    pub(super) fn schedule_persist_session(&mut self, cx: &mut Context<Self>) {
+        if self.restoring_session {
+            return;
+        }
+        self.session_persist_generation = self.session_persist_generation.wrapping_add(1);
+        let persist_gen = self.session_persist_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.session_persist_generation != persist_gen {
+                    return;
+                }
+                this.persist_session(cx);
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    /// Writes tabs + layout + sidebar strip + search + git UI + dirty text +
+    /// terminal layout/cwds under this workspace's key.
     pub(super) fn persist_session(&mut self, cx: &App) {
         if self.restoring_session {
             return;
@@ -70,31 +93,10 @@ impl IsengardApp {
         let open_files = self
             .tabs
             .iter()
-            .filter(|tab| !document::is_untitled(&tab.path))
-            .map(|tab| {
-                let view = tab
-                    .editor_state()
-                    .map(|state| {
-                        let state = state.read(cx);
-                        let cursor = state.cursor_position();
-                        let scroll = state.scroll_offset();
-                        FileViewState {
-                            cursor_line: cursor.line,
-                            cursor_character: cursor.character,
-                            scroll_x: scroll.x.into(),
-                            scroll_y: scroll.y.into(),
-                        }
-                    })
-                    .unwrap_or_default();
-                OpenFileEntry::with_view(tab.path.clone(), view)
-            })
+            .filter_map(|tab| session_open_entry(tab, cx))
             .collect();
         let terminal = self.terminal.read(cx);
-        let active = self
-            .tabs
-            .active()
-            .filter(|t| !document::is_untitled(&t.path))
-            .map(|t| t.path.clone());
+        let active = self.tabs.active().map(|t| t.path.clone());
         let session = WorkspaceSession {
             open_files,
             active,
@@ -104,6 +106,7 @@ impl IsengardApp {
             terminal_visible: terminal.is_visible(),
             sidebar_width: self.sidebar_width,
             sidebar_visible: self.sidebar_visible,
+            sidebar_panel: self.sidebar_view.into(),
             terminal_height: self.terminal_height,
             agent_visible: self.agent_visible,
             agent_width: self.agent_width,
@@ -121,6 +124,8 @@ impl IsengardApp {
                 .as_ref()
                 .map(|a| a.read(cx).prefs().clone())
                 .unwrap_or_default(),
+            search: self.search.read(cx).session_state(cx),
+            git_repos: self.git.read(cx).snapshot_session_ui(cx),
         };
         self.config.put_session(key, session);
         self.config.save();
@@ -129,6 +134,7 @@ impl IsengardApp {
     pub(super) fn reset_layout_defaults(&mut self) {
         self.sidebar_width = DEFAULT_SIDEBAR_WIDTH;
         self.sidebar_visible = true;
+        self.sidebar_view = SidebarView::Files;
         self.terminal_height = DEFAULT_TERMINAL_HEIGHT;
         self.agent_visible = false;
         self.agent_width = DEFAULT_AGENT_WIDTH;
@@ -152,6 +158,7 @@ impl IsengardApp {
             DEFAULT_SIDEBAR_WIDTH
         };
         self.sidebar_visible = session.sidebar_visible;
+        self.sidebar_view = session.sidebar_panel.into();
         self.terminal_height = if session.terminal_height >= 100. {
             session.terminal_height
         } else {
@@ -182,11 +189,16 @@ impl IsengardApp {
                 }
                 continue;
             }
+            if document::is_untitled(path) {
+                self.restore_untitled_from_session(entry, window, cx);
+                continue;
+            }
             if !path.is_file() {
                 continue;
             }
             self.open_file(path, true, window, cx);
             self.apply_file_view(path, &entry.view(), window, cx);
+            self.apply_unsaved_text(path, &entry.view(), window, cx);
         }
         if let Some(active) = &session.active
             && let Some(ix) = self.tabs.position(|t| t.path == *active)
@@ -211,8 +223,70 @@ impl IsengardApp {
                 cx,
             );
         });
+        if !session.search.is_empty() {
+            let query = self.search.update(cx, |panel, cx| {
+                panel.restore_session_state(&session.search, window, cx);
+                panel.query(cx)
+            });
+            self.schedule_search(query, cx);
+        }
+        self.git.update(cx, |git, cx| {
+            git.restore_session_ui(session.git_repos.clone(), window, cx);
+        });
         self.restoring_session = false;
         self.persist_session(cx);
+    }
+
+    fn restore_untitled_from_session(
+        &mut self,
+        entry: &OpenFileEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = entry.view();
+        let text = view.unsaved_text.clone().unwrap_or_default();
+        let path = if self.tabs.iter().any(|t| t.path == *entry.path()) {
+            let mut id = 1u64;
+            loop {
+                let candidate = document::untitled_path(id);
+                if !self.tabs.iter().any(|t| t.path == candidate) {
+                    break candidate;
+                }
+                id += 1;
+            }
+        } else {
+            entry.path().to_path_buf()
+        };
+        let restored_path = path.clone();
+        self.open_untitled_at(path, view.untitled_save_dir.clone(), &text, window, cx);
+        self.apply_file_view(&restored_path, &view, window, cx);
+    }
+
+    /// Apply dirty text after open (disk load already set `saved` baseline).
+    fn apply_unsaved_text(
+        &mut self,
+        path: &Path,
+        view: &FileViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(text) = view.unsaved_text.as_ref() else {
+            return;
+        };
+        let Some(ix) = self.tabs.position(|t| t.path == path) else {
+            return;
+        };
+        let Some(state) = self.tabs.get(ix).and_then(|t| t.editor_state().cloned()) else {
+            return;
+        };
+        state.update(cx, |state, cx| {
+            state.set_value(text.clone(), window, cx);
+        });
+        if let Some(tab) = self.tabs.get_mut(ix) {
+            tab.refresh_modified(cx);
+        }
+        self.lsp.did_change(path, text);
+        cx.notify();
     }
 
     pub(super) fn apply_file_view(
@@ -343,4 +417,55 @@ impl IsengardApp {
             }
         }
     }
+}
+
+fn session_open_entry(tab: &super::tab::EditorTab, cx: &App) -> Option<OpenFileEntry> {
+    // Diff panes: prefer the left editor's cursor/scroll (same as before).
+    let mut view = tab
+        .editor_state()
+        .or_else(|| match &tab.body {
+            super::tab::TabBody::Diff { old, .. } => Some(old),
+            _ => None,
+        })
+        .map(|state| {
+            let state = state.read(cx);
+            let cursor = state.cursor_position();
+            let scroll = state.scroll_offset();
+            FileViewState {
+                cursor_line: cursor.line,
+                cursor_character: cursor.character,
+                scroll_x: scroll.x.into(),
+                scroll_y: scroll.y.into(),
+                unsaved_text: None,
+                untitled_save_dir: None,
+            }
+        })
+        .unwrap_or_default();
+
+    if document::is_untitled(&tab.path) {
+        let text = tab
+            .editor_state()
+            .map(|state| state.read(cx).value().to_string())
+            .unwrap_or_default();
+        if text.len() > MAX_SESSION_UNSAVED_BYTES {
+            return None;
+        }
+        view.unsaved_text = Some(text);
+        view.untitled_save_dir = tab.untitled_save_dir.clone();
+        return Some(OpenFileEntry::with_view(tab.path.clone(), view));
+    }
+
+    if document::is_git_preview(&tab.path) {
+        return Some(OpenFileEntry::with_view(tab.path.clone(), view));
+    }
+
+    if tab.is_modified
+        && let Some(state) = tab.editor_state()
+    {
+        let text = state.read(cx).value().to_string();
+        if text.len() <= MAX_SESSION_UNSAVED_BYTES {
+            view.unsaved_text = Some(text);
+        }
+    }
+    Some(OpenFileEntry::with_view(tab.path.clone(), view))
 }

@@ -363,14 +363,16 @@ Add a row here whenever a new shared component is created.
   tree keeps every folder's expand state when it re-lists after a
   create/remove/rename. No dialogs, no auto-save.
 - **Sidebar toggle:** file tree can be hidden while the workspace stays open.
-  Width + visibility remembered per workspace in `sessions` (default 260px /
-  visible). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /
+  Width + visibility + which strip (Explorer / Source Control / Search) are
+  remembered per workspace in `sessions` (default 260px / visible /
+  Explorer). Toggle via status-bar icon, View > Toggle Sidebar, or `⌘B` /
   `Ctrl+B`.
 - **Project Search (sidebar):** left panel switches between Explorer (file
   tree), Search, and Source Control (same width — not a second column).
   Toggle via the sidebar top strip (`FolderTree` / `Search` / `GitBranch`,
   `.small()`), View > Explorer / Search / Source Control, Edit > Find in
-  Files, or `⌘⇧F` / `Ctrl+Shift+F`.
+  Files, or `⌘⇧F` / `Ctrl+Shift+F`. Query + case/word/regex (+ replace
+  field) persist in `sessions`; the hit list is rebuilt on restore.
   Find + replace fields; toggles for case / whole word / regex (Lucide
   `CaseSensitive` / `WholeWord` / `Regex`). Results list: file headers
   (Material `tree_icon` + workspace-relative path) + match rows (`Ln` +
@@ -464,11 +466,14 @@ Add a row here whenever a new shared component is created.
     show `<name> (Workspace)` (`Untitled (Workspace)` before it is saved). Used
     for the window / title-bar title only (no duplicate label above the tree).
   - Session restore: reopening a folder or workspace (welcome recent, Open, or
-    CLI) restores its last open tabs (cursor + scroll) — including Source
-    Control diff/conflict preview tabs when those paths are still dirty —
-    and expanded tree directories from `config.json` `sessions`. Multi-root
-    roots stay collapsed unless they were expanded when saved. Unsaved
-    edits are not restored; cold start still shows the welcome screen.
+    CLI) restores from `config.json` `sessions`: open tabs (cursor + scroll;
+    dirty / untitled buffer text up to 512 KiB; Source Control diff/conflict
+    previews when still dirty), expanded tree directories, left-strip panel
+    (Explorer / Source Control / Search), Project Search query + toggles
+    (results re-run), Source Control commit drafts / selections / box
+    height, terminal panel layout (visible + height + tab cwds — fresh
+    shells, no scrollback). Multi-root roots stay collapsed unless they were
+    expanded when saved. Cold start still shows the welcome screen (by design).
   - Window geometry: `config.json` stores last window width/height/origin and
     maximized flag; launch opens with that frame (centered if no origin yet).
     Saved on close and debounced while resizing.

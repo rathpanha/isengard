@@ -89,6 +89,37 @@ impl SearchPanel {
         }
     }
 
+    /// Snapshot for workspace session persist.
+    pub fn session_state(&self, cx: &App) -> crate::config::SearchSessionState {
+        let q = self.query(cx);
+        crate::config::SearchSessionState {
+            pattern: q.pattern,
+            replace: q.replace,
+            case_sensitive: q.case_sensitive,
+            whole_word: q.whole_word,
+            use_regex: q.use_regex,
+        }
+    }
+
+    /// Restore fields from a session (caller re-runs the search).
+    pub fn restore_session_state(
+        &mut self,
+        state: &crate::config::SearchSessionState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.case_sensitive = state.case_sensitive;
+        self.whole_word = state.whole_word;
+        self.use_regex = state.use_regex;
+        self.find.update(cx, |input, cx| {
+            input.set_value(state.pattern.clone(), window, cx);
+        });
+        self.replace.update(cx, |input, cx| {
+            input.set_value(state.replace.clone(), window, cx);
+        });
+        cx.notify();
+    }
+
     pub fn set_searching(&mut self, searching: bool, cx: &mut Context<Self>) {
         self.searching = searching;
         cx.notify();
