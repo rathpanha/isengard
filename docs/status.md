@@ -244,13 +244,14 @@ tabs, highlighted editor, status bar):
   Workspace switch clears all terminal tabs (re-prompts for a root if the
   panel was open).
 - UI integration tests (`src/app/ui_tests.rs`) cover edit/undo dirty mark,
-  Save, Save As, Save All with a failing file, dirty-session restore across
-  folder switch, quit’s untitled multi-root workspace prompt, tab close with
-  the unsaved dialog, file-tree create/rename/move, terminal toggle + new
-  tab, Agent panel toggle/restore per folder, and agent file read/write
-  against open buffers, chats per folder across switch + restart (resume vs
-  load), and a turn finishing in the background after a switch. Agents must
-  extend these for every new UI feature ([architecture.md](architecture.md) ·
+  Save, Save As, Save All with a failing on-disk or untitled write, dirty-session
+  restore across folder switch, quit’s untitled multi-root workspace prompt,
+  tab close with the unsaved dialog, file-tree create/rename/move, terminal
+  toggle + new tab, Agent panel toggle/restore per folder, and agent file
+  read/write against open buffers, chats per folder across switch + restart
+  (resume vs load), and a turn finishing in the background after a switch.
+  Agents must extend these for every new UI feature
+  ([architecture.md](architecture.md) ·
   [`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)).
   `acp::client` tests drive a fake in-memory agent (prompt, file I/O,
   permission).
@@ -273,8 +274,6 @@ tabs, highlighted editor, status bar):
   root context menu, switch dialogs. Workspace `settings` are stored but
   not applied. Session restore does not auto-open last workspace on launch
   (cold start stays welcome).
-- Save All: an untitled buffer whose write fails after the Save dialog still
-  stops the queue (on-disk files carry on and report together).
 - Tree item ids are absolute paths; placeholder ids append `\0placeholder`.
 - App icons for `cargo run`: macOS Dock + Windows `.exe` embed + Linux X11
   window icon are implemented; Wayland still needs

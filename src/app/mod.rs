@@ -112,6 +112,9 @@ use tab::EditorTab;
 
 /// Callback after a single tab save (path may change when materializing untitled).
 pub(super) type AfterSave = Rc<dyn Fn(&mut IsengardApp, PathBuf, &mut Window, &mut Context<IsengardApp>)>;
+/// Write failed after the user picked a path for an untitled tab (Save All queue).
+pub(super) type AfterSaveFail =
+    Rc<dyn Fn(&mut IsengardApp, anyhow::Error, &mut Window, &mut Context<IsengardApp>)>;
 /// Callback after Save All / a save queue finishes.
 pub(super) type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Context<IsengardApp>)>;
 

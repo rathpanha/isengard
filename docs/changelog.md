@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Save All: untitled write failure after the Save dialog
+  continues the queue (same as on-disk failures); one toast; `after` still
+  blocked.
+
 - **2026-10-25** — File Save As… (`⌘⇧S` / `Ctrl+Shift+S`); quit offers Save
   Workspace for untitled multi-root (same as switch); UI tests for Save As,
   dirty-session restore, and the quit workspace prompt.

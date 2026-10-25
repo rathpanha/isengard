@@ -318,7 +318,7 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         if document::is_untitled(&path) {
-            self.prompt_save_untitled(path, Rc::new(after), abort_message, window, cx);
+            self.prompt_save_untitled(path, Rc::new(after), None, abort_message, window, cx);
             return;
         }
         if self.config.lsp.format_on_save && self.lsp.is_attached(&path) {
@@ -331,10 +331,14 @@ impl IsengardApp {
         }
     }
 
+    /// `on_write_fail`: when set (Save All), a write error after the dialog
+    /// continues the queue instead of stopping; cancel still aborts via
+    /// `abort_message`.
     pub(super) fn prompt_save_untitled(
         &mut self,
         old_path: PathBuf,
         after: AfterSave,
+        on_write_fail: Option<AfterSaveFail>,
         abort_message: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -385,7 +389,13 @@ impl IsengardApp {
             this.update_in(window, |this, window, cx| {
                 match this.materialize_untitled(&old_path, new_path.clone(), window, cx) {
                     Ok(()) => after(this, new_path, window, cx),
-                    Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
+                    Err(err) => {
+                        if let Some(on_fail) = on_write_fail {
+                            on_fail(this, err, window, cx);
+                        } else {
+                            notify_error(format!("Save failed: {err:#}"), window, cx);
+                        }
+                    }
                 }
             })
             .ok();
@@ -525,9 +535,10 @@ impl IsengardApp {
         self.request_save_queue(dirty, Vec::new(), Rc::new(after), abort_message, window, cx);
     }
 
-    /// Saves `paths` in order. An on-disk write failure is collected and the queue
-    /// moves on, so one bad file can't strand the rest; any failure still blocks
-    /// `after` (close / quit / switch) and is reported in one toast at the end.
+    /// Saves `paths` in order. Write failures (on-disk or untitled after the
+    /// Save dialog) are collected and the queue moves on; any failure still
+    /// blocks `after` (close / quit / switch) and is reported in one toast.
+    /// Cancelling an untitled Save dialog still aborts the queue.
     pub(super) fn request_save_queue(
         &mut self,
         mut paths: Vec<PathBuf>,
@@ -548,19 +559,38 @@ impl IsengardApp {
             }
             if document::is_untitled(&path) {
                 let rest = paths[1..].to_vec();
-                let after = after.clone();
+                let after_ok = after.clone();
+                let after_fail = after.clone();
+                let failures_ok = failures.clone();
+                let failures_fail = failures.clone();
+                let rest_ok = rest.clone();
+                let rest_fail = rest;
+                let label = document::tab_label(&path);
                 self.prompt_save_untitled(
                     path,
                     Rc::new(move |this, _, window, cx| {
+                        // materialize already succeeded inside prompt_save_untitled.
                         this.request_save_queue(
-                            rest.clone(),
-                            failures.clone(),
-                            after.clone(),
+                            rest_ok.clone(),
+                            failures_ok.clone(),
+                            after_ok.clone(),
                             abort_message,
                             window,
                             cx,
                         );
                     }),
+                    Some(Rc::new(move |this, err, window, cx| {
+                        let mut failures = failures_fail.clone();
+                        failures.push(format!("{label}: {err:#}"));
+                        this.request_save_queue(
+                            rest_fail.clone(),
+                            failures,
+                            after_fail.clone(),
+                            abort_message,
+                            window,
+                            cx,
+                        );
+                    })),
                     abort_message,
                     window,
                     cx,

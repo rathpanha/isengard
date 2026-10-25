@@ -209,6 +209,56 @@ fn save_all_saves_the_rest_when_one_file_fails(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn save_all_continues_when_untitled_write_fails_after_dialog(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let root = h.dir.path().to_path_buf();
+    h.open_folder(&root, cx);
+    let disk = h.file("disk.txt", "disk");
+    h.open(&disk, cx);
+    h.input("!", cx);
+
+    let untitled = h.with_app(cx, |app, window, cx| {
+        app.open_untitled(Some(root.clone()), window, cx);
+        app.tabs.active().map(|t| t.path.clone()).expect("untitled tab")
+    });
+    h.input("scratch", cx);
+    assert!(h.tab(&untitled, cx).is_some_and(|(dirty, _)| dirty));
+
+    // Path that cannot be a file (directory) — same as post-dialog write failure.
+    let bad = root.join("not-a-file");
+    std::fs::create_dir(&bad).unwrap();
+
+    let after_ran = Rc::new(Cell::new(false));
+    let flag = after_ran.clone();
+    let untitled_q = untitled.clone();
+    let disk_q = disk.clone();
+    h.with_app(cx, move |app, window, cx| {
+        // Same path as prompt_save_untitled's on_write_fail (skip native picker).
+        let mut failures = Vec::new();
+        if let Err(err) = app.materialize_untitled(&untitled_q, bad, window, cx) {
+            failures.push(format!(
+                "{}: {err:#}",
+                crate::editor::document::tab_label(&untitled_q)
+            ));
+        }
+        let after: super::AfterSaveAll = Rc::new(move |_, _, _| flag.set(true));
+        app.request_save_queue(vec![disk_q], failures, after, None, window, cx);
+    });
+
+    assert_eq!(
+        std::fs::read_to_string(&disk).unwrap(),
+        "!disk",
+        "on-disk tab still saves after untitled write failure"
+    );
+    assert_eq!(h.tab(&disk, cx).map(|t| t.0), Some(false));
+    assert!(
+        h.tab(&untitled, cx).is_some_and(|(dirty, text)| dirty && text.contains("scratch")),
+        "untitled stays open and dirty"
+    );
+    assert!(!after_ran.get(), "after must not run when any save failed");
+}
+
+#[gpui_kit::test]
 fn closing_a_clean_tab_needs_no_confirmation(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("a.txt", "hello");
