@@ -282,9 +282,13 @@ Add a row here whenever a new shared component is created.
   squares + text (done = muted + line-through);
   notices `text_xs` muted or danger. **Permission prompts
   are inline** on the tool row (not a modal — several can be open while
-  updates keep streaming): one button per agent option, `.small()`,
-  allow-once `.primary()`, allow-always `.outline()`, reject
-  `.danger().outline()`.   Composer: optional wrap-row of attachment chips
+  updates keep streaming): options stacked full-width in a `v_flex`
+  (never side-by-side wrap), `.small()` + `.w_full()`, allow-once
+  `.primary()`, allow-always `.outline()`, reject `.danger().outline()`.
+  Approve Plan’s “No, keep planning” is relabeled **Keep planning and View
+  the plan**, uses `.outline()` (not danger), and opens the plan `.md`
+  (`~/.claude/plans/` or `.isengard/plans/`) in rendered Preview.
+  Composer: optional wrap-row of attachment chips
   (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
   `@` on chip text) with ghost `CircleX` remove — chips are from the Attach
   (`Paperclip`) button, paste, **drag-drop** onto the prompt (file-tree

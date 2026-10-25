@@ -216,8 +216,14 @@ impl IsengardApp {
             AgentPanelEvent::OpenPaths(paths) => {
                 for path in paths {
                     if path.is_file() {
-                        self.open_file(path, true, window, cx);
+                        self.open_file(&path, true, window, cx);
                     }
+                }
+            }
+            AgentPanelEvent::OpenPlanPreview(path) => {
+                if path.is_file() {
+                    self.open_file(&path, true, window, cx);
+                    self.set_rendered_preview(true, window, cx);
                 }
             }
             AgentPanelEvent::WorkspaceTouched => {

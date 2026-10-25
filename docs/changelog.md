@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Approve Plan “keep planning” → **Keep planning and View
+  the plan** (outline, not danger); opens the plan `.md` in Preview.
+
+- **2026-10-25** — Agent permission options stack full-width (one per row),
+  including Approve Plan — no side-by-side wrap.
+
 - **2026-10-25** — Session restore: sidebar strip, search query, git
   drafts/selection/box height, dirty/untitled text; terminal layout/cwds
   only (fresh shells, no scrollback).

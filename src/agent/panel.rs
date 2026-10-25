@@ -79,6 +79,8 @@ pub enum AgentPanelEvent {
     AttachPath(PathBuf),
     /// Open these paths in editor tabs (file-change summary row click).
     OpenPaths(Vec<PathBuf>),
+    /// Open a plan `.md` in rendered Preview (Approve Plan → Keep planning).
+    OpenPlanPreview(PathBuf),
     /// Agent changed the worktree (write / edit / delete / shell) — refresh Git.
     WorkspaceTouched,
     Hide,
@@ -119,6 +121,79 @@ enum Status {
 struct PendingPermission {
     options: Vec<PermissionOption>,
     reply: flume::Sender<Option<PermissionOptionId>>,
+}
+
+/// Claude's "No, keep planning" (and close cousins) on Approve / Exit Plan.
+fn is_keep_planning_option(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.contains("keep planning")
+        || n == "no"
+        || n.starts_with("no,")
+        || n.starts_with("no ")
+}
+
+/// Plan markdown under `~/.claude/plans/` or `{root}/.isengard/plans/`.
+fn is_plan_path(path: &Path) -> bool {
+    if path.extension().and_then(|e| e.to_str()) != Some("md") {
+        return false;
+    }
+    let Some(plans) = path.parent() else {
+        return false;
+    };
+    if plans.file_name().and_then(|n| n.to_str()) != Some("plans") {
+        return false;
+    }
+    matches!(
+        plans.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()),
+        Some(".claude" | ".isengard")
+    )
+}
+
+/// Pull a plan path out of a Write/tool title when ACP locations are empty.
+fn path_from_tool_title(title: &str) -> Option<PathBuf> {
+    for token in title.split_whitespace() {
+        let cleaned = token.trim_matches(|c: char| c == '`' || c == '"' || c == '\'' || c == ',');
+        if cleaned.ends_with(".md") {
+            let path = PathBuf::from(cleaned);
+            if is_plan_path(&path) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod plan_permission_helpers {
+    use super::{is_keep_planning_option, is_plan_path, path_from_tool_title};
+    use std::path::Path;
+
+    #[test]
+    fn keep_planning_matches_claude_reject_label() {
+        assert!(is_keep_planning_option("No, keep planning"));
+        assert!(is_keep_planning_option("Keep planning"));
+        assert!(!is_keep_planning_option("Yes, and use auto mode"));
+        assert!(!is_keep_planning_option("Reject"));
+    }
+
+    #[test]
+    fn plan_path_under_claude_or_isengard_plans() {
+        assert!(is_plan_path(Path::new(
+            "/Users/x/.claude/plans/my-plan.md"
+        )));
+        assert!(is_plan_path(Path::new(
+            "/proj/.isengard/plans/chat.md"
+        )));
+        assert!(!is_plan_path(Path::new("/proj/README.md")));
+        assert!(!is_plan_path(Path::new("/proj/plans/other.md")));
+    }
+
+    #[test]
+    fn path_from_write_title() {
+        let p = path_from_tool_title("Write `/Users/x/.claude/plans/foo.md`").unwrap();
+        assert_eq!(p, Path::new("/Users/x/.claude/plans/foo.md"));
+        assert!(path_from_tool_title("Write notes.md").is_none());
+    }
 }
 
 struct ToolEntry {
@@ -2713,6 +2788,19 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Most recent tool path that looks like a Claude / Isengard plan `.md`.
+    fn latest_plan_path(&self) -> Option<PathBuf> {
+        self.entries.iter().rev().find_map(|e| match e {
+            Entry::Tool(t) => t
+                .location
+                .as_ref()
+                .filter(|p| is_plan_path(p))
+                .cloned()
+                .or_else(|| path_from_tool_title(&t.title).filter(|p| is_plan_path(p))),
+            _ => None,
+        })
+    }
+
     /// Open-chat turn ended (not a throwaway silent job).
     fn home_turn_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
@@ -4504,28 +4592,43 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
                 .child(status),
         )
         .when_some(tool.permission.as_ref(), |col, pending| {
+            // Full-width stack — short labels must not sit side-by-side.
             col.child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
+                v_flex()
+                    .w_full()
+                    .gap_1()
                     .children(pending.options.iter().map(|option| {
                         let panel = panel.clone();
                         let tool_id = tool.id.clone();
                         let option_id = option.option_id.clone();
+                        let keep_planning = is_keep_planning_option(&option.name);
+                        let label: SharedString = if keep_planning {
+                            "Keep planning and View the plan".into()
+                        } else {
+                            option.name.clone().into()
+                        };
                         let button = Button::new(SharedString::from(format!(
                             "agent-perm-{tool_key}-{}",
                             option.option_id
                         )))
+                        .w_full()
                         .small()
                         .cursor_pointer()
-                        .label(option.name.clone());
+                        .label(label);
+                        // Keep planning is not a reject/destructive action — outline only.
                         let button = match option.kind {
                             PermissionOptionKind::AllowOnce => button.primary(),
                             PermissionOptionKind::AllowAlways => button.outline(),
+                            _ if keep_planning => button.outline(),
                             _ => button.danger().outline(),
                         };
                         button.on_click(move |_, _, cx| {
                             let _ = panel.update(cx, |panel, cx| {
+                                if keep_planning
+                                    && let Some(path) = panel.latest_plan_path()
+                                {
+                                    cx.emit(AgentPanelEvent::OpenPlanPreview(path));
+                                }
                                 panel.answer_permission(&tool_id, option_id.clone(), cx);
                             });
                         })
