@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Agent composer `/` slash-command suggestions from ACP
+  `available_commands_update` (same picker pattern as `@`).
+
 - **2026-10-25** — Approve Plan “keep planning” → **Keep planning and View
   the plan** (outline, not danger); opens the plan `.md` in Preview.
 

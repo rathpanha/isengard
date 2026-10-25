@@ -306,7 +306,11 @@ Add a row here whenever a new shared component is created.
   string and not the paperclip chip row); send resolves those to ACP
   resource/image blocks; →/Tab dives (query gets a trailing `/` and lists
   that folder); empty `@` lists nested folders (not only top-level) plus
-  root files; Esc closes; then auto-growing
+  root files; Esc closes. `/` at a word boundary opens the same-style
+  menu for ACP `available_commands_update` (name + muted description;
+  filter by name/description; Enter/click inserts `/name`, trailing space
+  when the command takes free-text input; Esc closes; no menu until the
+  agent advertises commands). `@` wins if both would match. Then auto-growing
   `Textarea` (Enter sends when the menu is closed, Shift+Enter newline;
   paste image / file paths become chips); then **two** composer strips:
   (1) session config row when ACP advertises options — each tap is ghost

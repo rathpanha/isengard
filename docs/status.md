@@ -139,12 +139,14 @@ tabs, highlighted editor, status bar):
   appear at the bottom of the transcript only (header stays the session
   title; status square still turns warning). Long chats keep ~half-pane
   scroll room under the latest
-  message so the end is not glued to the composer. Composer: type `@` for a
+  message so the end is not glued to the composer.   Composer: type `@` for a
   slim file/folder picker (filter; click/Enter
   inserts an inline token in the prompt Textarea — Material folder/file
   icon + basename, or image thumb; send resolves to ACP blocks; →/Tab
   dives; empty `@` / filters see workspace roots + nested folders via a
-  plain FS walk). Chip row is Attach / paste / drag-drop (tree row, editor
+  plain FS walk); type `/` for agent slash commands from ACP
+  `available_commands_update` (filter; Enter inserts `/name`). Chip row is
+  Attach / paste / drag-drop (tree row, editor
   tab, or OS explorer onto the prompt) / `⌘L`·`Ctrl+L` / editor or terminal
   right-click Add Selection to Agent (editor selection or whole file;
   terminal selection → `Terminal` chip) only — bottom-aligned;

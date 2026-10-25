@@ -36,8 +36,8 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
 use crate::acp::schema::{
-    CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId, PermissionOptionKind,
-    PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
+    AvailableCommand, CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId,
+    PermissionOptionKind, PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectOptions, SessionModeState, SessionUpdate,
     StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolKind,
 };
@@ -48,6 +48,7 @@ use crate::acp::{
     FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen, SilentConfigValue,
 };
 use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
+use crate::agent::slash::{self, SlashQuery, MAX_SLASH_HITS};
 use crate::agent::prompt::{
     self, Attachment, PromptCaps, MAX_ATTACHMENTS, display_user_message, image_from_bytes,
     image_from_path,
@@ -540,6 +541,10 @@ pub struct AgentPanel {
     attachment_thumbs: Vec<Option<ImageThumb>>,
     /// Open `@` file/folder picker above the composer, if any.
     mention: Option<MentionMenu>,
+    /// Open `/` slash-command picker above the composer, if any.
+    slash: Option<SlashMenu>,
+    /// ACP `available_commands_update` for the open session (`/compact`, …).
+    available_commands: Vec<AvailableCommand>,
     scroller: Entity<MessageScrollerState>,
     input: Entity<TextareaState>,
     install_error: Option<SharedString>,
@@ -615,6 +620,14 @@ struct MentionMenu {
     selected: usize,
     hits: Vec<MentionHit>,
     /// Keeps ↑↓ selection inside the scroll viewport.
+    scroll: ScrollHandle,
+}
+
+struct SlashMenu {
+    query: SlashQuery,
+    cursor: usize,
+    selected: usize,
+    hits: Vec<AvailableCommand>,
     scroll: ScrollHandle,
 }
 
@@ -787,7 +800,7 @@ impl AgentPanel {
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("Ask the agent… · @ to mention files")
+                .placeholder("Ask the agent… · @ files · / commands")
                 .auto_grow(2, 10)
                 .submit_on_enter(true)
         });
@@ -796,15 +809,17 @@ impl AgentPanel {
                 InputEvent::PressEnter { shift: false, .. } => {
                     if this.mention.is_some() {
                         this.confirm_mention(window, cx);
+                    } else if this.slash.is_some() {
+                        this.confirm_slash(window, cx);
                     } else {
                         this.send(window, cx);
                     }
                 }
-                InputEvent::Change => this.refresh_mention(cx),
+                InputEvent::Change => this.refresh_composer_menus(cx),
                 _ => {}
             }
         });
-        // ponytail: Textarea eats ↑↓/Esc; intercept while @ menu is open.
+        // ponytail: Textarea eats ↑↓/Esc; intercept while @ or / menu is open.
         // Also ⌘N/Ctrl+N — Kit focus may not put parent `Agent` key context on
         // the stack, so catch New Chat here when the composer is focused.
         let panel = cx.weak_entity();
@@ -830,30 +845,49 @@ impl AgentPanel {
                         return;
                     }
                 }
-                if this.mention.is_none() {
+                if this.mention.is_some() {
+                    match ks.key.as_str() {
+                        "up" => {
+                            this.mention_move(-1);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        "down" => {
+                            this.mention_move(1);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        // Dive into folder without attaching (Enter attaches).
+                        "right" | "tab" => {
+                            this.dive_mention(window, cx);
+                            cx.stop_propagation();
+                        }
+                        "escape" => {
+                            this.close_mention(cx);
+                            cx.stop_propagation();
+                        }
+                        _ => {}
+                    }
                     return;
                 }
-                match ks.key.as_str() {
-                    "up" => {
-                        this.mention_move(-1);
-                        cx.stop_propagation();
-                        cx.notify();
+                if this.slash.is_some() {
+                    match ks.key.as_str() {
+                        "up" => {
+                            this.slash_move(-1);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        "down" => {
+                            this.slash_move(1);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        "escape" => {
+                            this.close_slash(cx);
+                            cx.stop_propagation();
+                        }
+                        _ => {}
                     }
-                    "down" => {
-                        this.mention_move(1);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                    // Dive into folder without attaching (Enter attaches).
-                    "right" | "tab" => {
-                        this.dive_mention(window, cx);
-                        cx.stop_propagation();
-                    }
-                    "escape" => {
-                        this.close_mention(cx);
-                        cx.stop_propagation();
-                    }
-                    _ => {}
                 }
             });
         });
@@ -885,6 +919,8 @@ impl AgentPanel {
             attachments: Vec::new(),
             attachment_thumbs: Vec::new(),
             mention: None,
+            slash: None,
+            available_commands: Vec::new(),
             scroller,
             input,
             install_error: None,
@@ -1182,6 +1218,17 @@ impl AgentPanel {
         }
     }
 
+    fn refresh_composer_menus(&mut self, cx: &mut Context<Self>) {
+        self.refresh_mention(cx);
+        if self.mention.is_some() {
+            if self.slash.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        self.refresh_slash(cx);
+    }
+
     fn refresh_mention(&mut self, cx: &mut Context<Self>) {
         let (text, cursor, token_ranges) = self.input.read_with(cx, |input, _| {
             (
@@ -1234,14 +1281,82 @@ impl AgentPanel {
         cx.notify();
     }
 
+    fn refresh_slash(&mut self, cx: &mut Context<Self>) {
+        if self.available_commands.is_empty() {
+            if self.slash.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        let (text, cursor) = self.input.read_with(cx, |input, _| {
+            (input.value().to_string(), input.selected_range().end)
+        });
+        let Some(query) = slash::slash_at_cursor(&text, cursor) else {
+            if self.slash.take().is_some() {
+                cx.notify();
+            }
+            return;
+        };
+        let hits: Vec<AvailableCommand> = slash::filter_commands(
+            &self.available_commands,
+            &query.query,
+            MAX_SLASH_HITS,
+            |c| c.name.as_str(),
+            |c| c.description.as_str(),
+        )
+        .into_iter()
+        .cloned()
+        .collect();
+        let selected = self
+            .slash
+            .as_ref()
+            .filter(|m| m.query.query == query.query)
+            .map(|m| m.selected.min(hits.len().saturating_sub(1)))
+            .unwrap_or(0);
+        let scroll = self
+            .slash
+            .as_ref()
+            .filter(|m| m.query.query == query.query)
+            .map(|m| m.scroll.clone())
+            .unwrap_or_default();
+        self.slash = Some(SlashMenu {
+            query,
+            cursor,
+            selected,
+            hits,
+            scroll: scroll.clone(),
+        });
+        scroll.scroll_to_item(selected);
+        cx.notify();
+    }
+
     fn close_mention(&mut self, cx: &mut Context<Self>) {
         if self.mention.take().is_some() {
             cx.notify();
         }
     }
 
+    fn close_slash(&mut self, cx: &mut Context<Self>) {
+        if self.slash.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn mention_move(&mut self, delta: isize) {
         let Some(menu) = self.mention.as_mut() else {
+            return;
+        };
+        if menu.hits.is_empty() {
+            return;
+        }
+        let n = menu.hits.len() as isize;
+        let next = (menu.selected as isize + delta).rem_euclid(n) as usize;
+        menu.selected = next;
+        menu.scroll.scroll_to_item(next);
+    }
+
+    fn slash_move(&mut self, delta: isize) {
+        let Some(menu) = self.slash.as_mut() else {
             return;
         };
         if menu.hits.is_empty() {
@@ -1323,6 +1438,40 @@ impl AgentPanel {
         }
         // Same as Enter: insert `@path` into the prompt. Dive with →/Tab only.
         self.confirm_mention(window, cx);
+    }
+
+    fn confirm_slash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.slash.as_ref() else {
+            return;
+        };
+        let Some(cmd) = menu.hits.get(menu.selected).cloned() else {
+            self.close_slash(cx);
+            return;
+        };
+        let at = menu.query.at;
+        let cursor = menu.cursor;
+        let name = cmd.name.trim_start_matches('/');
+        // Trailing space when the command takes free-text input (hint shown by agent).
+        let insert = if cmd.input.is_some() {
+            format!("/{name} ")
+        } else {
+            format!("/{name}")
+        };
+        let text = self.input.read_with(cx, |input, _| input.value().to_string());
+        let (out, caret) = slash::replace_slash(&text, at, cursor, &insert);
+        self.slash = None;
+        self.input.update(cx, |input, cx| {
+            input.set_value(&out, window, cx);
+            input.set_selected_range(caret..caret, cx);
+        });
+        cx.notify();
+    }
+
+    fn pick_slash(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.slash.as_mut() {
+            menu.selected = index;
+        }
+        self.confirm_slash(window, cx);
     }
 
     pub fn chats(&self) -> &[AgentChat] {
@@ -1970,6 +2119,7 @@ impl AgentPanel {
             return;
         };
         self.mention = None;
+        self.slash = None;
         let tokens: Vec<InlineToken> = self
             .input
             .read(cx)
@@ -2098,6 +2248,9 @@ impl AgentPanel {
         self.compacting = false;
         // Keep usage_by_chat; live `usage` restored on reopen from that map.
         self.usage = None;
+        // Slash catalog is per session — clear until the next update.
+        self.available_commands.clear();
+        self.slash = None;
         self.emit_promptability_changed(cx);
         self.cancel_pending_permissions(cx);
     }
@@ -2561,6 +2714,7 @@ impl AgentPanel {
         let attachments = std::mem::take(&mut self.attachments);
         let thumbs = std::mem::take(&mut self.attachment_thumbs);
         self.mention = None;
+        self.slash = None;
         let caps = self.prompt_caps();
         // Inline `@` tokens in the prompt → ACP blocks. Paperclip chips stay
         // on the attach strip. Also honor any leftover typed `@rel`.
@@ -3352,6 +3506,15 @@ impl AgentPanel {
                 self.config_options = Some(update.config_options);
                 // Model / context size may have changed before the next turn.
                 self.ensure_usage_placeholder();
+            }
+            SessionUpdate::AvailableCommandsUpdate(update) => {
+                self.available_commands = update.available_commands;
+                // Open/refresh `/` if the cursor is already on a slash query.
+                if self.mention.is_none() {
+                    self.refresh_slash(cx);
+                } else {
+                    cx.notify();
+                }
             }
             SessionUpdate::UsageUpdate(update) => {
                 let snap = ContextUsage {
@@ -5985,7 +6148,7 @@ impl AgentPanel {
             .child(send);
         let hint = if queueing {
             if self.outbound.is_empty() {
-                "@ mention · Enter to queue".to_owned()
+                "@ · / · Enter to queue".to_owned()
             } else {
                 format!(
                     "{} queued · Enter to queue",
@@ -5993,13 +6156,14 @@ impl AgentPanel {
                 )
             }
         } else {
-            "@ mention · Enter to send".to_owned()
+            "@ files · / commands · Enter to send".to_owned()
         };
         let panel = cx.entity().downgrade();
         let muted = theme.muted_foreground;
         let border = theme.border;
         let chips = (!self.attachments.is_empty()).then(|| self.render_attachment_chips(cx));
         let mention = self.mention.as_ref().map(|m| self.render_mention_menu(m, cx));
+        let slash = self.slash.as_ref().map(|m| self.render_slash_menu(m, cx));
         let roots = self.roots.clone();
         // Drop target for tree / editor-tab / OS file drags → attach chips.
         // Outer composer + prompt wrapper: GPUI hits the deepest matching
@@ -6028,6 +6192,7 @@ impl AgentPanel {
             }))
             .children(chips)
             .children(mention)
+            .children(slash)
             .child(
                 div()
                     .id("agent-prompt-drop")
@@ -6282,6 +6447,62 @@ impl AgentPanel {
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.pick_mention(ix, window, cx);
+                    }))
+            }))
+            .into_any_element()
+    }
+
+    fn render_slash_menu(&self, menu: &SlashMenu, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let selected = menu.selected;
+        v_flex()
+            .id("agent-slash-menu")
+            .w_full()
+            .max_h(px(200.))
+            .gap_0()
+            .py_0p5()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .overflow_y_scroll()
+            .track_scroll(&menu.scroll)
+            .when(menu.hits.is_empty(), |col| {
+                col.child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("No matching commands"),
+                )
+            })
+            .children(menu.hits.iter().enumerate().map(|(ix, cmd)| {
+                let name = format!("/{}", cmd.name.trim_start_matches('/'));
+                let description = cmd.description.clone();
+                ListItem::new(SharedString::from(format!("agent-slash-{ix}")))
+                    .w_full()
+                    .selected(ix == selected)
+                    .cursor_pointer()
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_0()
+                            .px_1p5()
+                            .py_0p5()
+                            .child(div().text_xs().truncate().child(name))
+                            .when(!description.is_empty(), |col| {
+                                col.child(
+                                    div()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(theme.muted_foreground)
+                                        .child(description),
+                                )
+                            }),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.pick_slash(ix, window, cx);
                     }))
             }))
             .into_any_element()

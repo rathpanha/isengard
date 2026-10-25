@@ -5,6 +5,7 @@ mod limits;
 mod mention;
 mod panel;
 mod prompt;
+mod slash;
 
 pub use panel::{AgentPanel, AgentPanelEvent};
 pub use prompt::{Attachment, LineRange, image_from_path, line_at_offset};
