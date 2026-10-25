@@ -265,6 +265,11 @@ pub struct AgentSettings {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// ACP Model option value id for silent jobs (Improve / chat title /
+    /// Git Suggest). `None` → inherit the open chat’s model. Invalid / stale
+    /// ids are ignored at prompt time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent_model: Option<String>,
 }
 
 /// User-facing settings, persisted as JSON in the platform config directory.
@@ -597,9 +602,11 @@ mod tests {
         let mut config = AppConfig::default();
         config.agent.command = Some("gemini".into());
         config.agent.args = vec!["--experimental-acp".into()];
+        config.agent.silent_model = Some("haiku".into());
         config.save_to(&path).unwrap();
         let loaded = AppConfig::load_from(&path);
         assert_eq!(loaded.agent, config.agent);
+        assert_eq!(loaded.agent.silent_model.as_deref(), Some("haiku"));
 
         // Older configs carried an unused `model` key; it must not reset settings.
         std::fs::write(&path, r#"{"font_size":16.0,"model":"claude-sonnet-4-5"}"#).unwrap();

@@ -246,6 +246,17 @@ impl IsengardApp {
                     self.persist_background_chats(panel, cx);
                 }
             }
+            AgentPanelEvent::SettingsChanged => {
+                let settings = panel.read(cx).settings().clone();
+                self.config.agent = settings.clone();
+                self.config.save();
+                // Keep cached panels on the same global silent_model / launch.
+                for (other, _) in self.agents.values() {
+                    if other != panel {
+                        other.update(cx, |a, cx| a.set_settings(settings.clone(), cx));
+                    }
+                }
+            }
             AgentPanelEvent::PermissionRequested if !is_current => {
                 let name = self
                     .agent_key(panel)

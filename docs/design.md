@@ -227,8 +227,14 @@ Add a row here whenever a new shared component is created.
   no activity suffix — busy line is transcript-footer only) +
   muted/warning/danger `text_xs` context used/size (e.g. `53K / 200K`;
   `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
-  `Plus` New Chat. Chat-list rows append last-known used/size beside the
-  relative time when available (process memory only). Under the header, an
+  `Plus` New Chat. When the agent advertises a Model option, ghost
+  `SlidersHorizontal` **Agent settings** (Popover, TopRight): stacked rows
+  `Label → controls` (room for more knobs later). First row: **Utility
+  model** → Model picker (`Chat model` or family) → Version picker when
+  split applies — Improve / titles / Git Suggest (`agent.silent_model`;
+  not an editor Preferences panel). Chat-list rows append last-known
+  used/size beside the relative time when available (process memory only).
+  Under the header, an
   N Files-style accordion (not Kit Accordion — `size_full` steals transcript
   height): chevron + slim `5h` / `Week` `Progress` bars
   (`theme.muted_foreground` <70%, `theme.warning` 70–90%, `theme.danger`

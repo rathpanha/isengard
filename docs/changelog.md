@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-23** — Agent header `SlidersHorizontal` settings: row layout
+  `Utility model → Model → Version` (more rows later); global
+  `agent.silent_model`; **Chat model** inherits the open chat.
+
 - **2026-10-23** — Git Claude Suggest icon dims at 50% opacity when disabled
   (Material SVG does not pick up Kit’s muted disabled `fg`).
 

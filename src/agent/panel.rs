@@ -86,6 +86,9 @@ pub enum AgentPanelEvent {
     ChatsChanged,
     /// User picked a Mode / Model / … — persist [`AgentPanel::prefs`].
     PrefsChanged,
+    /// User changed [`AgentSettings`] (e.g. utility / silent model) — persist
+    /// global `config.json` `agent`.
+    SettingsChanged,
     /// A tool is waiting for approval (the app toasts if this panel is in
     /// the background).
     PermissionRequested,
@@ -1255,6 +1258,75 @@ impl AgentPanel {
         &self.prefs
     }
 
+    pub fn settings(&self) -> &AgentSettings {
+        &self.settings
+    }
+
+    /// Replace launch / silent-model settings (e.g. after another panel saved).
+    pub fn set_settings(&mut self, settings: AgentSettings, cx: &mut Context<Self>) {
+        if self.settings == settings {
+            return;
+        }
+        self.settings = settings;
+        cx.notify();
+    }
+
+    /// Global utility model for silent jobs (`None` = inherit chat model).
+    pub fn set_silent_model(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        let next = id.filter(|s| !s.is_empty());
+        if self.settings.silent_model == next {
+            return;
+        }
+        self.settings.silent_model = next;
+        cx.emit(AgentPanelEvent::SettingsChanged);
+        cx.notify();
+    }
+
+    /// Pick a utility-model family (keeps version/context when possible).
+    fn set_silent_model_family(&mut self, family: String, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let current = self
+            .settings
+            .silent_model
+            .as_ref()
+            .and_then(|id| split.choices.iter().find(|c| &c.id == id));
+        let prefer_ver = current.and_then(|c| c.version.clone());
+        let prefer_ctx = current.and_then(|c| display_context_label(&split.choices, c));
+        let id = pick_silent_model_id(
+            &split.choices,
+            &family,
+            prefer_ver.as_deref(),
+            prefer_ctx.as_deref(),
+        )
+        .or_else(|| pick_silent_model_id(&split.choices, &family, None, None));
+        self.set_silent_model(id, cx);
+    }
+
+    /// Pick a utility-model version within the current silent family.
+    fn set_silent_model_version(&mut self, version: String, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let current = self
+            .settings
+            .silent_model
+            .as_ref()
+            .and_then(|id| split.choices.iter().find(|c| &c.id == id));
+        let family = current
+            .map(|c| c.family.clone())
+            .unwrap_or_else(|| split.family.clone());
+        let prefer_ctx = current.and_then(|c| display_context_label(&split.choices, c));
+        let id = pick_silent_model_id(
+            &split.choices,
+            &family,
+            Some(&version),
+            prefer_ctx.as_deref(),
+        );
+        self.set_silent_model(id, cx);
+    }
+
     /// Active chat, only once it is in the index (a never-prompted new chat
     /// is not worth reopening).
     pub fn active_chat(&self) -> Option<&str> {
@@ -1553,6 +1625,16 @@ impl AgentPanel {
                 }
             }
         }
+        let model = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        );
+        apply_silent_model_override(
+            &mut configs,
+            model.as_ref(),
+            self.settings.silent_model.as_deref(),
+        );
         (mode, configs)
     }
 
@@ -3527,6 +3609,7 @@ fn scrub_improved_prompt(raw: &str) -> String {
     s.trim().to_owned()
 }
 
+#[derive(Clone)]
 struct ConfigSelect {
     config_id: String,
     name: String,
@@ -3545,6 +3628,7 @@ struct ModelChoice {
 }
 
 /// Model option split into family + version (+ context) when names parse that way.
+#[derive(Clone)]
 struct ModelFamilySplit {
     config_id: String,
     choices: Vec<ModelChoice>,
@@ -3552,6 +3636,59 @@ struct ModelFamilySplit {
     version_label: Option<String>,
     /// Display label for the current context (`1M` / `200K`), when applicable.
     context_label: Option<String>,
+}
+
+/// If `silent_model` is still offered, overwrite the Model select in `configs`.
+fn apply_silent_model_override(
+    configs: &mut [(String, SilentConfigValue)],
+    model: Option<&ConfigSelect>,
+    silent_model: Option<&str>,
+) {
+    let Some(want) = silent_model.filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let Some(model) = model else {
+        return;
+    };
+    if !model.choices.iter().any(|(id, _)| id == want) {
+        return;
+    }
+    if let Some((_, value)) = configs.iter_mut().find(|(id, _)| *id == model.config_id) {
+        *value = SilentConfigValue::Select(want.to_owned());
+    }
+}
+
+/// Best Model option id for a family (+ optional version / context).
+fn pick_silent_model_id(
+    choices: &[ModelChoice],
+    family: &str,
+    version: Option<&str>,
+    prefer_ctx: Option<&str>,
+) -> Option<String> {
+    let in_family: Vec<&ModelChoice> = choices.iter().filter(|c| c.family == family).collect();
+    if in_family.is_empty() {
+        return None;
+    }
+    if let Some(ver) = version {
+        return in_family
+            .iter()
+            .copied()
+            .filter(|c| c.version.as_deref() == Some(ver))
+            .find(|c| display_context_label(choices, c).as_deref() == prefer_ctx)
+            .or_else(|| {
+                in_family
+                    .iter()
+                    .copied()
+                    .find(|c| c.version.as_deref() == Some(ver))
+            })
+            .map(|c| c.id.clone());
+    }
+    in_family
+        .iter()
+        .copied()
+        .find(|c| display_context_label(choices, c).as_deref() == prefer_ctx)
+        .or_else(|| in_family.first().copied())
+        .map(|c| c.id.clone())
 }
 
 fn find_select(
@@ -4515,6 +4652,15 @@ impl AgentPanel {
             .when(self.info.as_ref().is_none_or(|i| i.can_load), |row| {
                 row.child(self.render_history(cx))
             })
+            .when(
+                find_select(
+                    &self.config_options,
+                    Some(SessionConfigOptionCategory::Model),
+                    "model",
+                )
+                .is_some(),
+                |row| row.child(self.render_agent_settings(cx)),
+            )
             .child(
                 Button::new("agent-hide")
                     .ghost()
@@ -5090,6 +5236,178 @@ impl AgentPanel {
             cx,
             move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
         )
+    }
+
+    /// Header Agent settings — stacked labeled rows (more knobs later).
+    fn render_agent_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let locked = self.config_controls_locked();
+        let panel = cx.entity().downgrade();
+        Popover::new("agent-settings")
+            .anchor(Anchor::TopRight)
+            .trigger(
+                Button::new("agent-settings-button")
+                    .ghost()
+                    .small()
+                    .icon(LucideIcon::SlidersHorizontal)
+                    .tooltip("Agent settings")
+                    .disabled(locked)
+                    .when(!locked, |b| b.cursor_pointer()),
+            )
+            .content(move |_state: &mut PopoverState, _, cx| {
+                let Some(entity) = panel.upgrade() else {
+                    return div().into_any_element();
+                };
+                entity.update(cx, |this, cx| this.render_agent_settings_body(cx))
+            })
+            .into_any_element()
+    }
+
+    /// Settings body: one row per knob — `Label → controls…`.
+    fn render_agent_settings_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .w(px(360.))
+            .gap_2()
+            .p_2()
+            .child(self.render_utility_model_setting_row(cx))
+            .into_any_element()
+    }
+
+    /// `Utility model → [Chat model|family] [version]` (Improve / titles / Git Suggest).
+    fn render_utility_model_setting_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let locked = self.config_controls_locked();
+        let mute = cx.theme().muted_foreground;
+        let silent_id = self.settings.silent_model.as_deref();
+        let split = model_family_split(&self.config_options);
+        let silent_choice = silent_id.and_then(|id| {
+            split
+                .as_ref()
+                .and_then(|s| s.choices.iter().find(|c| c.id == id))
+        });
+
+        let model_picker = if let Some(split) = split.as_ref() {
+            let mut families = Vec::new();
+            for c in &split.choices {
+                if !families.iter().any(|f| f == &c.family) {
+                    families.push(c.family.clone());
+                }
+            }
+            let mut choices = Vec::with_capacity(families.len() + 1);
+            choices.push((String::new(), "Chat model".into()));
+            choices.extend(families.into_iter().map(|f| (f.clone(), f)));
+            let current = silent_choice
+                .map(|c| c.family.clone())
+                .unwrap_or_default();
+            let label = if current.is_empty() {
+                "Chat model"
+            } else {
+                current.as_str()
+            };
+            self.render_bottom_select(
+                "agent-settings-utility-model",
+                LucideIcon::Cpu,
+                "Model",
+                label,
+                &current,
+                &choices,
+                locked,
+                cx,
+                |this, id, cx| {
+                    if id.is_empty() {
+                        this.set_silent_model(None, cx);
+                    } else {
+                        this.set_silent_model_family(id, cx);
+                    }
+                },
+            )
+        } else if let Some(opt) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        ) {
+            let mut choices = Vec::with_capacity(opt.choices.len() + 1);
+            choices.push((String::new(), "Chat model".into()));
+            choices.extend(opt.choices);
+            let current = silent_id.unwrap_or("").to_owned();
+            let label = if current.is_empty() {
+                "Chat model"
+            } else {
+                choices
+                    .iter()
+                    .find(|(id, _)| id == &current)
+                    .map(|(_, n)| n.as_str())
+                    .unwrap_or(current.as_str())
+            };
+            self.render_bottom_select(
+                "agent-settings-utility-model",
+                LucideIcon::Cpu,
+                "Model",
+                label,
+                &current,
+                &choices,
+                locked,
+                cx,
+                |this, id, cx| {
+                    this.set_silent_model(if id.is_empty() { None } else { Some(id) }, cx);
+                },
+            )
+        } else {
+            div().into_any_element()
+        };
+
+        let version_picker = split.as_ref().and_then(|split| {
+            let family = silent_choice?.family.as_str();
+            let mut versions: Vec<(String, String)> = Vec::new();
+            for c in &split.choices {
+                if c.family != family {
+                    continue;
+                }
+                let Some(ver) = &c.version else {
+                    continue;
+                };
+                if versions.iter().any(|(_, v)| v == ver) {
+                    continue;
+                }
+                versions.push((ver.clone(), ver.clone()));
+            }
+            if versions.is_empty() {
+                return None;
+            }
+            let current = silent_choice
+                .and_then(|c| c.version.clone())
+                .unwrap_or_default();
+            let label = if current.is_empty() {
+                "—"
+            } else {
+                current.as_str()
+            };
+            Some(self.render_bottom_select(
+                "agent-settings-utility-version",
+                LucideIcon::Tag,
+                "Version",
+                label,
+                &current,
+                &versions,
+                locked,
+                cx,
+                |this, ver, cx| this.set_silent_model_version(ver, cx),
+            ))
+        });
+
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_1()
+            .child(
+                div()
+                    .id("agent-settings-utility-label")
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(mute)
+                    .child("Utility model"),
+            )
+            .child(model_picker)
+            .children(version_picker)
+            .into_any_element()
     }
 
     /// Effort / other selects (not Mode, Model, Fast, or Context).
@@ -5985,6 +6303,101 @@ impl Render for AgentPanel {
             // **N Files** sits on top of the composer (the chat input), not under usage.
             .children(self.render_sticky_file_changes(cx))
             .when(show_composer, |col| col.child(self.render_composer(ready, cx)))
+    }
+}
+
+#[cfg(test)]
+mod silent_model_override_tests {
+    use super::{apply_silent_model_override, ConfigSelect};
+    use crate::acp::SilentConfigValue;
+
+    fn model_select(current: &str) -> ConfigSelect {
+        ConfigSelect {
+            config_id: "model".into(),
+            name: "Model".into(),
+            current: current.into(),
+            choices: vec![
+                ("sonnet-4-5".into(), "Sonnet 4.5".into()),
+                ("haiku-4-5".into(), "Haiku 4.5".into()),
+            ],
+        }
+    }
+
+    fn model_value(configs: &[(String, SilentConfigValue)]) -> Option<&str> {
+        configs.iter().find_map(|(id, v)| {
+            if id != "model" {
+                return None;
+            }
+            match v {
+                SilentConfigValue::Select(s) => Some(s.as_str()),
+                _ => None,
+            }
+        })
+    }
+
+    #[test]
+    fn overrides_when_silent_model_is_offered() {
+        let mut configs = vec![
+            ("mode".into(), SilentConfigValue::Select("code".into())),
+            ("model".into(), SilentConfigValue::Select("sonnet-4-5".into())),
+        ];
+        apply_silent_model_override(
+            &mut configs,
+            Some(&model_select("sonnet-4-5")),
+            Some("haiku-4-5"),
+        );
+        assert_eq!(model_value(&configs), Some("haiku-4-5"));
+        assert!(matches!(
+            configs[0].1,
+            SilentConfigValue::Select(ref s) if s == "code"
+        ));
+    }
+
+    #[test]
+    fn leaves_chat_model_when_unset_or_invalid() {
+        let mut configs = vec![("model".into(), SilentConfigValue::Select("sonnet-4-5".into()))];
+        apply_silent_model_override(&mut configs, Some(&model_select("sonnet-4-5")), None);
+        assert_eq!(model_value(&configs), Some("sonnet-4-5"));
+
+        apply_silent_model_override(
+            &mut configs,
+            Some(&model_select("sonnet-4-5")),
+            Some("missing-id"),
+        );
+        assert_eq!(model_value(&configs), Some("sonnet-4-5"));
+    }
+
+    #[test]
+    fn pick_silent_model_id_prefers_family_then_version() {
+        use super::{pick_silent_model_id, ModelChoice};
+        let choices = vec![
+            ModelChoice {
+                family: "Sonnet".into(),
+                id: "sonnet-4-5".into(),
+                version: Some("4.5".into()),
+                context: None,
+            },
+            ModelChoice {
+                family: "Sonnet".into(),
+                id: "sonnet-4-6".into(),
+                version: Some("4.6".into()),
+                context: None,
+            },
+            ModelChoice {
+                family: "Haiku".into(),
+                id: "haiku-4-5".into(),
+                version: Some("4.5".into()),
+                context: None,
+            },
+        ];
+        assert_eq!(
+            pick_silent_model_id(&choices, "Haiku", None, None).as_deref(),
+            Some("haiku-4-5")
+        );
+        assert_eq!(
+            pick_silent_model_id(&choices, "Sonnet", Some("4.6"), None).as_deref(),
+            Some("sonnet-4-6")
+        );
     }
 }
 

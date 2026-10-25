@@ -137,6 +137,7 @@ mod tests {
             command: Some("gemini".into()),
             args: vec!["--experimental-acp".into()],
             env: BTreeMap::from([("A".into(), "1".into())]),
+            silent_model: None,
         };
         let Resolved::Launch(launch) = resolve_in(&settings, tmp.path(), None) else {
             panic!("expected a launch");

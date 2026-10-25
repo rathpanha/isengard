@@ -180,22 +180,25 @@ tabs, highlighted editor, status bar):
   Compaction is agent-side (Isengard advertises
   `ClientSessionCapabilities.compaction`); we show Compacting… / a short
   notice — we do not summarize or reset the window ourselves.
-  Composer: config row (icon+label taps: Mode icon tracks Ask/Auto/Plan/
-  accept-edits — Auto omitted for Claude models older than 4.6; Model `Cpu` /
-  Version/Context; Fast Switch; Effort/agent/…)
-  sits in a fixed-height band above Attach / Improve (`PencilSparkles`
-  silent rewrite on a throwaway session — open chat context untouched,
-  chat not marked `turn_running`; Suggest/title leave Send alone; Improve
-  uses Stop + `.loading`; `@` chips + paperclip chips kept; review then
-  Send) / Queue+Stop (horizontal scroll; disabled until Ready). Picks are
-  remembered per
-  folder/workspace
+  Header ghost `SlidersHorizontal` Agent settings (row: Utility model →
+  Model → Version for Improve / titles / Git Suggest → global
+  `agent.silent_model`; **Chat model** inherits the open chat). Composer:
+  config row (icon+label taps:
+  Mode icon tracks Ask/Auto/Plan/ accept-edits — Auto omitted for Claude
+  models older than 4.6; Model `Cpu` / Version/Context; Fast Switch;
+  Effort/agent/…) sits in a fixed-height band above Attach / Improve
+  (`PencilSparkles` silent rewrite on a throwaway session — open chat
+  context untouched, chat not marked `turn_running`; Suggest/title leave
+  Send alone; Improve uses Stop + `.loading`; `@` chips + paperclip chips
+  kept; review then Send) / Queue+Stop (horizontal scroll; disabled until
+  Ready). Picks are remembered per folder/workspace
   (`sessions.<key>.agent_prefs`, seeded from global last-used `agent_prefs`)
   and re-applied to every chat opened — new, loaded, or after a restart.
   Follow-ups while a turn runs go into an outbound FIFO queue (strip
   under the composer with remove; drained when the turn ends).
   (`session/set_config_option`). Process-level agent still comes from
-  `config.json` `agent.command` (Open Config File…). Switching workspace
+  `config.json` `agent.command` / `agent.silent_model` (Open Config File…).
+  Switching workspace
   parks the old panel: a
   running turn finishes in the background (approval requests toast), then its
   agent stops; coming back resumes the chat (`session/resume`, no replay)

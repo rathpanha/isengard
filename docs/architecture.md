@@ -274,11 +274,18 @@ src/
   `agent_active` / `agent_prefs` (empty → global `AppConfig::agent_prefs`).
   `agent_visible` / `agent_width` / chat index / prefs live on
   `WorkspaceSession`; `ChatsChanged` / `PrefsChanged` from a background panel
-  patch only those fields of its saved session. `AgentPrefs` = composer picks
-  (config option id → select value / bool, plus legacy `modes` id), recorded
-  in `set_config_value` / `set_config_bool` / `set_mode` and re-sent by
-  `apply_prefs` on every `SessionOpened` (model first; values the agent no
-  longer offers are skipped). The panel owns `acp::AgentConnection`
+  patch only those fields of its saved session. Header `SlidersHorizontal`
+  Agent settings popover uses labeled rows (`Utility model → Model →
+  Version`); `SettingsChanged` writes global `AppConfig::agent` (including
+  `silent_model` for Improve / title / Git Suggest throwaway sessions) and
+  syncs other cached panels.
+  `AgentPrefs`
+  = composer picks (config option id → select value / bool, plus legacy
+  `modes` id), recorded in `set_config_value` / `set_config_bool` /
+  `set_mode` and re-sent by `apply_prefs` on every `SessionOpened` (model
+  first; values the agent no longer offers are skipped). Silent jobs copy
+  chat configs then override Model when `agent.silent_model` is still
+  offered. The panel owns `acp::AgentConnection`
   (lazy `ensure_started` on first show / restore / return) and pumps its
   events with `cx.spawn` + `recv_async` (tests: `try_recv` + scheduler timer
   — GPUI's test scheduler rejects cross-thread wakeups); a `generation`
