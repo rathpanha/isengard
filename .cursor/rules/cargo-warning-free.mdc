@@ -1,0 +1,33 @@
+---
+description: Fix isengard crate warnings; never mute or hide compiler warnings
+alwaysApply: true
+---
+
+# Keep the Isengard project warning-free
+
+Your job is to **fix** warnings in **this** crate (`isengard`), not to hide
+them. Leave Cargo’s warning printer alone.
+
+## Do
+
+After any `src/` change, run `cargo check` (or `cargo build` / `cargo run`) and
+clear every warning attributed to `isengard` before finishing. Same for
+`cargo clippy --all-targets`.
+
+Fix by deleting dead code, wiring APIs into real call sites, or `#[cfg(test)]`
+for test-only helpers.
+
+## Do not
+
+- Turn off or filter warning output (`future-incompat-report` frequency,
+  `RUSTFLAGS` that hide lints, piping away warnings, etc.).
+- Blanket `#[allow(…)]` / `#![allow(warnings)]` to make the build look clean.
+  Existing documented allows (e.g. the terminal module) stay; do not add new
+  ones to dodge this rule.
+- Defer “cleanup warnings later.”
+
+## Out of scope
+
+Warnings that name **other crates** (today: `block v0.1.6` future-incompat from
+a dependency) are not Isengard source. Do not chase them on normal tasks, and
+do not silence Cargo so they disappear — see [docs/architecture.md](docs/architecture.md).

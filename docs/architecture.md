@@ -7,13 +7,18 @@ and takes several minutes; later builds are fast. The `block v0.1.6`
 future-incompat notice comes from a dependency — ignore it.
 
 ```sh
-cargo run                       # welcome screen
+cargo run                       # welcome screen; isengard must be warning-free
 cargo run -- /path/to/folder    # open a folder
 cargo run -- /path/to/file.js   # open a file (+ parent folder)
+cargo check                      # agents: after src/ edits — zero isengard warnings
 cargo test
 cargo clippy --all-targets      # must be warning-free
 cargo build --release
 ```
+
+Agents: see `.cursor/rules/cargo-warning-free.mdc`. Finish no `src/` task while
+`cargo check` still prints `isengard` warnings — fix the code; do not disable
+or filter warning output. `block v0.1.6` is upstream, not this package.
 
 Settings: `dirs::config_dir()/isengard/config.json` (macOS:
 `~/Library/Application Support/isengard/config.json`). Delete to reset.

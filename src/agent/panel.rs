@@ -2575,10 +2575,7 @@ impl AgentPanel {
 
     /// Send the next queued prompt, if any and idle.
     fn drain_outbound_queue(&mut self, cx: &mut Context<Self>) {
-        if self.turn_running {
-            return;
-        }
-        if !matches!(self.status, Status::Ready) {
+        if !self.can_prompt() {
             return;
         }
         let Some(item) = self.outbound.pop_front() else {

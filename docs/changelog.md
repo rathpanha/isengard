@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Agent rule: fix `isengard` warnings (do not mute Cargo);
+  `.cursor/rules/cargo-warning-free.mdc` + docs; wire `can_prompt` into
+  outbound drain so `cargo run` no longer warns `dead_code`.
+
 - **2026-10-25** — Git Claude Suggest scrub strips Co-Authored-By /
   Generated-with / Claude-Session attribution; repo `.claude/settings.json`
   disables Claude Code commit/PR attribution for local + cloud sessions.

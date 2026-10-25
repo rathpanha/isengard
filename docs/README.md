@@ -35,9 +35,20 @@ components only; do not hand-build widgets the library already provides.
      [credits.md](credits.md) (plus keep the license file next to the asset)
 2. Append **one** bullet to [changelog.md](changelog.md) only (newest first).
 
+### Cargo warnings
+
+Agents must **fix** warnings in the `isengard` package (not mute Cargo).
+After any `src/` change, `cargo check` / `build` / `run` and
+`cargo clippy --all-targets` must show no `isengard` warnings. Rule:
+[`.cursor/rules/cargo-warning-free.mdc`](../.cursor/rules/cargo-warning-free.mdc).
+Upstream dep notices (e.g. `block v0.1.6`) are out of scope — leave them
+visible ([architecture.md](architecture.md)).
+
 ### Do not
 
 - Put a Changelog section in status, architecture, or design.
 - Duplicate the same changelog entry in two files.
 - Append narrative history to status or design — edit current truth in place.
 - Leave living docs stale; a stale hand-off is worse than none.
+- Leave `isengard` compiler warnings for a follow-up, or hide warnings to
+  fake a clean build.
