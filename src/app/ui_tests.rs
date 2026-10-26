@@ -2155,3 +2155,28 @@ fn agent_usage_bars_survive_rate_limiting(cx: &mut TestAppContext) {
     });
     assert_eq!(state(cx), (true, true, false), "empty payload keeps stale flag");
 }
+
+/// Kit's window `Root` binds Tab to focus traversal, which used to steal it
+/// from the shell (no completion). The more specific `Terminal` context must
+/// own it. (Pressing Tab for real would make the live shell answer off-thread,
+/// which the test scheduler rejects, so assert on the keymap.)
+#[gpui_kit::test]
+fn tab_in_terminal_is_bound_to_the_shell(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let ctx = gpui_kit::KeyContext::parse("Terminal").expect("context");
+    let keys = cx
+        .update_window(h.window.into(), |_, window, _| {
+            let first = |a: &dyn gpui_kit::Action| {
+                window
+                    .bindings_for_action_in_context(a, ctx.clone())
+                    .last()
+                    .map(|b| b.keystrokes()[0].unparse())
+            };
+            (
+                first(&crate::terminal::view::SendTab),
+                first(&crate::terminal::view::SendBackTab),
+            )
+        })
+        .expect("window alive");
+    assert_eq!(keys, (Some("tab".into()), Some("shift-tab".into())));
+}

@@ -121,6 +121,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-shift-v", TogglePreview, Some("!Terminal")),
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("secondary-shift-f", FindInFiles, None),
+        // Root binds Tab to focus traversal; the shell needs it for completion.
+        KeyBinding::new("tab", crate::terminal::view::SendTab, Some("Terminal")),
+        KeyBinding::new("shift-tab", crate::terminal::view::SendBackTab, Some("Terminal")),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         // Agent panel: `Ctrl+Shift+B` / `⌘⇧B` (Ctrl+Alt+B is unreliable on Linux).

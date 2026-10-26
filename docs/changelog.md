@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Terminal: Tab / Shift+Tab now reach the shell (completion works).
+  Kit's window `Root` bound them to focus traversal and moved focus out of the
+  terminal; `Terminal`-context bindings (`SendTab` / `SendBackTab`) now win.
 - **2026-10-26** — Agent: plan usage bars no longer vanish when the usage endpoint
   rate-limits (HTTP 429) — last numbers are saved to disk and shown dimmed, polling
   is 5 min with minutes-long backoff after a 429, and a "rate limited" note shows

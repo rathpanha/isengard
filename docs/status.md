@@ -83,7 +83,7 @@ tabs, highlighted editor, status bar):
   scrollback); drag tabs within the strip to reorder. Mouse drag selects
   (double = word, triple = line); copy/paste via OS terminal chords
   (`⌘C`/`⌘V` or `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when
-  focused); URL hover continuous underline + pointer; Ctrl/Cmd+click opens.
+  focused); Tab / Shift+Tab go to the shell (not focus traversal); URL hover continuous underline + pointer; Ctrl/Cmd+click opens.
   Scrollback UI still minimal.
 - **Sidebar:** hide/show without closing the workspace (View > Toggle
   Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist

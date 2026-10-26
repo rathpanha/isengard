@@ -69,6 +69,10 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
+// The window `Root` binds Tab / Shift+Tab to focus traversal; these more
+// specific `Terminal` bindings (see `app::actions::init`) keep them for the shell.
+actions!(terminal, [SendTab, SendBackTab]);
+
 /// Last painted content metrics for mouse hit-testing (window coords).
 #[derive(Clone, Copy, Debug)]
 struct TermHitLayout {
@@ -786,11 +790,15 @@ impl TerminalView {
         }
 
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke, self.state.mode()) {
-            self.clear_selection(cx);
-            let mut writer = self.stdin_writer.lock();
-            let _ = writer.write_all(&bytes);
-            let _ = writer.flush();
+            self.send_bytes(&bytes, cx);
         }
+    }
+
+    fn send_bytes(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        self.clear_selection(cx);
+        let mut writer = self.stdin_writer.lock();
+        let _ = writer.write_all(bytes);
+        let _ = writer.flush();
     }
 
     fn on_mouse_down(
@@ -1174,6 +1182,8 @@ impl Render for TerminalView {
             .on_action(cx.listener(|this, _: &EditCopy, window, cx| {
                 this.copy_selection(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &SendTab, _, cx| this.send_bytes(b"\t", cx)))
+            .on_action(cx.listener(|this, _: &SendBackTab, _, cx| this.send_bytes(b"\x1b[Z", cx)))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
