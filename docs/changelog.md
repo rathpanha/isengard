@@ -3,6 +3,7 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Release: bump to 0.1.6 (terminal Tab fix, persisted plan usage bars).
 - **2026-10-26** — Terminal: Tab / Shift+Tab now reach the shell (completion works).
   Kit's window `Root` bound them to focus traversal and moved focus out of the
   terminal; `Terminal`-context bindings (`SendTab` / `SendBackTab`) now win.
