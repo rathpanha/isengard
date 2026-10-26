@@ -587,6 +587,11 @@ pub struct AgentPanel {
     usage_by_chat: HashMap<String, ContextUsage>,
     /// Claude plan limits (5-hour session + week); `None` until fetched.
     plan_limits: Option<limits::PlanLimits>,
+    /// The numbers on screen are older than the last poll (loaded from disk
+    /// at startup, or the latest fetch failed) — shown dimmed.
+    plan_limits_stale: bool,
+    /// The last fetch was refused with HTTP 429.
+    plan_limits_rate_limited: bool,
     /// Usage strip expanded in place (details capped so transcript keeps height).
     plan_usage_open: bool,
     /// Agent is mid-compaction (`CompactionUpdate` InProgress).
@@ -772,47 +777,40 @@ impl AgentPanel {
     ) -> Self {
         // Plan limits come from Claude's own login; skip for custom agents
         // and in tests (no network).
-        if !cfg!(test) && settings.command.is_none() {
+        let polls_limits = !cfg!(test) && settings.command.is_none();
+        // Last good numbers survive a restart, so a rate-limited endpoint
+        // does not blank the strip (dimmed until a fetch succeeds).
+        let saved_limits = if polls_limits {
+            limits::load_snapshot()
+        } else {
+            None
+        };
+        let saved_limits_stale = saved_limits.is_some();
+        if polls_limits {
             cx.spawn(async move |this, cx| {
-                // Undocumented OAuth usage endpoint 429s if polled hard (or
-                // after a burst of other clients). On failure with no bars
-                // yet, back off 5→10→20→40→60s instead of waiting a full
-                // 120s so a restart mid-rate-limit does not hide the strip.
-                let mut retry_secs = 5u64;
+                // Undocumented OAuth usage endpoint: it 429s if polled hard
+                // (or after a burst of other clients), so poll gently and
+                // back off for minutes — not seconds — once refused.
+                let mut retry: Option<u64> = None;
                 loop {
                     let fetched = cx.background_spawn(async { limits::fetch() }).await;
-                    let (alive, have_bars) = match this.update(cx, |this, cx| {
-                        // Err → keep last. Empty/partial Ok → merge (API
-                        // often returns null windows without failing).
-                        match fetched {
-                            Ok(l) => {
-                                let next = limits::merge(this.plan_limits.clone(), l);
-                                if this.plan_limits != next {
-                                    this.plan_limits = next;
-                                    cx.notify();
-                                }
-                            }
-                            Err(err) => {
-                                log::debug!("agent plan limits: {err}");
-                            }
-                        }
-                        this.plan_limits
-                            .as_ref()
-                            .is_some_and(|l| l.session.is_some() || l.week.is_some())
-                    }) {
-                        Ok(have) => (true, have),
-                        Err(_) => (false, false),
-                    };
-                    if !alive {
+                    let failure = fetched.as_ref().err().map(|e| e.rate_limited);
+                    if this
+                        .update(cx, |this, cx| this.apply_limits_fetch(fetched, cx))
+                        .is_err()
+                    {
                         break;
                     }
-                    let wait = if have_bars {
-                        retry_secs = 5;
-                        120
-                    } else {
-                        let w = retry_secs;
-                        retry_secs = (retry_secs.saturating_mul(2)).min(60);
-                        w
+                    let wait = match failure {
+                        None => {
+                            retry = None;
+                            limits::HEALTHY_POLL_SECS
+                        }
+                        Some(rate_limited) => {
+                            let delay = limits::retry_delay(retry, rate_limited);
+                            retry = Some(delay);
+                            delay
+                        }
                     };
                     cx.background_executor()
                         .timer(std::time::Duration::from_secs(wait))
@@ -956,7 +954,9 @@ impl AgentPanel {
             prefs,
             usage: None,
             usage_by_chat: HashMap::new(),
-            plan_limits: None,
+            plan_limits: saved_limits,
+            plan_limits_stale: saved_limits_stale,
+            plan_limits_rate_limited: false,
             plan_usage_open: false,
             compacting: false,
             turn_file_changes: HashMap::new(),
@@ -1824,6 +1824,57 @@ impl AgentPanel {
     /// [`Self::can_silent_prompt`], other Suggest jobs (other repos) do not block.
     pub fn can_suggest_commit(&self) -> bool {
         matches!(self.status, Status::Ready) && !self.turn_running && self.connection.is_some()
+    }
+
+    /// Fold a poll result into the usage strip. A failure keeps the last
+    /// numbers (dimmed); an empty payload does not count as fresh.
+    fn apply_limits_fetch(
+        &mut self,
+        fetched: Result<limits::PlanLimits, limits::FetchError>,
+        cx: &mut Context<Self>,
+    ) {
+        match fetched {
+            Ok(l) => {
+                let fresh = !l.is_empty();
+                let next = limits::merge(self.plan_limits.clone(), l);
+                if fresh {
+                    self.plan_limits_stale = false;
+                }
+                self.plan_limits_rate_limited = false;
+                if self.plan_limits != next {
+                    if let Some(next) = &next {
+                        limits::save_snapshot(next);
+                    }
+                    self.plan_limits = next;
+                }
+            }
+            Err(err) => {
+                log::debug!("agent plan limits: {err}");
+                self.plan_limits_stale = self.plan_limits.is_some();
+                self.plan_limits_rate_limited = err.rate_limited;
+            }
+        }
+        cx.notify();
+    }
+
+    /// `(has numbers, dimmed as stale, last fetch rate-limited)` (tests).
+    #[cfg(test)]
+    pub fn plan_limits_state_for_test(&self) -> (bool, bool, bool) {
+        (
+            self.plan_limits.is_some(),
+            self.plan_limits_stale,
+            self.plan_limits_rate_limited,
+        )
+    }
+
+    /// Feed a poll result as if the background fetch returned it (tests).
+    #[cfg(test)]
+    pub fn apply_limits_fetch_for_test(
+        &mut self,
+        fetched: Result<limits::PlanLimits, limits::FetchError>,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_limits_fetch(fetched, cx);
     }
 
     fn emit_promptability_changed(&self, cx: &mut Context<Self>) {
@@ -5300,10 +5351,31 @@ impl AgentPanel {
     /// Collapsed = slim 5h/Week strip. Expanded = full details at content
     /// height (`flex_shrink_0`, no scroll) so the transcript keeps `flex_1`.
     fn render_plan_limits(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let l = self.plan_limits.as_ref()?;
-        if l.session.is_none() && l.week.is_none() {
-            return None;
+        let has_bars = self
+            .plan_limits
+            .as_ref()
+            .is_some_and(|l| l.session.is_some() || l.week.is_some());
+        if !has_bars {
+            // Nothing to show yet and Anthropic is refusing us: say so rather
+            // than hiding the strip as if usage were unsupported.
+            return self.plan_limits_rate_limited.then(|| {
+                let theme = cx.theme();
+                h_flex()
+                    .id("agent-plan-usage-note")
+                    .w_full()
+                    .flex_shrink_0()
+                    .px_3()
+                    .py_1()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("Plan usage unavailable — rate limited, retrying")
+                    .into_any_element()
+            });
         }
+        let l = self.plan_limits.as_ref()?;
+        let stale = self.plan_limits_stale;
         let theme = cx.theme();
         let open = self.plan_usage_open;
         let panel = cx.entity().downgrade();
@@ -5367,6 +5439,7 @@ impl AgentPanel {
                 .border_b_1()
                 .border_color(theme.border)
                 .cursor_pointer()
+                .when(stale, |row| row.opacity(0.55))
                 .on_click({
                     let panel = panel.clone();
                     move |_, _, cx| {
@@ -5480,7 +5553,16 @@ impl AgentPanel {
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(plan_subtitle),
-            );
+            )
+            .when(self.plan_limits_stale, |body| {
+                body.child(div().text_xs().text_color(theme.warning).child(
+                    if self.plan_limits_rate_limited {
+                        "Showing saved numbers — Anthropic is rate limiting usage checks; retrying."
+                    } else {
+                        "Showing saved numbers — couldn't refresh usage; retrying."
+                    },
+                ))
+            });
         if let Some(w) = l.session.as_ref() {
             body = body.child(detail_bar(
                 "agent-limit-session".into(),

@@ -197,9 +197,13 @@ tabs, highlighted editor, status bar):
   `~/.claude/.credentials.json`); access tokens are refreshed via
   `platform.claude.com` when expired/401 and written back (refresh tokens
   rotate). Best effort — hidden until the first good fetch (or when a custom
-  `agent.command` is set). Failed fetches with no bars yet retry on a
-  5→60s backoff; empty or partial API payloads keep the last good bars
-  instead of blanking them.
+  `agent.command` is set). Polls every 5 min; failures back off (5→60s, or
+  1→15 min after HTTP 429). The last good numbers are saved to
+  `<cache dir>/isengard/plan-limits.json` (windows that have since reset are
+  dropped on load) and shown **dimmed** at startup / while refreshes fail,
+  with a "Showing saved numbers" note in the expanded view. No numbers yet
+  while rate limited → a one-line "Plan usage unavailable — rate limited,
+  retrying" note. Empty or partial API payloads keep the last good bars.
   Compaction is agent-side (Isengard advertises
   `ClientSessionCapabilities.compaction`); we show Compacting… / a short
   notice — we do not summarize or reset the window ourselves.

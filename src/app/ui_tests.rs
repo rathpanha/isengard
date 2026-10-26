@@ -2107,3 +2107,51 @@ fn check_for_updates_menu_action_reaches_the_handler(cx: &mut TestAppContext) {
     h.wait_for(cx, "the update dialog", |cx| h.has("update-primary", cx));
     *crate::update::TEST_LATEST.lock().unwrap() = None;
 }
+
+#[gpui_kit::test]
+fn agent_usage_bars_survive_rate_limiting(cx: &mut TestAppContext) {
+    use crate::agent::limits::{FetchError, PlanLimits, Window};
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-shift-b", cx);
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    let state = |cx: &mut TestAppContext| cx.read(|cx| panel.read(cx).plan_limits_state_for_test());
+    let limited = || FetchError {
+        message: "usage request failed: 429".into(),
+        rate_limited: true,
+    };
+    let week = |pct: f32| PlanLimits {
+        session: None,
+        week: Some(Window {
+            percent: pct,
+            resets_at: None,
+        }),
+        week_opus: None,
+        week_sonnet: None,
+        breakdown: Vec::new(),
+        subscription: None,
+    };
+
+    // Fresh start while rate limited: nothing to show, but we know why.
+    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Err(limited()), cx));
+    assert_eq!(state(cx), (false, false, true));
+
+    // Numbers arrive.
+    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Ok(week(25.0)), cx));
+    assert_eq!(state(cx), (true, false, false));
+
+    // Rate limited again: the bar stays, dimmed.
+    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Err(limited()), cx));
+    assert_eq!(state(cx), (true, true, true));
+
+    // An empty 200 is not a recovery.
+    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Ok(week(25.0)), cx));
+    assert_eq!(state(cx), (true, false, false));
+    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Err("boom".to_string().into()), cx));
+    assert_eq!(state(cx), (true, true, false));
+    panel.update(cx, |p, cx| {
+        let empty = PlanLimits { week: None, ..week(0.0) };
+        p.apply_limits_fetch_for_test(Ok(empty), cx);
+    });
+    assert_eq!(state(cx), (true, true, false), "empty payload keeps stale flag");
+}

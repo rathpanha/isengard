@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Agent: plan usage bars no longer vanish when the usage endpoint
+  rate-limits (HTTP 429) — last numbers are saved to disk and shown dimmed, polling
+  is 5 min with minutes-long backoff after a 429, and a "rate limited" note shows
+  when there is nothing to display.
 - **2026-10-26** — Release: bump to 0.1.5 (Check for Updates… fix, chat restore fix).
 - **2026-10-26** — Updates: Check for Updates… did nothing (action had no root
   listener); now shows a "Checking…" toast, and update HTTP calls time out.

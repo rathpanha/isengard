@@ -8,9 +8,10 @@
 
 #[cfg(target_os = "macos")]
 use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use serde_json::{json, Value};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -119,13 +120,50 @@ pub fn merge(prev: Option<PlanLimits>, next: PlanLimits) -> Option<PlanLimits> {
     })
 }
 
+/// Why a usage fetch failed. `rate_limited` (HTTP 429) wants minutes of
+/// patience, not seconds — see [`retry_delay`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct FetchError {
+    pub message: String,
+    pub rate_limited: bool,
+}
+
+impl From<String> for FetchError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            rate_limited: false,
+        }
+    }
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// Seconds between polls while the last fetch worked.
+pub const HEALTHY_POLL_SECS: u64 = 300;
+
+/// Seconds to wait after a failed fetch: doubles from `prev` up to a cap.
+/// Rate limits start at a minute and reach 15 so we stop feeding the limit;
+/// other failures retry quickly (5s→60s).
+pub fn retry_delay(prev: Option<u64>, rate_limited: bool) -> u64 {
+    let (start, cap) = if rate_limited { (60, 900) } else { (5, 60) };
+    match prev {
+        None => start,
+        Some(p) => p.saturating_mul(2).clamp(start, cap),
+    }
+}
+
 /// Blocking: call from a background task.
-pub fn fetch() -> Result<PlanLimits, String> {
+pub fn fetch() -> Result<PlanLimits, FetchError> {
     let (token, subscription) = access_token_fresh()?;
     fetch_with_token(&token, subscription)
 }
 
-fn fetch_with_token(token: &str, subscription: Option<String>) -> Result<PlanLimits, String> {
+fn fetch_with_token(token: &str, subscription: Option<String>) -> Result<PlanLimits, FetchError> {
     fetch_with_token_inner(token, subscription, true)
 }
 
@@ -133,12 +171,15 @@ fn fetch_with_token_inner(
     token: &str,
     subscription: Option<String>,
     allow_refresh: bool,
-) -> Result<PlanLimits, String> {
+) -> Result<PlanLimits, FetchError> {
     let mut response = ureq::get(USAGE_URL)
         .header("Authorization", &format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .call()
-        .map_err(|e| format!("usage request failed: {e}"))?;
+        .map_err(|e| FetchError {
+            rate_limited: matches!(e, ureq::Error::StatusCode(429)),
+            message: format!("usage request failed: {e}"),
+        })?;
     let status = response.status().as_u16();
     // Stale clock / Claude Code rotated under us — refresh once and retry.
     if status == 401 && allow_refresh {
@@ -147,7 +188,10 @@ fn fetch_with_token_inner(
         return fetch_with_token_inner(&token, refreshed_sub.or(subscription), false);
     }
     if !(200..300).contains(&status) {
-        return Err(format!("usage request failed: status {status}"));
+        return Err(FetchError {
+            rate_limited: status == 429,
+            message: format!("usage request failed: status {status}"),
+        });
     }
     let text = response
         .body_mut()
@@ -339,6 +383,73 @@ fn persist_credentials(root: &Value, source: CredSource) -> Result<(), String> {
     }
 }
 
+/// Last good usage, kept across restarts so the bars do not vanish while the
+/// endpoint is rate-limiting us.
+fn snapshot_path() -> Option<PathBuf> {
+    // Tests must never read or write the user's cache.
+    if cfg!(test) {
+        return None;
+    }
+    Some(dirs::cache_dir()?.join("isengard").join("plan-limits.json"))
+}
+
+pub fn save_snapshot(limits: &PlanLimits) {
+    if let Some(path) = snapshot_path() {
+        save_snapshot_to(&path, limits);
+    }
+}
+
+/// Saved usage with windows that have since reset dropped (their numbers
+/// describe a period that is over). `None` if nothing usable remains.
+pub fn load_snapshot() -> Option<PlanLimits> {
+    load_snapshot_from(&snapshot_path()?, Utc::now())
+}
+
+fn save_snapshot_to(path: &Path, limits: &PlanLimits) {
+    let window = |w: &Option<Window>| {
+        w.as_ref()
+            .map(|w| json!({"utilization": w.percent, "resets_at": w.resets_at}))
+    };
+    let body = json!({
+        "five_hour": window(&limits.session),
+        "seven_day": window(&limits.week),
+        "seven_day_opus": window(&limits.week_opus),
+        "seven_day_sonnet": window(&limits.week_sonnet),
+        "seven_day_breakdown": {"rows": limits.breakdown.iter().map(|r| json!({
+            "key": r.key, "display_name": r.display_name, "percent": r.percent,
+        })).collect::<Vec<_>>()},
+        "subscription": limits.subscription,
+    });
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(err) = std::fs::write(path, body.to_string()) {
+        log::debug!("agent plan limits: could not save snapshot: {err}");
+    }
+}
+
+fn load_snapshot_from(path: &Path, now: DateTime<Utc>) -> Option<PlanLimits> {
+    let body: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let mut limits = parse(&body);
+    limits.subscription = body
+        .get("subscription")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let live = |w: Option<Window>| {
+        w.filter(|w| {
+            w.resets_at
+                .as_deref()
+                .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+                .is_none_or(|at| at > now)
+        })
+    };
+    limits.session = live(limits.session);
+    limits.week = live(limits.week);
+    limits.week_opus = live(limits.week_opus);
+    limits.week_sonnet = live(limits.week_sonnet);
+    (!limits.is_empty()).then_some(limits)
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -410,6 +521,58 @@ mod tests {
             breakdown: vec![],
             subscription: None,
         }
+    }
+
+    fn limits_with(week_resets: &str, session_resets: &str) -> PlanLimits {
+        PlanLimits {
+            session: Some(Window {
+                percent: 42.0,
+                resets_at: Some(session_resets.into()),
+            }),
+            week: Some(Window {
+                percent: 25.0,
+                resets_at: Some(week_resets.into()),
+            }),
+            subscription: Some("Claude Pro".into()),
+            ..empty_limits()
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrips_and_drops_reset_windows() {
+        use chrono::{TimeZone, Utc};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plan-limits.json");
+        let saved = limits_with("2026-10-28T03:00:00Z", "2026-10-26T10:00:00Z");
+        super::save_snapshot_to(&path, &saved);
+
+        // Both windows still open: identical.
+        let early = Utc.with_ymd_and_hms(2026, 10, 26, 9, 0, 0).unwrap();
+        assert_eq!(super::load_snapshot_from(&path, early), Some(saved.clone()));
+
+        // The 5-hour window has reset since: only the week survives.
+        let later = Utc.with_ymd_and_hms(2026, 10, 26, 12, 0, 0).unwrap();
+        let loaded = super::load_snapshot_from(&path, later).unwrap();
+        assert!(loaded.session.is_none());
+        assert_eq!(loaded.week, saved.week);
+        assert_eq!(loaded.subscription.as_deref(), Some("Claude Pro"));
+
+        // Everything has reset: nothing to show.
+        let much_later = Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).unwrap();
+        assert_eq!(super::load_snapshot_from(&path, much_later), None);
+        assert_eq!(super::load_snapshot_from(&dir.path().join("missing"), early), None);
+    }
+
+    #[test]
+    fn backoff_grows_and_rate_limits_wait_longer() {
+        use super::retry_delay;
+        assert_eq!(retry_delay(None, false), 5);
+        assert_eq!(retry_delay(Some(5), false), 10);
+        assert_eq!(retry_delay(Some(60), false), 60, "transient cap is 60s");
+        assert_eq!(retry_delay(None, true), 60);
+        assert_eq!(retry_delay(Some(60), true), 120);
+        assert_eq!(retry_delay(Some(600), true), 900, "rate-limit cap is 15 min");
+        assert_eq!(retry_delay(Some(900), true), 900);
     }
 
     #[test]
