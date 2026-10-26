@@ -2,6 +2,7 @@
 //! restart (self-installed copies) or a typed install command (RPM/DEB).
 use super::*;
 use crate::update::{self, Asset, InstallKind, Progress, Release};
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress as ProgressBar;
 
 const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
@@ -12,6 +13,9 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
+
+/// Id of the "Checking for updates…" toast, so the result can replace it.
+struct CheckingForUpdates;
 
 /// What the download task produced.
 enum Staged {
@@ -82,12 +86,25 @@ impl IsengardApp {
             return;
         }
         self.update_busy = true;
+        if manual {
+            // Answer the click right away; removed when the result lands.
+            window.push_notification(
+                Notification::new()
+                    .id::<CheckingForUpdates>()
+                    .message("Checking for updates…")
+                    .autohide(false),
+                cx,
+            );
+        }
         cx.spawn_in(window, async move |this, window| {
             let result = window
                 .background_spawn(async { update::fetch_latest() })
                 .await;
             let _ = this.update_in(window, |this, window, cx| {
                 this.update_busy = false;
+                if manual {
+                    window.remove_notification::<CheckingForUpdates>(cx);
+                }
                 this.finish_update_check(result, manual, window, cx);
             });
         })

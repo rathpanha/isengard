@@ -223,9 +223,34 @@ pub fn updates_dir() -> PathBuf {
         .join("updates")
 }
 
+/// HTTP agent that gives up instead of hanging (a stalled connect or silent
+/// server would otherwise leave "Check for Updates" with no answer).
+/// `global` also caps the whole request; downloads pass `None` and rely on the
+/// connect / first-byte limits so big files can take as long as they need.
+fn agent(global: Option<std::time::Duration>) -> ureq::Agent {
+    use std::time::Duration;
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_global(global)
+        .build()
+        .into()
+}
+
+const API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// UI tests stand in for GitHub with this canned release.
+#[cfg(test)]
+pub static TEST_LATEST: std::sync::Mutex<Option<Release>> = std::sync::Mutex::new(None);
+
 /// Query GitHub for the latest published release.
 pub fn fetch_latest() -> Result<Release> {
-    let mut response = ureq::get(LATEST_URL)
+    #[cfg(test)]
+    if let Some(release) = TEST_LATEST.lock().unwrap().clone() {
+        return Ok(release);
+    }
+    let mut response = agent(Some(API_TIMEOUT))
+        .get(LATEST_URL)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/vnd.github+json")
         .call()
@@ -257,7 +282,8 @@ impl Progress {
 }
 
 fn download_to(url: &str, dest: &Path, progress: &Progress) -> Result<()> {
-    let response = ureq::get(url)
+    let response = agent(None)
+        .get(url)
         .header("User-Agent", USER_AGENT)
         .call()
         .with_context(|| format!("download {url}"))?;
@@ -288,7 +314,8 @@ fn download_to(url: &str, dest: &Path, progress: &Progress) -> Result<()> {
 }
 
 fn download_text(url: &str) -> Result<String> {
-    let mut response = ureq::get(url)
+    let mut response = agent(Some(API_TIMEOUT))
+        .get(url)
         .header("User-Agent", USER_AGENT)
         .call()
         .with_context(|| format!("download {url}"))?;

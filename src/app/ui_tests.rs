@@ -2093,3 +2093,17 @@ fn update_install_command_dialog_copies_and_types(cx: &mut TestAppContext) {
         "terminal tab opened with the command typed"
     );
 }
+
+#[gpui_kit::test]
+fn check_for_updates_menu_action_reaches_the_handler(cx: &mut TestAppContext) {
+    use gpui_kit::Action as _;
+    let h = Harness::new(cx);
+    *crate::update::TEST_LATEST.lock().unwrap() = Some(fake_release("9.9.9"));
+    // Same path as Isengard > Check for Updates…: a dispatched action.
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.dispatch_action(super::CheckForUpdates.boxed_clone(), cx);
+    })
+    .expect("window alive");
+    h.wait_for(cx, "the update dialog", |cx| h.has("update-primary", cx));
+    *crate::update::TEST_LATEST.lock().unwrap() = None;
+}

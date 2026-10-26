@@ -1151,6 +1151,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_new_agent_chat))
             .on_action(cx.listener(Self::on_add_selection_to_agent))
             .on_action(cx.listener(Self::on_about))
+            .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_open_config_file))
             .on_action(cx.listener(Self::on_quit))
             .child(self.render_title_bar(cx))
