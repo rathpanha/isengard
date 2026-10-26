@@ -88,6 +88,9 @@ pub struct GitRepoSession {
     /// Commit box drag floor in px (`0` = auto height only).
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub message_floor_h: f32,
+    /// Repo section folded to its header row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
 }
 
 fn is_zero_f32(v: &f32) -> bool {
@@ -770,6 +773,7 @@ mod tests {
                     message: "wip".into(),
                     selected: vec!["a.rs".into()],
                     message_floor_h: 120.0,
+                    collapsed: true,
                 }],
                 open_files: vec![OpenFileEntry::with_view(
                     PathBuf::from("/code/app/a.rs"),

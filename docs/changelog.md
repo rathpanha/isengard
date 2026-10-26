@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Git panel: each repo is an accordion section (click the header
+  to fold to name / count / branch); state persists per workspace session.
 - **2026-10-26** — Git: commit message box is disabled while Claude Suggest runs.
 - **2026-10-26** — Agent: composer Textarea is disabled while Improve prompt runs.
 - **2026-10-26** — Git: Claude Suggest runs in parallel across repos (ACP silent

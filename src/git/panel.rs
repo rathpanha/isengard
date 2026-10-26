@@ -136,6 +136,8 @@ pub struct GitPanel {
     refresh_generation: u64,
     /// Remember expand toggles across refresh (`true` = expanded).
     expanded: HashMap<PathBuf, bool>,
+    /// Repo roots folded to their header row (accordion); survives refresh.
+    collapsed: HashSet<PathBuf>,
     /// Absolute worktree path of the open diff/conflict tab (row highlight).
     active_path: Option<PathBuf>,
     /// Agent panel can run a silent Suggest turn (`can_suggest_commit`).
@@ -155,6 +157,7 @@ impl GitPanel {
             loading: false,
             refresh_generation: 0,
             expanded: HashMap::new(),
+            collapsed: HashSet::new(),
             active_path: None,
             agent_ready: false,
             msg_resize: None,
@@ -171,7 +174,8 @@ impl GitPanel {
                 let message = section.message.read(cx).value().to_string();
                 let selected: Vec<String> = section.selected.iter().cloned().collect();
                 let floor: f32 = section.message_floor_h.into();
-                if message.trim().is_empty() && selected.is_empty() && floor == 0.0 {
+                let collapsed = self.collapsed.contains(&section.status.root);
+                if message.trim().is_empty() && selected.is_empty() && floor == 0.0 && !collapsed {
                     return None;
                 }
                 Some(GitRepoSession {
@@ -179,6 +183,7 @@ impl GitPanel {
                     message,
                     selected,
                     message_floor_h: floor,
+                    collapsed,
                 })
             })
             .collect()
@@ -218,6 +223,11 @@ impl GitPanel {
                 continue;
             };
             section.message_floor_h = px(repo.message_floor_h);
+            if repo.collapsed {
+                self.collapsed.insert(repo.root.clone());
+            } else {
+                self.collapsed.remove(&repo.root);
+            }
             section.selected = merge_selection(
                 Some(repo.selected.iter().cloned().collect()),
                 &section.status.changes,
@@ -355,6 +365,13 @@ impl GitPanel {
             {
                 draft = msg;
             }
+            if let Some(ui) = pending_ui {
+                if ui.collapsed {
+                    self.collapsed.insert(status.root.clone());
+                } else {
+                    self.collapsed.remove(&status.root);
+                }
+            }
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
             let selected = if let Some(ui) = pending_ui {
                 merge_selection(
@@ -441,6 +458,18 @@ impl GitPanel {
             section.busy = busy;
             cx.notify();
         }
+    }
+
+    pub(crate) fn is_repo_collapsed(&self, root: &Path) -> bool {
+        self.collapsed.contains(root)
+    }
+
+    pub(crate) fn toggle_repo(&mut self, root: &Path, cx: &mut Context<Self>) {
+        if !self.collapsed.remove(root) {
+            self.collapsed.insert(root.to_path_buf());
+        }
+        cx.emit(GitPanelEvent::UiChanged);
+        cx.notify();
     }
 
     fn toggle_changes(&mut self, root: &Path, cx: &mut Context<Self>) {
@@ -908,6 +937,7 @@ impl Render for GitPanel {
                 let branch = section.status.branch.clone();
                 let label = section.label.clone();
                 let expanded = section.changes_expanded;
+                let repo_collapsed = self.is_repo_collapsed(&root);
                 let change_count = section.status.changes.len();
                 let conflict_count = section.status.conflict_count();
                 let lock_sync = section.status.blocks_sync_and_discard();
@@ -922,91 +952,79 @@ impl Render for GitPanel {
                 let all_selected = change_count > 0 && selected_count == change_count;
                 let nothing_selected = selected_count == 0;
 
+                let header = h_flex()
+                    .id(ElementId::Name(SharedString::from(format!(
+                        "git-repo-toggle-{si}"
+                    ))))
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .pt_2()
+                    .when(repo_collapsed, |el| el.pb_2())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.accent.opacity(0.15)))
+                    .on_click({
+                        let root = root.clone();
+                        cx.listener(move |this, _, _, cx| this.toggle_repo(&root, cx))
+                    })
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .w_3()
+                            .child(if repo_collapsed { "▸" } else { "▾" }),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(label),
+                    )
+                    .when(repo_collapsed && change_count > 0, |el| {
+                        el.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(if conflict_count > 0 {
+                                    theme.danger
+                                } else {
+                                    muted
+                                })
+                                .child(change_count.to_string()),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(branch),
+                    );
+                if repo_collapsed {
+                    body.push(
+                        v_flex()
+                            .id(ElementId::Name(SharedString::from(format!("git-repo-{si}"))))
+                            .w_full()
+                            .flex_shrink_0()
+                            .when(show_sep, |el| el.border_b_1().border_color(theme.border))
+                            .child(header)
+                            .into_any_element(),
+                    );
+                    continue;
+                }
+
                 let mut section_el = v_flex()
                     .id(ElementId::Name(SharedString::from(format!("git-repo-{si}"))))
                     .w_full()
                     .flex_shrink_0()
                     .gap_2()
                     .when(show_sep, |el| el.border_b_1().border_color(theme.border))
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .min_w_0()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .pt_2()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(label),
-                            )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .child(branch),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_1()
-                            .px_2()
-                            .child(
-                                with_loading(
-                                    outline_btn(format!("git-pull-{si}").into()).label(
-                                        if section.status.behind > 0 {
-                                            format!("Pull ({})", section.status.behind)
-                                        } else {
-                                            "Pull".into()
-                                        },
-                                    ),
-                                    busy_op == Some(BusyOp::Pull),
-                                )
-                                .disabled(busy || lock_sync)
-                                .on_click({
-                                    let root = root.clone();
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.run_mutation(
-                                            root.clone(),
-                                            Mutation::Pull,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                }),
-                            )
-                            .child(
-                                with_loading(
-                                    outline_btn(format!("git-push-{si}").into()).label(
-                                        if section.status.ahead > 0 {
-                                            format!("Push ({})", section.status.ahead)
-                                        } else {
-                                            "Push".into()
-                                        },
-                                    ),
-                                    busy_op == Some(BusyOp::Push),
-                                )
-                                .disabled(busy || lock_sync)
-                                .on_click({
-                                    let root = root.clone();
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.run_mutation(
-                                            root.clone(),
-                                            Mutation::Push,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                }),
-                            ),
-                    )
+                    .child(header)
                     .when_some(op_banner, |el, text| {
                         // Red while conflicts remain; yellow when the op is
                         // still open but every `U` is cleared.
@@ -1095,103 +1113,160 @@ impl Render for GitPanel {
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .justify_end()
+                                    .items_start()
+                                    .justify_between()
                                     .gap_1()
-                                    .child({
-                                        let heur_disabled =
-                                            busy || nothing_selected || lock_suggest;
-                                        let mut btn = Button::new(format!("git-suggest-{si}"))
-                                            .outline()
-                                            .small()
-                                            .icon(LucideIcon::WandSparkles)
-                                            .tooltip(if nothing_selected || lock_suggest {
-                                                "Select files to Suggest a commit message"
-                                            } else if busy {
-                                                "Wait for the current Git action to finish"
-                                            } else {
-                                                "Suggest commit message"
-                                            })
-                                            .disabled(heur_disabled);
-                                        if !heur_disabled {
-                                            let root = root.clone();
-                                            btn = btn.cursor_pointer().on_click(cx.listener(
-                                                move |this, _, window, cx| {
-                                                    this.suggest_heuristic(&root, window, cx);
-                                                },
-                                            ));
-                                        }
-                                        btn
-                                    })
-                                    .child({
-                                        let suggesting = busy_op == Some(BusyOp::Suggest);
-                                        let ai_disabled = busy
-                                            || nothing_selected
-                                            || lock_suggest
-                                            || !agent_ready;
-                                        // Don't use outline_btn — it always sets
-                                        // cursor_pointer even when disabled.
-                                        let mut btn = Button::new(format!("git-suggest-ai-{si}"))
-                                            .outline()
-                                            .small()
-                                            .tooltip(if agent_ready {
-                                                if nothing_selected || lock_suggest {
-                                                    "Select files to Suggest with Claude"
-                                                } else if busy {
-                                                    "Wait for the current Git action to finish"
-                                                } else {
-                                                    "Suggest with Claude"
-                                                }
-                                            } else {
-                                                "Open the Agent panel and wait until Ready"
-                                            })
-                                            .disabled(ai_disabled)
-                                            .when(suggesting, |b| {
-                                                b.icon(LucideIcon::Loader).loading(true)
-                                            })
-                                            .when(!suggesting, |b| {
-                                                // Material SVG ignores Kit disabled `fg`;
-                                                // match outline disabled (~muted @ 0.5).
-                                                b.child(
-                                                    div()
-                                                        .flex()
-                                                        .items_center()
-                                                        .when(ai_disabled, |d| d.opacity(0.5))
-                                                        .child(material_icon("claude", 14.)),
-                                                )
-                                            });
-                                        if !ai_disabled {
-                                            let root = root.clone();
-                                            btn = btn.cursor_pointer().on_click(cx.listener(
-                                                move |this, _, _, cx| {
-                                                    this.suggest_ai(&root, cx);
-                                                },
-                                            ));
-                                        }
-                                        btn
-                                    })
                                     .child(
-                                        with_loading(
-                                            outline_btn(format!("git-commit-{si}").into())
-                                                .label("Commit"),
-                                            busy_op == Some(BusyOp::Commit),
-                                        )
-                                        .disabled(
-                                            busy
-                                                || message_empty
-                                                || nothing_selected
-                                                || lock_commit,
-                                        )
-                                        .on_click({
-                                            let root = root.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.run_mutation(
-                                                    root.clone(),
-                                                    Mutation::Commit,
-                                                    window,
-                                                    cx,
-                                                );
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                with_loading(
+                                                    outline_btn(format!("git-pull-{si}").into()).label(
+                                                        if section.status.behind > 0 {
+                                                            format!("Pull ({})", section.status.behind)
+                                                        } else {
+                                                            "Pull".into()
+                                                        },
+                                                    ),
+                                                    busy_op == Some(BusyOp::Pull),
+                                                )
+                                                .disabled(busy || lock_sync)
+                                                .on_click({
+                                                    let root = root.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.run_mutation(
+                                                            root.clone(),
+                                                            Mutation::Pull,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                }),
+                                            )
+                                            .child(
+                                                with_loading(
+                                                    outline_btn(format!("git-push-{si}").into()).label(
+                                                        if section.status.ahead > 0 {
+                                                            format!("Push ({})", section.status.ahead)
+                                                        } else {
+                                                            "Push".into()
+                                                        },
+                                                    ),
+                                                    busy_op == Some(BusyOp::Push),
+                                                )
+                                                .disabled(busy || lock_sync)
+                                                .on_click({
+                                                    let root = root.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.run_mutation(
+                                                            root.clone(),
+                                                            Mutation::Push,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                }),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child({
+                                                let heur_disabled =
+                                                    busy || nothing_selected || lock_suggest;
+                                                let mut btn = Button::new(format!("git-suggest-{si}"))
+                                                    .outline()
+                                                    .small()
+                                                    .icon(LucideIcon::WandSparkles)
+                                                    .tooltip(if nothing_selected || lock_suggest {
+                                                        "Select files to Suggest a commit message"
+                                                    } else if busy {
+                                                        "Wait for the current Git action to finish"
+                                                    } else {
+                                                        "Suggest commit message"
+                                                    })
+                                                    .disabled(heur_disabled);
+                                                if !heur_disabled {
+                                                    let root = root.clone();
+                                                    btn = btn.cursor_pointer().on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            this.suggest_heuristic(&root, window, cx);
+                                                        },
+                                                    ));
+                                                }
+                                                btn
                                             })
-                                        }),
+                                            .child({
+                                                let suggesting = busy_op == Some(BusyOp::Suggest);
+                                                let ai_disabled = busy
+                                                    || nothing_selected
+                                                    || lock_suggest
+                                                    || !agent_ready;
+                                                // Don't use outline_btn — it always sets
+                                                // cursor_pointer even when disabled.
+                                                let mut btn = Button::new(format!("git-suggest-ai-{si}"))
+                                                    .outline()
+                                                    .small()
+                                                    .tooltip(if agent_ready {
+                                                        if nothing_selected || lock_suggest {
+                                                            "Select files to Suggest with Claude"
+                                                        } else if busy {
+                                                            "Wait for the current Git action to finish"
+                                                        } else {
+                                                            "Suggest with Claude"
+                                                        }
+                                                    } else {
+                                                        "Open the Agent panel and wait until Ready"
+                                                    })
+                                                    .disabled(ai_disabled)
+                                                    .when(suggesting, |b| {
+                                                        b.icon(LucideIcon::Loader).loading(true)
+                                                    })
+                                                    .when(!suggesting, |b| {
+                                                        // Material SVG ignores Kit disabled `fg`;
+                                                        // match outline disabled (~muted @ 0.5).
+                                                        b.child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .when(ai_disabled, |d| d.opacity(0.5))
+                                                                .child(material_icon("claude", 14.)),
+                                                        )
+                                                    });
+                                                if !ai_disabled {
+                                                    let root = root.clone();
+                                                    btn = btn.cursor_pointer().on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.suggest_ai(&root, cx);
+                                                        },
+                                                    ));
+                                                }
+                                                btn
+                                            })
+                                            .child(
+                                                with_loading(
+                                                    outline_btn(format!("git-commit-{si}").into())
+                                                        .label("Commit"),
+                                                    busy_op == Some(BusyOp::Commit),
+                                                )
+                                                .disabled(
+                                                    busy
+                                                        || message_empty
+                                                        || nothing_selected
+                                                        || lock_commit,
+                                                )
+                                                .on_click({
+                                                    let root = root.clone();
+                                                    cx.listener(move |this, _, window, cx| {
+                                                        this.run_mutation(
+                                                            root.clone(),
+                                                            Mutation::Commit,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                }),
+                                            ),
                                     ),
                             )
                     })

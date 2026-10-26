@@ -1948,3 +1948,22 @@ fn commit_suggest_runs_in_parallel_across_repos(cx: &mut TestAppContext) {
     assert!(second, "second repo starts while the first is running");
     assert!(!same_again, "the same repo cannot double-start");
 }
+
+#[gpui_kit::test]
+fn git_repo_sections_collapse_independently(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let a = PathBuf::from("/repo-a");
+    let b = PathBuf::from("/repo-b");
+    let (a_collapsed, b_collapsed, a_again) = cx.update(|cx| {
+        let git = h.app.read(cx).git.clone();
+        git.update(cx, |git, cx| {
+            git.toggle_repo(&a, cx);
+            let first = (git.is_repo_collapsed(&a), git.is_repo_collapsed(&b));
+            git.toggle_repo(&a, cx);
+            (first.0, first.1, git.is_repo_collapsed(&a))
+        })
+    });
+    assert!(a_collapsed, "toggled repo folds");
+    assert!(!b_collapsed, "other repo is untouched");
+    assert!(!a_again, "second toggle expands again");
+}
