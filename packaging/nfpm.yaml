@@ -1,0 +1,40 @@
+# nfpm config — produces .deb and .rpm from the same contents.
+# Fill version/arch via `scripts/package-linux.sh` (envsubst-style sed).
+name: isengard
+arch: "${ARCH}"
+platform: linux
+version: "${VERSION}"
+release: "1"
+section: devel
+priority: optional
+maintainer: "Isengard <noreply@isengard.app>"
+description: |
+  The already configured editor.
+  Cross-platform desktop code editor (GPUI Kit). Language servers and the
+  Claude Agent adapter are installed on demand — not inside this package.
+vendor: Isengard
+homepage: https://github.com/rathpanha/isengard
+license: GPL-3.0-only
+contents:
+  - src: ./target/release/isengard
+    dst: /usr/bin/isengard
+    file_info:
+      mode: 0755
+  - src: ./packaging/linux/app.isengard.edtir.desktop
+    dst: /usr/share/applications/app.isengard.edtir.desktop
+  - src: ./assets/logo/logo-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/app.isengard.edtir.png
+  - src: ./LICENSE
+    dst: /usr/share/doc/isengard/copyright
+  - src: ./docs/credits.md
+    dst: /usr/share/doc/isengard/credits.md
+depends:
+  # GPUI / Wayland+X11 stack — names differ slightly by distro; nfpm maps
+  # common ones. Users on minimal images may still need compositor libs.
+  - libc6
+overrides:
+  rpm:
+    depends:
+      - glibc
+scripts:
+  postinstall: ./packaging/linux/postinstall.sh

@@ -1,0 +1,125 @@
+# Build, test, package (.deb / .rpm / tarball), and attach to a GitHub Release.
+# Trigger: push tag v0.1.0 (or any v*), or manual “Run workflow”.
+name: Release Linux
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/upload (e.g. v0.1.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # FakeAgent is thread-local; parallel gpui tests can race across threads.
+  RUST_TEST_THREADS: "1"
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            arch_deb: amd64
+          # Uncomment when you want arm64 artifacts from GitHub’s ARM runners:
+          # - os: ubuntu-22.04-arm
+          #   target: aarch64-unknown-linux-gnu
+          #   arch_deb: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang cmake pkg-config \
+            libfontconfig1-dev libfreetype6-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libxcb1-dev libx11-dev libxcursor-dev \
+            libwayland-dev libasound2-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Release build
+        run: cargo build --release
+
+      - name: Install nfpm
+        run: |
+          # amd64 nfpm binary is fine on arm64 runners via qemu? Prefer matching arch.
+          NFPM_ARCH=amd64
+          case "$(uname -m)" in
+            aarch64|arm64) NFPM_ARCH=arm64 ;;
+          esac
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v2.41.2/nfpm_2.41.2_linux_${NFPM_ARCH}.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin nfpm
+          nfpm --version
+
+      - name: Package
+        run: |
+          chmod +x scripts/package-linux.sh packaging/linux/postinstall.sh
+          ./scripts/package-linux.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch_deb }}
+          path: dist/linux/*
+
+  publish:
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Stage release files
+        run: |
+          mkdir -p dist
+          find release-assets -type f ! -name SHA256SUMS -print -exec cp -t dist {} +
+          (cd dist && shasum -a 256 ./* >SHA256SUMS)
+          ls -la dist
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Isengard ${{ steps.tag.outputs.name }}
+          body_path: docs/releases/v0.1.0.md
+          files: dist/*
+          draft: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

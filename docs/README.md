@@ -10,6 +10,9 @@ history lives only in the changelog.
 | [design.md](design.md) | UI rules (block style, Kit-only, patterns) — requirements |
 | [credits.md](credits.md) | Third-party projects and people we rely on (recognition) |
 | [changelog.md](changelog.md) | Chronological history (newest first) |
+| [releases/](releases/) | User-facing GitHub Release notes (e.g. `v0.1.0.md`) |
+
+Root [README.md](../README.md) is the human install / license entry point.
 
 Root [AGENTS.md](../AGENTS.md) and [CLAUDE.md](../CLAUDE.md) are thin stubs that
 point here (Cursor / Claude tooling). Human license stance stays in

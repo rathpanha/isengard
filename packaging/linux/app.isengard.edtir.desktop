@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Isengard
+Comment=The already configured editor
+Exec=isengard %F
+Icon=app.isengard.edtir
+Terminal=false
+Categories=Development;TextEditor;
+MimeType=text/plain;
+StartupWMClass=app.isengard.edtir
+StartupNotify=true
+Keywords=editor;ide;code;

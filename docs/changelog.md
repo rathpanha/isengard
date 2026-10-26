@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-25** — Linux release packaging: root README, `.desktop` + nfpm
+  `.deb`/`.rpm`/tarball (`scripts/package-linux.sh`), GitHub Actions release
+  workflow, `docs/releases/v0.1.0.md`.
+
 - **2026-10-25** — File watch: non-recursive per-dir watches that skip
   `node_modules`/build dirs (fixes Linux inotify blowups); status: only
   deferred item is agent switch; live smoke cleared.

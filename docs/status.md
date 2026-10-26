@@ -245,8 +245,15 @@ None open for the editor shell. Agent switch is the only deferred item
 (below). UI test coverage is an agent rule
 ([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
 not a product TODO. License is **GPL-3.0-only** — see
-[CONTRIBUTING.md](../CONTRIBUTING.md) (no action unless you want a different
-license, which means replacing GPL theme assets and relicensing).
+[CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Release
+
+- **v0.1.0 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
+  + [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
+  App id `app.isengard.edtir`. macOS / Windows installers not shipping yet.
+- Notes: [docs/releases/v0.1.0.md](releases/v0.1.0.md). Human install:
+  root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1
 
