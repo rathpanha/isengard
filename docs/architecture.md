@@ -19,10 +19,12 @@ cargo build --release
 **Linux packages (first release target):** after `cargo build --release` on
 Linux, `./scripts/package-linux.sh` (needs [nfpm](https://nfpm.goreleaser.com/))
 writes `.deb`, `.rpm`, and a `.tar.gz` under `dist/linux/`, plus `SHA256SUMS`.
-Contents: `/usr/bin/isengard`, `.desktop` + hicolor icon for
-`app.isengard.edtir`, `LICENSE` / credits under `/usr/share/doc/isengard/`.
-Tag `v*` runs [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)
-and attaches those assets to a GitHub Release.
+Version comes from `VERSION` or `Cargo.toml`. Contents: `/usr/bin/isengard`,
+`.desktop` + hicolor icon for `app.isengard.edtir`, `LICENSE` / credits under
+`/usr/share/doc/isengard/`. Tag `v*` runs
+[`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)
+(tag must equal `Cargo.toml`; notes = `docs/releases/<tag>.md`) and attaches
+those assets to a GitHub Release.
 
 Agents: see `.cursor/rules/cargo-warning-free.mdc`. Finish no `src/` task while
 `cargo check` still prints `isengard` warnings — fix the code; do not disable

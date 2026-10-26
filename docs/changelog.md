@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Release: bump to 0.1.3; CI requires tag == `Cargo.toml`,
+  packages use that version, notes from `docs/releases/<tag>.md`.
+
 - **2026-10-26** — Release workflow: fix nfpm download URL
   (`Linux_x86_64` / `Linux_arm64`, not `linux_amd64`).
 

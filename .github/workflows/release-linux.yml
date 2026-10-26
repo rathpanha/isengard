@@ -1,5 +1,5 @@
 # Build, test, package (.deb / .rpm / tarball), and attach to a GitHub Release.
-# Trigger: push tag v0.1.0 (or any v*), or manual “Run workflow”.
+# Trigger: push tag v* (must match Cargo.toml version), or manual “Run workflow”.
 name: Release Linux
 
 on:
@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to create/upload (e.g. v0.1.0)"
+        description: "Release tag to create/upload (e.g. v0.1.3)"
         required: true
-        default: "v0.1.0"
+        default: "v0.1.3"
 
 permissions:
   contents: write
@@ -37,6 +37,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Assert tag matches Cargo.toml
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_VER="${TAG#v}"
+          CARGO_VER="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$TAG_VER" != "$CARGO_VER" ]; then
+            echo "Tag $TAG (version $TAG_VER) != Cargo.toml $CARGO_VER" >&2
+            echo "Bump Cargo.toml before tagging so packages and the binary agree." >&2
+            exit 1
+          fi
+          echo "VERSION=$TAG_VER" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -77,6 +93,8 @@ jobs:
 
       - name: Package
         run: |
+          # Prefer tag-derived VERSION (set above); script falls back to Cargo.toml.
+          export VERSION="${VERSION:?}"
           chmod +x scripts/package-linux.sh packaging/linux/postinstall.sh
           ./scripts/package-linux.sh
 
@@ -105,21 +123,28 @@ jobs:
           (cd dist && shasum -a 256 ./* >SHA256SUMS)
           ls -la dist
 
-      - name: Resolve tag
+      - name: Resolve tag and notes
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.tag }}"
           else
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF_NAME}"
           fi
+          NOTES="docs/releases/${TAG}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "Missing release notes: $NOTES" >&2
+            exit 1
+          fi
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "notes=$NOTES" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
           name: Isengard ${{ steps.tag.outputs.name }}
-          body_path: docs/releases/v0.1.0.md
+          body_path: ${{ steps.tag.outputs.notes }}
           files: dist/*
           draft: false
           generate_release_notes: false
