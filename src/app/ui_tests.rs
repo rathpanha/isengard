@@ -577,6 +577,15 @@ fn agent_file_change_cards_survive_transcript_reload(cx: &mut TestAppContext) {
         cx.read(|cx| panel.read(cx).file_change_summaries_for_test()),
         vec![("notes.txt".into(), 2, 1, false)]
     );
+
+    // The splice adds a row; the transcript list must count it, or the newest
+    // replies are cut off after a restart.
+    panel.update(cx, |panel, cx| {
+        panel.push_user_for_test("and then?", cx);
+        panel.restore_file_change_cards_for_test(cx);
+    });
+    let (entries, rows) = cx.read(|cx| panel.read(cx).row_counts_for_test(cx));
+    assert_eq!(entries, rows, "transcript list shows every entry");
 }
 
 #[gpui_kit::test]

@@ -1754,6 +1754,12 @@ impl AgentPanel {
         self.restore_file_change_cards(cx);
     }
 
+    /// `(entries, rows the transcript list knows about)` — must stay equal.
+    #[cfg(test)]
+    pub fn row_counts_for_test(&self, cx: &App) -> (usize, usize) {
+        (self.entries.len(), self.scroller.read(cx).item_count())
+    }
+
     /// Drop transcript UI only (tests) — stored chat cards stay in `chats`.
     #[cfg(test)]
     pub fn clear_entries_for_test(&mut self, cx: &mut Context<Self>) {
@@ -3475,7 +3481,11 @@ impl AgentPanel {
                 expanded: false,
             });
         }
+        // Cards are extra rows: tell the list, or its last rows (the newest
+        // replies) stay beyond the item count and never render.
+        let rows = out.len();
         self.entries = out;
+        self.scroller.update(cx, |s, cx| s.reset(rows, cx));
         // Card for turn N needs N+1 user bubbles before we know the turn ended.
         if user_turn >= max_turn.saturating_add(1) {
             self.pending_file_change_restore = false;

@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Agent: fixed restored chats cutting off the newest replies —
+  splicing **N Files** cards added rows the transcript list did not count.
 - **2026-10-26** — Release: bump to 0.1.4 (first build with the in-app updater).
 - **2026-10-26** — Updates: daily GitHub release check, Isengard > Check for
   Updates…, signed (minisign) + checksummed in-place update for writable
