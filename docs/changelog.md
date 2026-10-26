@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Release workflow: fix nfpm download URL
+  (`Linux_x86_64` / `Linux_arm64`, not `linux_amd64`).
+
 - **2026-10-26** — CI: harden Add Selection to Agent UI test (call the
   handler; Kit `secondary-l` flaky on Ubuntu runners); ignore hidden
   terminal focus for Ctrl/Cmd+L.

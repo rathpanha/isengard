@@ -64,12 +64,14 @@ jobs:
 
       - name: Install nfpm
         run: |
-          # amd64 nfpm binary is fine on arm64 runners via qemu? Prefer matching arch.
-          NFPM_ARCH=amd64
+          # Goreleaser asset names: Linux_x86_64 / Linux_arm64 (not linux_amd64).
+          NFPM_VER=2.48.0
+          NFPM_ARCH=x86_64
           case "$(uname -m)" in
             aarch64|arm64) NFPM_ARCH=arm64 ;;
           esac
-          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v2.41.2/nfpm_2.41.2_linux_${NFPM_ARCH}.tar.gz" \
+          curl -fsSL \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VER}/nfpm_${NFPM_VER}_Linux_${NFPM_ARCH}.tar.gz" \
             | sudo tar -xz -C /usr/local/bin nfpm
           nfpm --version
 
