@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — CI: harden Add Selection to Agent UI test (call the
+  handler; Kit `secondary-l` flaky on Ubuntu runners); ignore hidden
+  terminal focus for Ctrl/Cmd+L.
+
 - **2026-10-25** — Linux release packaging: root README, `.desktop` + nfpm
   `.deb`/`.rpm`/tarball (`scripts/package-linux.sh`), GitHub Actions release
   workflow, `docs/releases/v0.1.0.md`.

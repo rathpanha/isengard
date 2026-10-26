@@ -30,11 +30,15 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let terminal_focused = self
-            .terminal
-            .read(cx)
-            .focus_handle(cx)
-            .is_some_and(|h| h.is_focused(window));
+        // Require a visible panel — a hidden session can keep focus after
+        // toggle-away and would otherwise steal Ctrl/Cmd+L with a dead end.
+        let terminal_focused = {
+            let term = self.terminal.read(cx);
+            term.is_visible()
+                && term
+                    .focus_handle(cx)
+                    .is_some_and(|h| h.is_focused(window))
+        };
 
         let attachment = if terminal_focused {
             let Some(text) = self

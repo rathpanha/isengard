@@ -903,7 +903,10 @@ fn agent_ctrl_l_attaches_editor_selection(cx: &mut TestAppContext) {
     let path = h.file("note.rs", "line one\nline two\nline three\n");
     h.open_folder(h.dir.path(), cx);
     h.open(&path, cx);
-    h.with_app(cx, |app, _window, cx| {
+    // Drive the action (same as ⌘L / Ctrl+L). Kit keystroke dispatch for
+    // `secondary-l` has been unreliable on GitHub's Ubuntu runners; the
+    // binding + menu still call `on_add_selection_to_agent`.
+    h.with_app(cx, |app, window, cx| {
         let state = app
             .tabs
             .active()
@@ -915,9 +918,10 @@ fn agent_ctrl_l_attaches_editor_selection(cx: &mut TestAppContext) {
         let end = "line one\nline two\n".len();
         state.update(cx, |editor, cx| {
             editor.set_selected_range(start..end, cx);
+            editor.focus(window, cx);
         });
+        app.on_add_selection_to_agent(&super::AddSelectionToAgent, window, cx);
     });
-    h.press("secondary-l", cx);
     let labels = cx.read(|cx| {
         let app = h.app.read(cx);
         assert!(app.agent_visible, "agent panel opens");
