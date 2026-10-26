@@ -571,6 +571,10 @@ pub struct AgentPanel {
     install_error: Option<SharedString>,
     /// Silent one-shot turn (commit / title / improve) — not shown in chat.
     silent: Option<SilentTurn>,
+    /// In-flight Git Suggest jobs (job id → repo root). Concurrent, one per repo.
+    commit_jobs: HashMap<u64, PathBuf>,
+    /// Next id handed to `AgentConnection::silent_prompt`.
+    next_silent_job: u64,
     /// ACP session modes from the last open (Ask/Code/…).
     modes: Option<SessionModeState>,
     /// ACP session config options (model selector, …).
@@ -606,7 +610,6 @@ struct ContextUsage {
 
 /// One-shot prompt that accumulates assistant text without chat bubbles.
 enum SilentTurn {
-    Commit { root: PathBuf, text: String },
     /// `notify`: show toasts when Generate was user-requested (not auto).
     Title {
         chat_id: String,
@@ -629,7 +632,7 @@ struct QueuedPrompt {
 impl SilentTurn {
     fn text_mut(&mut self) -> &mut String {
         match self {
-            Self::Commit { text, .. } | Self::Title { text, .. } | Self::Improve { text } => text,
+            Self::Title { text, .. } | Self::Improve { text } => text,
         }
     }
 }
@@ -946,6 +949,8 @@ impl AgentPanel {
             input,
             install_error: None,
             silent: None,
+            commit_jobs: HashMap::new(),
+            next_silent_job: 0,
             modes: None,
             config_options: None,
             prefs,
@@ -1809,6 +1814,12 @@ impl AgentPanel {
             && self.silent.is_none()
     }
 
+    /// Git Suggest can start: Ready and no home turn. Unlike
+    /// [`Self::can_silent_prompt`], other Suggest jobs (other repos) do not block.
+    pub fn can_suggest_commit(&self) -> bool {
+        matches!(self.status, Status::Ready) && !self.turn_running && self.connection.is_some()
+    }
+
     fn emit_promptability_changed(&self, cx: &mut Context<Self>) {
         cx.emit(AgentPanelEvent::PromptabilityChanged);
     }
@@ -1944,7 +1955,10 @@ impl AgentPanel {
             return false;
         };
         let (mode, configs) = self.silent_session_prefs();
+        let job = self.next_silent_job;
+        self.next_silent_job += 1;
         connection.silent_prompt(
+            job,
             vec![ContentBlock::Text(TextContent::new(prompt))],
             mode,
             configs,
@@ -1968,14 +1982,48 @@ impl AgentPanel {
         prompt: String,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.start_silent(
-            prompt,
-            SilentTurn::Commit {
-                root,
-                text: String::new(),
-            },
-            cx,
-        )
+        if !self.can_suggest_commit() || self.commit_jobs.values().any(|r| *r == root) {
+            return false;
+        }
+        let Some(connection) = &self.connection else {
+            return false;
+        };
+        let (mode, configs) = self.silent_session_prefs();
+        let job = self.next_silent_job;
+        self.next_silent_job += 1;
+        connection.silent_prompt(
+            job,
+            vec![ContentBlock::Text(TextContent::new(prompt))],
+            mode,
+            configs,
+        );
+        self.commit_jobs.insert(job, root);
+        cx.notify();
+        true
+    }
+
+    /// Resolve one Git Suggest job (`text` is scrubbed on success).
+    fn finish_commit_job(&mut self, job: u64, ok: bool, text: &str, cx: &mut Context<Self>) {
+        let Some(root) = self.commit_jobs.remove(&job) else {
+            return;
+        };
+        let message = if ok {
+            crate::git::scrub_commit_message(text)
+        } else {
+            String::new()
+        };
+        if message.is_empty() {
+            cx.emit(AgentPanelEvent::CommitSuggestFailed { root });
+        } else {
+            cx.emit(AgentPanelEvent::CommitSuggestReady { root, message });
+        }
+    }
+
+    fn fail_commit_jobs(&mut self, cx: &mut Context<Self>) {
+        let jobs: Vec<u64> = self.commit_jobs.keys().copied().collect();
+        for job in jobs {
+            self.finish_commit_job(job, false, "", cx);
+        }
     }
 
     /// Whether Rename → Generate can run for `chat_id` (live, cached, or loadable).
@@ -2140,18 +2188,6 @@ impl AgentPanel {
             return;
         };
         match pending {
-            SilentTurn::Commit { root, text } => {
-                if ok {
-                    let message = crate::git::scrub_commit_message(&text);
-                    if message.is_empty() {
-                        cx.emit(AgentPanelEvent::CommitSuggestFailed { root });
-                    } else {
-                        cx.emit(AgentPanelEvent::CommitSuggestReady { root, message });
-                    }
-                } else {
-                    cx.emit(AgentPanelEvent::CommitSuggestFailed { root });
-                }
-            }
             SilentTurn::Title {
                 chat_id,
                 text,
@@ -2306,6 +2342,7 @@ impl AgentPanel {
 
     /// Drop the connection (kills the agent) and cancel open prompts.
     fn disconnect(&mut self, cx: &mut Context<Self>) {
+        self.fail_commit_jobs(cx);
         if self.silent.is_some() {
             self.finish_silent(false, cx);
         }
@@ -3155,11 +3192,11 @@ impl AgentPanel {
     fn home_turn_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
         self.flush_turn_file_changes(cx);
-        if self.reconnect_after_turn && !self.suspend_after_turn && self.silent.is_none() {
+        if self.reconnect_after_turn && !self.suspend_after_turn && self.silent.is_none() && self.commit_jobs.is_empty() {
             // Reconnect drops the connection (and the outbound queue).
             self.reconnect_after_turn = false;
             self.start(cx);
-        } else if self.suspend_after_turn && self.silent.is_none() {
+        } else if self.suspend_after_turn && self.silent.is_none() && self.commit_jobs.is_empty() {
             self.suspend_after_turn = false;
             self.disconnect(cx);
             self.status = Status::Suspended;
@@ -3177,10 +3214,17 @@ impl AgentPanel {
     fn silent_job_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
         // Resolve before reconnect/suspend so Git still gets a Suggest result.
         self.finish_silent(ok, cx);
-        if self.reconnect_after_turn && !self.suspend_after_turn && !self.turn_running {
+        self.resume_after_silent(cx);
+    }
+
+    /// After a silent job ends: run deferred reconnect / suspend / queued
+    /// prompts once no other silent job (e.g. Suggest in another repo) is left.
+    fn resume_after_silent(&mut self, cx: &mut Context<Self>) {
+        let idle = !self.turn_running && self.commit_jobs.is_empty() && self.silent.is_none();
+        if idle && self.reconnect_after_turn && !self.suspend_after_turn {
             self.reconnect_after_turn = false;
             self.start(cx);
-        } else if self.suspend_after_turn && !self.turn_running {
+        } else if idle && self.suspend_after_turn {
             self.suspend_after_turn = false;
             self.disconnect(cx);
             self.status = Status::Suspended;
@@ -3608,7 +3652,13 @@ impl AgentPanel {
                 }
                 self.home_turn_finished(ok, cx);
             }
-            AgentEvent::SilentTurnEnded { ok, text } => {
+            AgentEvent::SilentTurnEnded { job, ok, text } => {
+                if self.commit_jobs.contains_key(&job) {
+                    self.finish_commit_job(job, ok, &text, cx);
+                    self.resume_after_silent(cx);
+                    cx.notify();
+                    return;
+                }
                 if let Some(pending) = &mut self.silent {
                     *pending.text_mut() = text;
                 }
@@ -3631,6 +3681,7 @@ impl AgentPanel {
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
             AgentEvent::Closed(error) => {
+                self.fail_commit_jobs(cx);
                 if self.silent.is_some() {
                     self.finish_silent(false, cx);
                 }
@@ -6696,6 +6747,7 @@ impl AgentPanel {
                     .child(
                         // `@` mentions are Kit inline tokens inside the prompt Textarea.
                         Textarea::new(&self.input)
+                            .disabled(improving)
                             .token(move |ctx, _, cx| render_mention_token(ctx, &roots, cx))
                             .on_paste(move |item, _window, cx| {
                                 panel

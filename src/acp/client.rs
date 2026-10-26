@@ -45,7 +45,8 @@ struct SilentJob {
     aborted: bool,
 }
 
-type SilentSlot = Arc<Mutex<Option<SilentJob>>>;
+/// Concurrent silent jobs by their scratch session id.
+type SilentSlot = Arc<Mutex<HashMap<SessionId, SilentJob>>>;
 
 /// UI → agent.
 enum AgentCommand {
@@ -53,6 +54,7 @@ enum AgentCommand {
     Prompt(Vec<ContentBlock>),
     /// One-shot on a throwaway session; does not touch the open chat.
     SilentPrompt {
+        job: u64,
         blocks: Vec<ContentBlock>,
         mode: Option<String>,
         configs: Vec<(String, SilentConfigValue)>,
@@ -136,7 +138,7 @@ pub enum AgentEvent {
     TurnEnded(StopReason),
     TurnFailed(String),
     /// Throwaway silent job finished (`ok` = EndTurn and not aborted).
-    SilentTurnEnded { ok: bool, text: String },
+    SilentTurnEnded { job: u64, ok: bool, text: String },
     /// Not signed in. The connection is finished; restart it after login.
     AuthRequired(Vec<LoginMethod>),
     Permission(PermissionAsk),
@@ -203,11 +205,13 @@ impl AgentConnection {
     /// deleted (or closed) when the turn ends.
     pub fn silent_prompt(
         &self,
+        job: u64,
         blocks: Vec<ContentBlock>,
         mode: Option<String>,
         configs: Vec<(String, SilentConfigValue)>,
     ) {
         let _ = self.commands.send(AgentCommand::SilentPrompt {
+            job,
             blocks,
             mode,
             configs,
@@ -273,7 +277,7 @@ async fn run(
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
 ) -> Result<(), Error> {
-    let silent: SilentSlot = Arc::new(Mutex::new(None));
+    let silent: SilentSlot = Arc::new(Mutex::new(HashMap::new()));
     let on_update = events.clone();
     let on_update_silent = silent.clone();
     let on_permission = events.clone();
@@ -289,8 +293,7 @@ async fn run(
                 // forward into the open-chat UI stream.
                 {
                     let mut slot = on_update_silent.lock().unwrap();
-                    if let Some(job) = slot.as_mut()
-                        && job.session_id == n.session_id
+                    if let Some(job) = slot.get_mut(&n.session_id)
                     {
                         match &n.update {
                             SessionUpdate::AgentMessageChunk(chunk) => {
@@ -322,8 +325,7 @@ async fn run(
                 // Silent jobs must not open tools — cancel immediately.
                 {
                     let mut slot = on_permission_silent.lock().unwrap();
-                    if let Some(job) = slot.as_mut()
-                        && job.session_id == req.session_id
+                    if let Some(job) = slot.get_mut(&req.session_id)
                     {
                         job.aborted = true;
                         let _ = cx
@@ -538,6 +540,7 @@ async fn session(
                 })?;
             }
             AgentCommand::SilentPrompt {
+                job: job_id,
                 blocks,
                 mode,
                 configs,
@@ -558,6 +561,7 @@ async fn session(
                     }
                     Err(err) => {
                         let _ = events.send(AgentEvent::SilentTurnEnded {
+                            job: job_id,
                             ok: false,
                             text: String::new(),
                         });
@@ -592,11 +596,14 @@ async fn session(
                         .block_task()
                         .await;
                 }
-                *silent.lock().unwrap() = Some(SilentJob {
+                silent.lock().unwrap().insert(
+                    ephemeral.clone(),
+                    SilentJob {
                     session_id: ephemeral.clone(),
                     text: String::new(),
                     aborted: false,
-                });
+                    },
+                );
                 let turn = cx.send_request(PromptRequest::new(ephemeral.clone(), blocks));
                 let events = events.clone();
                 let logins = logins.clone();
@@ -605,7 +612,7 @@ async fn session(
                 let cx2 = cx.clone();
                 cx.spawn(async move {
                     let result = turn.block_task().await;
-                    let job = silent.lock().unwrap().take();
+                    let job = silent.lock().unwrap().remove(&ephemeral);
                     let text = job.as_ref().map(|j| j.text.clone()).unwrap_or_default();
                     let aborted = job.as_ref().is_some_and(|j| j.aborted);
                     let event = match result {
@@ -613,13 +620,18 @@ async fn session(
                             AgentEvent::AuthRequired(logins)
                         }
                         Ok(reply) => AgentEvent::SilentTurnEnded {
+                            job: job_id,
                             // Callers scrub empty text themselves (Improve / title).
                             ok: !aborted && matches!(reply.stop_reason, StopReason::EndTurn),
                             text,
                         },
                         Err(err) => {
                             log::warn!("agent: silent prompt failed: {}", describe_error(err));
-                            AgentEvent::SilentTurnEnded { ok: false, text }
+                            AgentEvent::SilentTurnEnded {
+                                job: job_id,
+                                ok: false,
+                                text,
+                            }
                         }
                     };
                     // Drop the scratch session so it never pollutes chat lists.
@@ -640,12 +652,9 @@ async fn session(
             }
             AgentCommand::Cancel => {
                 // Home chat and throwaway silent can run at once — cancel both.
-                let silent_id = silent
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|j| j.session_id.clone());
-                if let Some(session_id) = silent_id {
+                let silent_ids: Vec<SessionId> =
+                    silent.lock().unwrap().keys().cloned().collect();
+                for session_id in silent_ids {
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
                 if let Some(session_id) = current.clone() {
@@ -918,6 +927,7 @@ mod tests {
         let _ = turn_ended(&conn);
 
         conn.silent_prompt(
+            7,
             vec![ContentBlock::Text(
                 agent_client_protocol::schema::v1::TextContent::new("silent secret"),
             )],
@@ -925,7 +935,8 @@ mod tests {
             vec![],
         );
         match next(&conn) {
-            AgentEvent::SilentTurnEnded { ok, text } => {
+            AgentEvent::SilentTurnEnded { job, ok, text } => {
+                assert_eq!(job, 7);
                 assert!(ok);
                 assert_eq!(text, "echo: silent secret");
             }
@@ -959,5 +970,38 @@ mod tests {
         let _ = turn_ended(&conn);
         let home_chat = agent.chat(&home).expect("home chat");
         assert!(!home_chat.iter().any(|(_, t)| t.contains("silent secret")));
+    }
+
+    #[test]
+    fn overlapping_silent_prompts_report_their_own_job() {
+        let agent = FakeAgent::new();
+        let conn = connected(&agent);
+        conn.open(SessionOpen::New);
+        let _ = opened(&conn);
+        for (job, text) in [(1, "alpha"), (2, "beta")] {
+            conn.silent_prompt(
+                job,
+                vec![ContentBlock::Text(
+                    agent_client_protocol::schema::v1::TextContent::new(text),
+                )],
+                None,
+                vec![],
+            );
+        }
+        let mut got = Vec::new();
+        for _ in 0..2 {
+            match next(&conn) {
+                AgentEvent::SilentTurnEnded { job, ok, text } => {
+                    assert!(ok);
+                    got.push((job, text));
+                }
+                _ => panic!("expected SilentTurnEnded"),
+            }
+        }
+        got.sort();
+        assert_eq!(
+            got,
+            vec![(1, "echo: alpha".to_string()), (2, "echo: beta".to_string())]
+        );
     }
 }

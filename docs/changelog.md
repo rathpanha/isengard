@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Git: commit message box is disabled while Claude Suggest runs.
+- **2026-10-26** — Agent: composer Textarea is disabled while Improve prompt runs.
+- **2026-10-26** — Git: Claude Suggest runs in parallel across repos (ACP silent
+  jobs keyed by job id; `can_suggest_commit`); one repo's Suggest no longer
+  disables the others.
 - **2026-10-26** — Release: bump to 0.1.3; CI requires tag == `Cargo.toml`,
   packages use that version, notes from `docs/releases/<tag>.md`.
 

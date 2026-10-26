@@ -138,7 +138,7 @@ pub struct GitPanel {
     expanded: HashMap<PathBuf, bool>,
     /// Absolute worktree path of the open diff/conflict tab (row highlight).
     active_path: Option<PathBuf>,
-    /// Agent panel can run a silent Suggest turn (`can_silent_prompt`).
+    /// Agent panel can run a silent Suggest turn (`can_suggest_commit`).
     agent_ready: bool,
     /// Commit-box bottom-edge drag (pixel floor past the auto cap).
     msg_resize: Option<MsgResize>,
@@ -1046,7 +1046,9 @@ impl Render for GitPanel {
                                             .w_full()
                                             .h(display_h)
                                             .overflow_hidden()
-                                            .child(Textarea::new(&section.message).size_full()),
+                                            .child(Textarea::new(&section.message)
+                                                .disabled(busy_op == Some(BusyOp::Suggest))
+                                                .size_full()),
                                     )
                                     .child(
                                         div()

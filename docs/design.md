@@ -423,7 +423,8 @@ Add a row here whenever a new shared component is created.
   `.small()` outline icon buttons: heuristic `WandSparkles` (path draft)
   and Claude (Material `claude.svg` thumb). Both omit `on_click` while
   disabled (no selection / busy / conflict lock; Claude also until Agent
-  `can_silent_prompt`). Tooltips explain why. Claude’s SVG ignores Kit
+  `can_suggest_commit`; Suggest in one repo never disables other repos —
+  jobs run concurrently, one per repo). Tooltips explain why. Claude’s SVG ignores Kit
   disabled `fg`, so the thumb uses `opacity(0.5)` when disabled (same
   ballpark as outline muted). Claude uses a one-shot throwaway ACP
   session — open chat `session_id` untouched and not marked busy;

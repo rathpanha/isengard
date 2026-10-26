@@ -1922,3 +1922,29 @@ fn workspace_settings_overlay_font_tab_and_format(cx: &mut TestAppContext) {
         assert_eq!(app.config.font_size, AppConfig::default().font_size, "user config untouched");
     });
 }
+
+#[gpui_kit::test]
+fn commit_suggest_runs_in_parallel_across_repos(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let (first, second, same_again, ready_after) = cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            let a = panel.request_commit_message("/repo-a".into(), "a".into(), cx);
+            let ready = panel.can_suggest_commit();
+            let b = panel.request_commit_message("/repo-b".into(), "b".into(), cx);
+            let dup = panel.request_commit_message("/repo-a".into(), "a".into(), cx);
+            (a, b, dup, ready)
+        })
+    });
+    assert!(first, "first repo starts");
+    assert!(ready_after, "Suggest stays available in other repos");
+    assert!(second, "second repo starts while the first is running");
+    assert!(!same_again, "the same repo cannot double-start");
+}

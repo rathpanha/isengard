@@ -16,7 +16,7 @@ impl IsengardApp {
         let agent = self.agent.clone();
         let can_ai = agent
             .as_ref()
-            .is_some_and(|a| a.read(cx).can_silent_prompt());
+            .is_some_and(|a| a.read(cx).can_suggest_commit());
         if !can_ai {
             // Button should already be disabled; resync and bail quietly.
             self.sync_git_agent_ready(cx);
@@ -44,7 +44,7 @@ impl IsengardApp {
         let ready = self
             .agent
             .as_ref()
-            .is_some_and(|a| a.read(cx).can_silent_prompt());
+            .is_some_and(|a| a.read(cx).can_suggest_commit());
         self.git.update(cx, |git, cx| {
             git.set_agent_ready(ready, cx);
         });
