@@ -3,6 +3,7 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Release: bump to 0.1.5 (Check for Updates… fix, chat restore fix).
 - **2026-10-26** — Updates: Check for Updates… did nothing (action had no root
   listener); now shows a "Checking…" toast, and update HTTP calls time out.
 - **2026-10-26** — Agent: fixed restored chats cutting off the newest replies —
