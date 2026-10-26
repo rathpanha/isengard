@@ -980,6 +980,11 @@ impl TerminalView {
         self.paste_text(&text, cx);
     }
 
+    /// Types `text` at the prompt without running it (no trailing newline).
+    pub fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.paste_text(text, cx);
+    }
+
     fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.clear_selection(cx);
         // Terminals expect CR; keep bracketed-paste wrapper when the app asked for it.

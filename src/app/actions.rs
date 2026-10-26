@@ -50,6 +50,8 @@ actions!(
         /// Move the tree selection to Trash (Delete/Backspace while Tree focused).
         DeleteSelectedTreeItem,
         About,
+        /// Look for a newer release now (Isengard menu).
+        CheckForUpdates,
         /// Open `config.json` in a tab (create defaults if missing).
         OpenConfigFile,
         Quit,
@@ -261,6 +263,11 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|_: &About, cx| {
         with_active_app(cx, |app, window, cx| app.on_about(&About, window, cx));
+    });
+    cx.on_action(|_: &CheckForUpdates, cx| {
+        with_active_app(cx, |app, window, cx| {
+            app.on_check_for_updates(&CheckForUpdates, window, cx);
+        });
     });
     cx.on_action(|_: &OpenConfigFile, cx| {
         with_active_app(cx, |app, window, cx| {

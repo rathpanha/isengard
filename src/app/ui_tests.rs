@@ -1967,3 +1967,120 @@ fn git_repo_sections_collapse_independently(cx: &mut TestAppContext) {
     assert!(!b_collapsed, "other repo is untouched");
     assert!(!a_again, "second toggle expands again");
 }
+
+fn fake_release(version: &str) -> crate::update::Release {
+    crate::update::Release {
+        tag: format!("v{version}"),
+        version: version.into(),
+        notes: "- something new".into(),
+        page_url: "https://example.invalid/release".into(),
+        assets: Vec::new(),
+    }
+}
+
+#[gpui_kit::test]
+fn update_dialog_skip_remembers_version(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_available(
+            fake_release("9.9.9"),
+            crate::update::InstallKind::Manual,
+            false,
+            window,
+            cx,
+        );
+    });
+    assert!(h.has("update-primary", cx), "availability dialog is open");
+    h.click("update-skip", cx);
+    assert!(!h.has("update-primary", cx), "dialog closes");
+    let skipped = cx.read(|cx| h.app.read(cx).config.updates.skipped_version.clone());
+    assert_eq!(skipped.as_deref(), Some("9.9.9"));
+}
+
+#[gpui_kit::test]
+fn update_dialog_later_closes_without_skipping(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_available(
+            fake_release("9.9.9"),
+            crate::update::InstallKind::Manual,
+            false,
+            window,
+            cx,
+        );
+    });
+    h.click("update-later", cx);
+    assert!(!h.has("update-primary", cx));
+    let skipped = cx.read(|cx| h.app.read(cx).config.updates.skipped_version.clone());
+    assert_eq!(skipped, None);
+}
+
+#[gpui_kit::test]
+fn update_check_result_decides_whether_to_prompt(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    // Same version: silent on startup checks, no dialog, check time recorded.
+    h.with_app(cx, |app, window, cx| {
+        app.finish_update_check(Ok(fake_release(crate::update::current_version())), false, window, cx);
+    });
+    assert!(!h.has("update-primary", cx));
+    assert!(cx.read(|cx| h.app.read(cx).config.updates.last_check.is_some()));
+
+    // A skipped version stays quiet unless the user asked.
+    h.with_app(cx, |app, window, cx| {
+        app.config.updates.skipped_version = Some("9.9.9".into());
+        app.finish_update_check(Ok(fake_release("9.9.9")), false, window, cx);
+    });
+    assert!(!h.has("update-primary", cx), "skipped version is not offered");
+
+    // A newer, unskipped version prompts.
+    h.with_app(cx, |app, window, cx| {
+        app.finish_update_check(Ok(fake_release("9.9.10")), false, window, cx);
+    });
+    assert!(h.has("update-primary", cx));
+}
+
+#[gpui_kit::test]
+fn update_restart_dialog_goes_through_unsaved_prompt(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let root = h.dir.path().to_path_buf();
+    h.open_folder(&root, cx);
+    let file = h.file("a.txt", "a");
+    h.open(&file, cx);
+    h.input("!", cx);
+
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_restart(PathBuf::from("/nonexistent/isengard"), window, cx);
+    });
+    assert!(h.has("update-restart", cx));
+    h.click("update-restart", cx);
+    // Dirty tab: the quit prompt appears and the app is still running.
+    assert!(h.has("dialog-secondary", cx), "unsaved-changes prompt");
+    assert!(cx.read(|cx| h.app.read(cx).relaunch_exe.is_some()));
+}
+
+#[gpui_kit::test]
+fn update_install_command_dialog_copies_and_types(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let root = h.dir.path().to_path_buf();
+    h.open_folder(&root, cx);
+    let package = PathBuf::from("/tmp/isengard-9.9.9-1.x86_64.rpm");
+    let expected = crate::update::install_command("dnf", &package);
+
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_install_command(package.clone(), "dnf", window, cx);
+    });
+    assert!(h.has("update-terminal", cx));
+    h.click("update-copy", cx);
+    let copied = cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.as_deref(), Some(expected.as_str()));
+    assert!(!h.has("update-terminal", cx), "dialog closes after copy");
+
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_install_command(package.clone(), "dnf", window, cx);
+    });
+    h.click("update-terminal", cx);
+    assert!(
+        cx.read(|cx| h.app.read(cx).terminal.read(cx).has_sessions()),
+        "terminal tab opened with the command typed"
+    );
+}

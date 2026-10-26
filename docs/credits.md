@@ -76,6 +76,7 @@ many to list; `cargo tree` is the full graph).
 | `portable-pty` | PTY + default shell spawn (wezterm) |
 | `notify` | Cross-platform file watching (reload tabs, refresh tree / Git) |
 | `open` | Open terminal URLs in the system browser |
+| `sha2` / `minisign-verify` | Update downloads: SHA-256 check + minisign signature on `SHA256SUMS` |
 | `trash` | Move tree Delete to the OS Trash / Recycle Bin |
 | `parking_lot` / `flume` / `ropey` | Sync + channels for the adapted terminal view (flume also bridges the agent thread) |
 | `agent-client-protocol` | Agent panel ACP client (see AI agents above) |

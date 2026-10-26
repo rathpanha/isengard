@@ -127,8 +127,12 @@ src/
 │   ├── terminal.rs      bottom PTY panel show/create/cwd
 │   ├── terminal_cwd.rs  multi-root “Open Terminal in…” picker
 │   ├── chrome.rs        sidebar toggle, About, config, quit
+│   ├── update.rs        update-available / download / restart / install-command dialogs
 │   ├── render.rs        title/sidebar/editor/status-bar paint + `Render`
 │   └── welcome.rs       welcome screen (start actions + recent folders)
+├── update.rs            release lookup (GitHub API), install-kind detection,
+│                        asset pick, download + minisign/SHA-256 verify,
+│                        in-place tarball install (no UI; unit-tested)
 ├── watch.rs             `FsWatcher`: non-recursive watches per dir (skips
 │                        `node_modules`/… so Linux inotify does not blow up)
 │                        → flume of `FsChange`
@@ -374,6 +378,26 @@ src/
   create/remove/rename → `FileTreePanel::refresh_loaded_dirs`
   (`FsNode::refresh_children`: loaded dirs only — never `refresh_dir` here).
   Then `GitPanel::refresh`.
+- **Updates:** `update.rs` (pure) + `app/update.rs` (UI). Startup check (≤1×/day,
+  `config.updates.last_check`, off via `updates.check`, skipped under
+  `cfg!(test)`) and Isengard > Check for Updates… call GitHub
+  `releases/latest`; a newer, non-skipped version opens the availability dialog.
+  `detect_install_kind`: dev `target/` build or unwritable dir → **Manual**
+  (button opens the release page); exe under `/usr/bin` with dnf/zypper/apt →
+  **Package** (download the `.rpm`/`.deb`, verify, then a dialog offers Copy
+  command / Open in terminal — `sudo <mgr> install '<path>'` is *typed, not run*,
+  so the user enters their own password); otherwise writable → **InPlace**
+  (download tarball, verify, write `.isengard.update` beside the exe and rename
+  over it, then "Restart now" → `restart_into` sets `relaunch_exe`, goes through
+  `confirm_quit`, and `quit()` re-spawns the exe on the open workspace/folder;
+  plain Quit / window close clears the flag). Verification: `SHA256SUMS` +
+  `SHA256SUMS.minisig` must verify against `update::PUBLIC_KEY`, then the asset
+  hash must match; with an empty `PUBLIC_KEY` nothing is installed (link only).
+  Release signing: `release-linux.yml` signs `SHA256SUMS` with secrets
+  `MINISIGN_KEY` / `MINISIGN_PASSWORD` (generate once with `minisign -G`, paste
+  the public key line into `PUBLIC_KEY`; losing the key means shipping a build
+  with a new key). Asset names are restricted to `[A-Za-z0-9._+~-]` because they
+  reach a shell command.
 - **Dialogs**: `window.open_dialog` with a `DialogFooter` of `Button`s; buttons
   capture a `WeakEntity<IsengardApp>` and call back into it. Always wrap with
   `ui::components::center_dialog` (Kit defaults to top ~10%; we centre). Close
@@ -463,7 +487,7 @@ feature (JSON is included via base `tree-sitter`). Detection lives in
 `git` on PATH (no `git2`/`gix`). LSP: `lsp-types = "0.97"` (same as Kit) +
 `url = "2"` for `file://` URIs; file watching: `notify = "8"`; servers are external (app-local download dir
 and/or PATH — not inside the app binary). Download deps: `ureq`, `flate2`,
-`tar`, `zip`, `xz2`. `AppConfig.lsp` holds the master switch and `languages`
+`tar`, `zip`, `xz2`; updates add `sha2` + `minisign-verify`. `AppConfig.lsp` holds the master switch and `languages`
 map. Agent panel: `agent-client-protocol = "=3.4.0"` (feature `process`;
 schema `=1.12.0` comes with it) + `futures = "0.3"`; the Claude adapter is
 pinned in `acp/install.rs` (`CLAUDE_VERSION`). Upgrade both together — the

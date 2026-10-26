@@ -336,6 +336,32 @@ impl Default for LspSettings {
     }
 }
 
+/// Update checking. Releases are looked up on GitHub at most once a day.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// Check for a newer release at startup (Isengard > Check for Updates…
+    /// always works).
+    #[serde(default = "default_true")]
+    pub check: bool,
+    /// Unix seconds of the last completed check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<u64>,
+    /// Version the user chose "Skip this version" for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_version: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check: true,
+            last_check: None,
+            skipped_version: None,
+        }
+    }
+}
+
 /// External ACP agent for the Agent panel. Empty → built-in Claude Agent
 /// (app-local install, then `claude-agent-acp` on `PATH`). The agent owns the
 /// model and login; Isengard never stores API keys.
@@ -381,6 +407,9 @@ pub struct AppConfig {
     /// Language Server Protocol (IntelliSense) — see [`LspSettings`].
     #[serde(default)]
     pub lsp: LspSettings,
+    /// Automatic update checks — see [`UpdateSettings`].
+    #[serde(default)]
+    pub updates: UpdateSettings,
     /// Last windowed (or restore-from-maximized) width in pixels.
     pub window_width: f32,
     /// Last windowed (or restore-from-maximized) height in pixels.
@@ -410,6 +439,7 @@ impl Default for AppConfig {
             agent: AgentSettings::default(),
             agent_prefs: AgentPrefs::default(),
             lsp: LspSettings::default(),
+            updates: UpdateSettings::default(),
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,
             window_x: None,

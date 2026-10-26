@@ -53,6 +53,8 @@ impl IsengardApp {
     }
 
     pub(super) fn on_quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
+        // A plain Quit is not a pending "restart to update".
+        self.relaunch_exe = None;
         if self.confirm_quit(window, cx) {
             self.quit(cx);
         }

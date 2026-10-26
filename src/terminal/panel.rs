@@ -64,6 +64,13 @@ impl TerminalPanel {
             .map(|tab| tab.view.read(cx).focus_handle().clone())
     }
 
+    /// Types `text` into the active tab's prompt without pressing Enter.
+    pub fn type_in_active(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.view.update(cx, |view, cx| view.type_text(text, cx));
+        }
+    }
+
     /// Selected text in the active terminal tab, if any.
     pub fn active_selection_text(&self, cx: &App) -> Option<String> {
         self.tabs

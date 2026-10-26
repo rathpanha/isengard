@@ -123,6 +123,28 @@ jobs:
           (cd dist && shasum -a 256 ./* >SHA256SUMS)
           ls -la dist
 
+      # The in-app updater refuses any download whose SHA256SUMS is not signed
+      # with the key embedded in the binary (src/update.rs PUBLIC_KEY).
+      # One-time setup: `minisign -G`, put the secret key file contents in the
+      # MINISIGN_KEY secret and its password in MINISIGN_PASSWORD, and the
+      # public key line in PUBLIC_KEY. Without the secret the release still
+      # publishes, but unsigned (the updater then only links to the release).
+      - name: Sign SHA256SUMS
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_KEY" ]; then
+            echo "::warning::MINISIGN_KEY not set — publishing without SHA256SUMS.minisig"
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          KEYFILE="$(mktemp)"
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s\n' "$MINISIGN_KEY" >"$KEYFILE"
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$KEYFILE" -m dist/SHA256SUMS -x dist/SHA256SUMS.minisig
+
       - name: Resolve tag and notes
         id: tag
         run: |

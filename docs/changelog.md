@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-26** — Release: bump to 0.1.4 (first build with the in-app updater).
+- **2026-10-26** — Updates: daily GitHub release check, Isengard > Check for
+  Updates…, signed (minisign) + checksummed in-place update for writable
+  installs, assisted `sudo dnf|apt|zypper install` for RPM/DEB installs.
 - **2026-10-26** — Git panel: each repo is an accordion section (click the header
   to fold to name / count / branch); state persists per workspace session.
 - **2026-10-26** — Git: commit message box is disabled while Claude Suggest runs.

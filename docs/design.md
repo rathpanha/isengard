@@ -104,6 +104,13 @@ Add a row here whenever a new shared component is created.
 
 ## 5. Patterns
 
+- **Update dialogs** (`app/update.rs`): availability = markdown notes excerpt +
+  "View release notes" link button; footer Skip this version · Later (both
+  `.outline()`) · one `.primary()` whose label says what happens (Update now /
+  Download update / Open release page). Download dialog is non-dismissable
+  (no ×, overlay, or Esc) with a Kit `Progress` bar and Cancel. The install
+  command is shown in a `muted` block; it is typed into a terminal, never run.
+
 - **Dirty tabs:** unsaved buffer shows a 6px square in `theme.blue` before
   the close × (block style — no round “dot”).
 - **Panel header row height:** sidebar chrome (Explorer / Git / Search),

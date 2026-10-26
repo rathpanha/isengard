@@ -871,6 +871,9 @@ impl IsengardApp {
     pub(super) fn quit(&mut self, cx: &mut Context<Self>) {
         self.persist_session(cx);
         self.allow_quit = true;
+        if let Some(exe) = self.relaunch_exe.take() {
+            self.relaunch(&exe);
+        }
         cx.quit();
     }
 

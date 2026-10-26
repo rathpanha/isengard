@@ -2,7 +2,7 @@ use gpui_kit::component::{GlobalState, input, menu::AppMenuBar};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
 use crate::app::{
-    About, AddFolderToWorkspace, AddSelectionToAgent, CloseTab, CloseWorkspace, DecreaseFontSize,
+    About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseTab, CloseWorkspace, DecreaseFontSize,
     FindInFiles, FormatDocument, IncreaseFontSize, NewFile, NewTerminal, NewWorkspace,
     OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit, RenameSymbol, ResetFontSize, Save,
     SaveAll, SaveAs, SaveWorkspaceAs, ShowFileTree, ShowGit, ToggleAgentPanel, TogglePreview,
@@ -58,6 +58,7 @@ fn build_menus(ctx: MenuContext) -> Vec<Menu> {
             name: "Isengard".into(),
             items: vec![
                 MenuItem::action("About Isengard", About),
+                MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::action("Open Config File…", OpenConfigFile),
                 MenuItem::separator(),
                 MenuItem::action("Quit Isengard", Quit),

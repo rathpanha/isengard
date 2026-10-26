@@ -229,6 +229,16 @@ tabs, highlighted editor, status bar):
   reopens via `session/load` (history replays). Verified end to end against
   the real adapter on Linux (read + shell tool turn; load replays and the
   model keeps context; resume does not replay).
+- **Updates (Linux):** checks GitHub releases at startup (≤ once a day; opt out
+  with `updates.check: false`) and via Isengard > Check for Updates…. Dialog:
+  Skip this version / Later / Update now. Self-installed copies (writable dir)
+  download, verify (minisign signature + SHA-256) and swap the binary, then
+  offer Restart now (unsaved-changes prompt first; workspace reopens). RPM/DEB
+  installs download + verify, then Copy command / Open in terminal with
+  `sudo dnf|zypper|apt install '<file>'` typed for the user to run. Dev builds
+  and `/usr/local` installs only link to the release page. **Needs one-time
+  release setup:** `minisign -G`, secrets `MINISIGN_KEY` / `MINISIGN_PASSWORD`,
+  public key into `update::PUBLIC_KEY` — until then the updater never installs.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard / File / Edit / View). Menu items omit by state (welcome vs
   folder/workspace vs tabs) — see design. Status bar while a workspace is
@@ -249,11 +259,11 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.3 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
+- **v0.1.4 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
   + [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
   Tag must match `Cargo.toml`; notes at `docs/releases/<tag>.md`. App id
   `app.isengard.edtir`. macOS / Windows installers not shipping yet.
-- Notes: [docs/releases/v0.1.3.md](releases/v0.1.3.md). Human install:
+- Notes: [docs/releases/v0.1.4.md](releases/v0.1.4.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1

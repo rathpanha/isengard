@@ -18,6 +18,7 @@
 //! | `git` | Source Control diff/conflict tabs |
 //! | `terminal` / `terminal_cwd` | Bottom PTY panel + cwd picker |
 //! | `chrome` | Sidebar toggle, About, config, quit |
+//! | `update` | Update check, download dialogs, restart / install command |
 //! | `render` | Title/sidebar/editor/status-bar paint + `Render` |
 //! | `welcome` | Welcome screen (start actions + recents) |
 
@@ -36,6 +37,7 @@ mod terminal_cwd;
 mod tree;
 #[cfg(test)]
 mod ui_tests;
+mod update;
 mod watch;
 mod welcome;
 mod workspace;
@@ -121,7 +123,7 @@ pub(super) type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Con
 // Action types live in `actions` but must stay at `crate::app::*` for menus/UI.
 pub use actions::init;
 pub use actions::{
-    About, AddFolderToWorkspace, AddSelectionToAgent, CloseAllTabs, CloseOtherTabs, CloseTab,
+    About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseAllTabs, CloseOtherTabs, CloseTab,
     CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
     IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
     FormatDocument, OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, RenameSymbol,
@@ -254,6 +256,10 @@ pub struct IsengardApp {
     agent_width: f32,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
+    /// An update check or download is running (one at a time).
+    update_busy: bool,
+    /// After the next real quit, start this (freshly updated) binary.
+    relaunch_exe: Option<PathBuf>,
     /// Suppresses session writes while batch-restoring tabs.
     restoring_session: bool,
     /// Debounce token for persisting window bounds while resizing.
@@ -409,6 +415,8 @@ impl IsengardApp {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                // A plain close is not a pending "restart to update".
+                this.relaunch_exe = None;
                 this.persist_window_geometry(window);
                 this.persist_session(cx);
                 this.confirm_quit(window, cx)
@@ -465,6 +473,8 @@ impl IsengardApp {
             agent_visible: false,
             agent_width: DEFAULT_AGENT_WIDTH,
             allow_quit: false,
+            update_busy: false,
+            relaunch_exe: None,
             restoring_session: false,
             window_geometry_generation: 0,
             session_persist_generation: 0,
@@ -507,6 +517,7 @@ impl IsengardApp {
         }
 
         app.refresh_menus(cx);
+        app.check_for_updates_on_start(window, cx);
         app
     }
 
