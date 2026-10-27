@@ -71,7 +71,7 @@ use std::thread;
 
 // The window `Root` binds Tab / Shift+Tab to focus traversal; these more
 // specific `Terminal` bindings (see `app::actions::init`) keep them for the shell.
-actions!(terminal, [SendTab, SendBackTab]);
+actions!(terminal, [SendTab, SendBackTab, SendInterrupt]);
 
 /// Last painted content metrics for mouse hit-testing (window coords).
 #[derive(Clone, Copy, Debug)]
@@ -1184,6 +1184,7 @@ impl Render for TerminalView {
             }))
             .on_action(cx.listener(|this, _: &SendTab, _, cx| this.send_bytes(b"\t", cx)))
             .on_action(cx.listener(|this, _: &SendBackTab, _, cx| this.send_bytes(b"\x1b[Z", cx)))
+            .on_action(cx.listener(|this, _: &SendInterrupt, _, cx| this.send_bytes(&[0x03], cx)))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))

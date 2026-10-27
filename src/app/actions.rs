@@ -124,6 +124,10 @@ pub fn init(cx: &mut App) {
         // Root binds Tab to focus traversal; the shell needs it for completion.
         KeyBinding::new("tab", crate::terminal::view::SendTab, Some("Terminal")),
         KeyBinding::new("shift-tab", crate::terminal::view::SendBackTab, Some("Terminal")),
+        // Root binds Ctrl+C to Copy (non-macOS), which swallowed the interrupt.
+        // Copy in the terminal is Ctrl+Shift+C.
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-c", crate::terminal::view::SendInterrupt, Some("Terminal")),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         // Agent panel: `Ctrl+Shift+B` / `⌘⇧B` (Ctrl+Alt+B is unreliable on Linux).
