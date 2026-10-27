@@ -79,14 +79,13 @@ impl IsengardApp {
         cx.notify();
     }
 
-    /// Rebuild File/Edit/View for welcome vs folder/workspace (+ tabs).
+    /// Rebuild the File menu for welcome vs folder/workspace.
     pub(super) fn refresh_menus(&self, cx: &mut Context<Self>) {
         menus::update(
             cx,
             &self.app_menu_bar,
             menus::MenuContext {
                 has_folder: !self.workspace.is_empty(),
-                has_tabs: !self.tabs.is_empty(),
                 close_label: self.workspace.close_menu_label(),
             },
         );

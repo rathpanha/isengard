@@ -250,8 +250,8 @@ tabs, highlighted editor, status bar):
   release setup:** `minisign -G`, secrets `MINISIGN_KEY` / `MINISIGN_PASSWORD`,
   public key into `update::PUBLIC_KEY` — until then the updater never installs.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
-  (Isengard / File / Edit / View). Menu items omit by state (welcome vs
-  folder/workspace vs tabs) — see design. Status bar while a workspace is
+  (Isengard = About + Check for Updates only; File only with a folder/workspace open; no Edit / View menus — other actions are
+  shortcut-only) — see design. Status bar while a workspace is
   open (panel toggles; path / Ln·Col when a file tab is active).
   Notifications bottom-right. Logo on welcome + platform app icon (see
   architecture Development setup / icon matrix). Main window size/position

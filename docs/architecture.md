@@ -238,8 +238,8 @@ src/
   extract, or `go install`/`npm install --prefix` scoped to that tree — never
   global `-g`/brew/pip/rustup). Remove → `remove_server` / `run_uninstall`
   (delete app-local bin + pkg only). Server map is hand-maintained in
-  `lsp/registry.rs` + `lsp/install.rs`. Edit config via Isengard → Open Config
-  File… (no settings panel).
+  `lsp/registry.rs` + `lsp/install.rs`. Edit config via the Open Config File action (shortcut-only, no menu item;
+  no settings panel).
 - **Workspace**: `IsengardApp::workspace` is the source of truth for open
   folders; after changing it call `workspace_changed` (re-syncs the tree via
   `FileTreePanel::set_folders` and the titles) and `persist_workspace` (writes

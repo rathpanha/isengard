@@ -1,21 +1,13 @@
-use gpui_kit::component::{GlobalState, input, menu::AppMenuBar};
+use gpui_kit::component::{GlobalState, menu::AppMenuBar};
 use gpui_kit::{App, Entity, Menu, MenuItem};
 
-use crate::app::{
-    About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseTab, CloseWorkspace, DecreaseFontSize,
-    FindInFiles, FormatDocument, IncreaseFontSize, NewFile, NewTerminal, NewWorkspace,
-    OpenConfigFile, OpenFile, OpenFolder, OpenWorkspace, Quit, RenameSymbol, ResetFontSize, Save,
-    SaveAll, SaveAs, SaveWorkspaceAs, ShowFileTree, ShowGit, ToggleAgentPanel, TogglePreview,
-    ToggleSidebar, ToggleTerminal,
-};
+use crate::app::{About, AddFolderToWorkspace, CheckForUpdates, CloseWorkspace, SaveWorkspaceAs};
 
 /// What the window currently has open — drives which menu items exist.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuContext {
     /// At least one workspace root folder.
     pub has_folder: bool,
-    /// At least one editor tab (file or untitled).
-    pub has_tabs: bool,
     /// "Close Folder" or "Close Workspace".
     pub close_label: &'static str,
 }
@@ -23,7 +15,6 @@ pub struct MenuContext {
 impl MenuContext {
     pub const WELCOME: Self = Self {
         has_folder: false,
-        has_tabs: false,
         close_label: "Close Folder",
     };
 }
@@ -53,37 +44,19 @@ fn apply(cx: &mut App, ctx: MenuContext) {
 }
 
 fn build_menus(ctx: MenuContext) -> Vec<Menu> {
-    let mut menus = vec![
-        Menu {
-            name: "Isengard".into(),
-            items: vec![
-                MenuItem::action("About Isengard", About),
-                MenuItem::action("Check for Updates…", CheckForUpdates),
-                MenuItem::action("Open Config File…", OpenConfigFile),
-                MenuItem::separator(),
-                MenuItem::action("Quit Isengard", Quit),
-            ],
-            disabled: false,
-        },
-        Menu {
+    let mut menus = vec![Menu {
+        name: "Isengard".into(),
+        items: vec![
+            MenuItem::action("About Isengard", About),
+            MenuItem::action("Check for Updates…", CheckForUpdates),
+        ],
+        disabled: false,
+    }];
+    let file = file_items(ctx);
+    if !file.is_empty() {
+        menus.push(Menu {
             name: "File".into(),
-            items: file_items(ctx),
-            disabled: false,
-        },
-    ];
-    let edit = edit_items(ctx);
-    if !edit.is_empty() {
-        menus.push(Menu {
-            name: "Edit".into(),
-            items: edit,
-            disabled: false,
-        });
-    }
-    let view = view_items(ctx);
-    if !view.is_empty() {
-        menus.push(Menu {
-            name: "View".into(),
-            items: view,
+            items: file,
             disabled: false,
         });
     }
@@ -91,119 +64,14 @@ fn build_menus(ctx: MenuContext) -> Vec<Menu> {
 }
 
 fn file_items(ctx: MenuContext) -> Vec<MenuItem> {
-    // Welcome Start order: workspace group, then folder/file group.
-    let mut sections: Vec<Vec<MenuItem>> = vec![
-        vec![
-            MenuItem::action("Open Workspace…", OpenWorkspace),
-            MenuItem::action("New Workspace…", NewWorkspace),
-        ],
-        vec![
-            MenuItem::action("Open Folder…", OpenFolder),
-            MenuItem::action("Open File…", OpenFile),
-            MenuItem::action("New File", NewFile),
-        ],
-    ];
-
+    let mut items = Vec::new();
     if ctx.has_folder {
-        sections.push(vec![
-            MenuItem::action("Add Folder to Workspace…", AddFolderToWorkspace),
-            MenuItem::action("Save Workspace As…", SaveWorkspaceAs),
-        ]);
-    }
-
-    if ctx.has_tabs {
-        sections.push(vec![
-            MenuItem::action("Save", Save),
-            MenuItem::action("Save As…", SaveAs),
-            MenuItem::action("Save All", SaveAll),
-        ]);
-    }
-
-    let mut close = Vec::new();
-    if ctx.has_tabs {
-        close.push(MenuItem::action("Close Tab", CloseTab));
-    }
-    if ctx.has_folder {
-        close.push(MenuItem::action(ctx.close_label, CloseWorkspace));
-    }
-    if !close.is_empty() {
-        sections.push(close);
-    }
-
-    join_sections(sections)
-}
-
-fn edit_items(ctx: MenuContext) -> Vec<MenuItem> {
-    let mut sections: Vec<Vec<MenuItem>> = Vec::new();
-
-    if ctx.has_tabs {
-        sections.push(vec![
-            MenuItem::action("Undo", input::Undo),
-            MenuItem::action("Redo", input::Redo),
-            MenuItem::separator(),
-            MenuItem::action("Cut", input::Cut),
-            MenuItem::action("Copy", input::Copy),
-            MenuItem::action("Paste", input::Paste),
-            MenuItem::separator(),
-            MenuItem::action("Find", input::Search),
-            MenuItem::action("Select All", input::SelectAll),
-            MenuItem::separator(),
-            MenuItem::action("Format Document", FormatDocument),
-            MenuItem::action("Rename Symbol", RenameSymbol),
-            MenuItem::separator(),
-            MenuItem::action("Add Selection to Agent", AddSelectionToAgent),
-        ]);
-    }
-
-    if ctx.has_folder {
-        sections.push(vec![MenuItem::action("Find in Files", FindInFiles)]);
-    }
-
-    // Empty Edit on pure welcome is fine — File still has Open / New.
-    join_sections(sections)
-}
-
-fn view_items(ctx: MenuContext) -> Vec<MenuItem> {
-    let mut sections: Vec<Vec<MenuItem>> = Vec::new();
-
-    if ctx.has_tabs {
-        sections.push(vec![
-            MenuItem::action("Toggle Preview", TogglePreview),
-            MenuItem::action("Increase Font Size", IncreaseFontSize),
-            MenuItem::action("Decrease Font Size", DecreaseFontSize),
-            MenuItem::action("Reset Font Size", ResetFontSize),
-        ]);
-    }
-
-    if ctx.has_folder {
-        sections.push(vec![
-            MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            MenuItem::action("Explorer", ShowFileTree),
-            MenuItem::action("Search", FindInFiles),
-            MenuItem::action("Source Control", ShowGit),
-            MenuItem::action("Toggle Terminal", ToggleTerminal),
-            MenuItem::action("New Terminal", NewTerminal),
-            MenuItem::action("Toggle Agent Panel", ToggleAgentPanel),
-        ]);
-    }
-
-    let mut items = join_sections(sections);
-    if !items.is_empty() {
-        // Trailing separator so macOS-injected "Enter Full Screen" sits alone.
+        items.push(MenuItem::action("Add Folder to Workspace…", AddFolderToWorkspace));
+        items.push(MenuItem::action("Save Workspace As…", SaveWorkspaceAs));
         items.push(MenuItem::separator());
+        items.push(MenuItem::action(ctx.close_label, CloseWorkspace));
     }
     items
-}
-
-fn join_sections(sections: Vec<Vec<MenuItem>>) -> Vec<MenuItem> {
-    let mut out = Vec::new();
-    for section in sections.into_iter().filter(|s| !s.is_empty()) {
-        if !out.is_empty() {
-            out.push(MenuItem::separator());
-        }
-        out.extend(section);
-    }
-    out
 }
 
 #[cfg(test)]
@@ -221,60 +89,20 @@ mod tests {
     }
 
     #[test]
-    fn welcome_omits_workspace_and_panel_actions() {
-        let file_items = file_items(MenuContext::WELCOME);
-        let file = labels(&file_items);
-        assert!(!file.iter().any(|l| l.contains("Add Folder")));
-        assert!(!file.iter().any(|l| l.contains("Save Workspace")));
-        assert!(!file.iter().any(|l| *l == "Close Folder" || *l == "Close Workspace"));
-        assert!(file.contains(&"Open Folder…"));
-
-        let edit_items = edit_items(MenuContext::WELCOME);
-        assert!(labels(&edit_items).is_empty());
-
-        let view_items = view_items(MenuContext::WELCOME);
-        assert!(labels(&view_items).is_empty());
+    fn welcome_has_no_file_menu_items() {
+        assert!(file_items(MenuContext::WELCOME).is_empty());
     }
 
     #[test]
-    fn folder_shows_add_folder_and_close_folder() {
+    fn folder_shows_only_workspace_items() {
         let ctx = MenuContext {
             has_folder: true,
-            has_tabs: true,
             close_label: "Close Folder",
         };
-        let file_items = file_items(ctx);
-        let file = labels(&file_items);
-        assert!(file.iter().any(|l| l.contains("Add Folder")));
-        assert!(file.contains(&"Close Folder"));
-        assert!(file.contains(&"Save"));
-
-        let edit_items = edit_items(ctx);
-        let edit = labels(&edit_items);
-        assert!(edit.contains(&"Find in Files"));
-        assert!(edit.contains(&"Find"));
-        assert!(edit.contains(&"Format Document"));
-        assert!(edit.contains(&"Rename Symbol"));
-
-        let view_items = view_items(ctx);
-        let view = labels(&view_items);
-        assert!(view.contains(&"Toggle Terminal"));
-        assert!(view.contains(&"Source Control"));
-        assert!(view.contains(&"Toggle Agent Panel"));
-    }
-
-    #[test]
-    fn untitled_on_welcome_gets_save_not_add_folder() {
-        let ctx = MenuContext {
-            has_folder: false,
-            has_tabs: true,
-            close_label: "Close Folder",
-        };
-        let file_items = file_items(ctx);
-        let file = labels(&file_items);
-        assert!(file.contains(&"Save"));
-        assert!(file.contains(&"Close Tab"));
-        assert!(!file.iter().any(|l| l.contains("Add Folder")));
-        assert!(!file.contains(&"Close Folder"));
+        let items = file_items(ctx);
+        assert_eq!(
+            labels(&items),
+            ["Add Folder to Workspace…", "Save Workspace As…", "Close Folder"]
+        );
     }
 }

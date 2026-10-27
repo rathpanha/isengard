@@ -547,17 +547,10 @@ Add a row here whenever a new shared component is created.
   fallbacks use a `WeakEntity<IsengardApp>` (window root is Kit `Root`,
   not the app).
 - **Menus by state** (omit, don’t grey out — fewer dead options):
-  - **Welcome (no folder):** File = open/new only (+ Save / Close Tab if
-    untitled tabs). No Add Folder, Save Workspace As, Close Folder. Edit /
-    View menus hidden until a tab or folder exists (font zoom is
-    editor-only — not on empty welcome).
-  - **Folder or workspace open:** File also Add Folder to Workspace…,
-    Save Workspace As…, Close Folder / Close Workspace. Edit includes
-    Find in Files. View includes sidebar / Explorer / Search / Source
-    Control / terminal / Agent panel.
-  - **Tabs open:** Save, Save As… (`⌘⇧S` / `Ctrl+Shift+S`), Save All
-    (`⌘⌥S` / `Ctrl+Alt+S`), Close Tab, Edit clipboard/find, Toggle Preview,
-    Increase / Decrease / Reset Font Size.
+  - **Welcome (no folder):** no File menu (Isengard only). Open / New / Save
+    / Close Tab / Edit / View actions are shortcut-only.
+  - **Folder or workspace open:** File = Add Folder to Workspace…, Save
+    Workspace As…, Close Folder / Close Workspace — nothing else.
 - **New File:** opens an in-memory `Untitled-N` tab (welcome or workspace); no
   file on disk until Save. Save dialog defaults to the workspace target dir
   (tree selection, else active root). **Save As…** always picks a path
@@ -579,7 +572,7 @@ Add a row here whenever a new shared component is created.
   "The already configured editor" (no settings-panel cosplay). About may add
   one short supporting line; don't invent a second tagline.
 - **Config, not Preferences UI:** durable knobs (e.g. LSP enable/command)
-  live in `config.json`. Expose **Open Config File…** in the Isengard menu;
+  live in `config.json`. **Open Config File…** is shortcut-only (no menu item);
   do not add a settings / preferences panel.
 
 - Status-bar toggle buttons: active = info-blue icon (`theme.info`), never the gray `selected` fill.
