@@ -5,6 +5,8 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-27** — File tree: right-click **Reveal in File Manager** (Finder / File Explorer)
   opens the folder, or selects the file in its folder (`RevealPath`).
+- **2026-10-27** — Release: bump to 0.1.7 (in-app package install, agent notifications, quit
+  protection, rounded icon).
 - **2026-10-27** — Logo: rounded-corner tile (rx 229) in `logo.svg` / `icon-macos.svg`;
   re-exported `icon-1024.png`, `logo-512.png`, `Isengard.ico`, `Isengard.icns`.
 - **2026-10-27** — Notifications: use the Isengard logo icon and the Mixkit
