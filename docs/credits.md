@@ -47,6 +47,11 @@ License files: [`assets/fonts/OFL.txt`](../assets/fonts/OFL.txt),
 
 License: [`assets/icons/material/LICENSE`](../assets/icons/material/LICENSE).
 
+## Sounds
+
+- `assets/sounds/agent-done.wav` — original chime synthesized by
+  `scripts/gen-agent-sound.py` (no third-party audio).
+
 ## AI agents
 
 | Project | Who | License | How we use it |

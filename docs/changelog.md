@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-27** — Notifications: use the Isengard logo icon and our own synthesized
+  chime (`assets/sounds/agent-done.wav`) instead of the stock icon / clink sound.
 - **2026-10-27** — Quit: closing the editor while an agent turn is running asks first
   (Quit Anyway / Keep Working), before the unsaved-files prompts.
 - **2026-10-27** — Agent: removed the "What's using your week" per-product section from
