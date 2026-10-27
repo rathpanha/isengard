@@ -3882,6 +3882,7 @@ dependencies = [
  "gpui-kit",
  "ignore",
  "image",
+ "libc",
  "log",
  "lsp-types",
  "minisign-verify",

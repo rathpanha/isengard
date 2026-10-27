@@ -66,6 +66,13 @@ impl TerminalPanel {
             .count()
     }
 
+    /// Stop every tab's running program (called on quit).
+    pub fn terminate_all(&mut self) {
+        for tab in &mut self.tabs {
+            tab._session.terminate();
+        }
+    }
+
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         self.tabs
             .get(self.active)

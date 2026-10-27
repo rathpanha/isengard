@@ -903,6 +903,8 @@ impl IsengardApp {
 
     pub(super) fn quit(&mut self, cx: &mut Context<Self>) {
         self.persist_session(cx);
+        // Don't leave servers (and their ports) behind after the window closes.
+        self.terminal.update(cx, |term, _| term.terminate_all());
         self.allow_quit = true;
         if let Some(exe) = self.relaunch_exe.take() {
             self.relaunch(&exe);

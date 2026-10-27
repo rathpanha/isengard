@@ -106,6 +106,36 @@ impl PtySession {
         false
     }
 
+    /// Stop what this terminal is running: SIGTERM to the foreground program
+    /// (SIGKILL if it is still alive after ~1s), then hang up the shell.
+    /// Used on quit so servers don't outlive the editor and hold their port.
+    /// Unix only; elsewhere closing the PTY is all we do.
+    pub fn terminate(&mut self) {
+        #[cfg(unix)]
+        {
+            let shell = self._child.process_id().map(|p| p as libc::pid_t);
+            let leader = self.master.lock().process_group_leader();
+            if let (Some(group), Some(shell)) = (leader, shell)
+                && group != shell
+            {
+                // SAFETY: plain signal syscalls on pids we own.
+                unsafe { libc::killpg(group, libc::SIGTERM) };
+                for _ in 0..10 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // Signal 0: does the group still exist?
+                    if unsafe { libc::killpg(group, 0) } != 0 {
+                        break;
+                    }
+                }
+                unsafe { libc::killpg(group, libc::SIGKILL) };
+            }
+            if let Some(shell) = shell {
+                unsafe { libc::kill(shell, libc::SIGHUP) };
+            }
+        }
+        let _ = self._child.kill();
+    }
+
     pub fn master_handle(&self) -> Arc<Mutex<Box<dyn MasterPty + Send>>> {
         self.master.clone()
     }
@@ -159,6 +189,15 @@ mod tests {
             }
         }
         assert!(busy, "sleep should be the foreground process");
+        let group = session.master.lock().process_group_leader().unwrap();
+        let mut session = session;
+        session.terminate();
+        let gone = (0..30).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            // SAFETY: signal 0 only probes for the process group.
+            unsafe { libc::killpg(group, 0) != 0 }
+        });
+        assert!(gone, "terminate should kill the foreground process");
     }
 
     #[test]

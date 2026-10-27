@@ -122,7 +122,9 @@ tabs, highlighted editor, status bar):
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root) or while an agent turn or a terminal foreground process (Unix) is running
-  (Quit Anyway / Keep Working).
+  (Quit Anyway / Keep Working). Quitting terminates each terminal's foreground
+  program (SIGTERM, then SIGKILL after ~1s) and hangs up the shell, so dev servers
+  don't keep their port.
   Linux in-window close × confirms unsaved changes. Save All
   keeps going past a failed file, lists every failure in one toast, and then
   cancels the pending close / quit / switch.

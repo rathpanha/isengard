@@ -5,6 +5,8 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-10-27** — File tree: right-click **Reveal in File Manager** (Finder / File Explorer)
   opens the folder, or selects the file in its folder (`RevealPath`).
+- **2026-10-27** — Quit: terminals' foreground programs are terminated on quit (SIGTERM,
+  SIGKILL after ~1s) so servers don't hold their port; adds `libc` dependency.
 - **2026-10-27** — Quit: the running-work prompt also fires when a terminal tab has a
   foreground process (PTY foreground group != shell; Unix only).
 - **2026-10-27** — Release: bump to 0.1.7 (in-app package install, agent notifications, quit

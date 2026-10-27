@@ -19,6 +19,7 @@ cc = "~1.2.1"
 ignore = "0.4"
 alacritty_terminal = "0.25.1"
 portable-pty = "0.9"
+libc = "0.2"
 parking_lot = "0.12"
 flume = "0.12"
 # Workspace file watching (reload clean tabs, refresh tree / Git on disk changes).

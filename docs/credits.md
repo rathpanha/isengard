@@ -80,6 +80,7 @@ many to list; `cargo tree` is the full graph).
 | `url` | `file://` URIs for language-server documents |
 | `alacritty_terminal` | VTE / terminal grid state for the integrated panel |
 | `portable-pty` | PTY + default shell spawn (wezterm) |
+| `libc` | Signal the terminal's foreground process group on quit (Unix) |
 | `notify` | Cross-platform file watching (reload tabs, refresh tree / Git) |
 | `open` | Open terminal URLs in the system browser |
 | `sha2` / `minisign-verify` | Update downloads: SHA-256 check + minisign signature on `SHA256SUMS` |
