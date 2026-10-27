@@ -2,8 +2,9 @@
   <!-- Isengard logo: a block "I" with battlements (a tower) followed by a text cursor.
        Optically centred: the group is placed halfway between its bounding-box centre
        and its area centroid, so the heavy "I" and the small cursor read as balanced.
+       The tile has rounded corners (rx 229 = Apple's ~22.4% radius).
        One path for the I so shared edges don't show anti-aliasing seams. -->
-  <rect width="1024" height="1024" fill="#0b0b0c"/>
+  <rect width="1024" height="1024" rx="229" fill="#0b0b0c"/>
   <path fill="#ececec" d="
     M296 230 H376 V290 H436 V230 H516 V290 H576 V230 H656 V362
     H536 V722 H656 V794 H296 V722 H416 V362 H296 Z"/>

@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!-- macOS app icon: the logo on Apple's 824px icon grid (100px transparent margin),
-       kept square to match the app's block style. -->
+       with rounded corners (rx 229 of 1024 ≈ Apple's squircle radius). -->
   <svg x="100" y="100" width="824" height="824" viewBox="0 0 1024 1024">
-    <rect width="1024" height="1024" fill="#0b0b0c"/>
+    <rect width="1024" height="1024" rx="229" fill="#0b0b0c"/>
     <path fill="#ececec" d="
       M296 230 H376 V290 H436 V230 H516 V290 H576 V230 H656 V362
       H536 V722 H656 V794 H296 V722 H416 V362 H296 Z"/>

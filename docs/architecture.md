@@ -417,10 +417,10 @@ src/
   theme + editor background to Markdown `TextView`s (agent chat, preview).
   `theme.font_size` (14px) is the rem base for the whole UI;
   `mono_font_size` is the editor size from config.
-- **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024 square,
-  near-black tile). `logo-mark.svg` is the shapes only (welcome screen,
+- **Logo / icons** (`assets/logo/`): `logo.svg` is the master (1024, near-black
+  tile with rounded corners, rx 229). `logo-mark.svg` is the shapes only (welcome screen,
   `branding::LOGO_MARK`). `icon-macos.svg` puts the tile on Apple's 824px grid
-  with a transparent margin and square corners (block style). Exports:
+  with a transparent margin and the same rounded corners. Exports:
   `Isengard.icns`, `icon-1024.png` (macOS Dock, X11 window icon, cargo-bundle),
   `logo-512.png` (Linux hicolor via `scripts/install-dev-icon.sh`),
   `Isengard.ico` (Windows `.exe` via `build.rs` + `assets/windows/isengard.rc` +
