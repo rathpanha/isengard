@@ -2137,6 +2137,21 @@ fn update_install_now_asks_for_the_password(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn update_password_enter_starts_the_install(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let package = PathBuf::from("/tmp/isengard-9.9.9-1.x86_64.rpm");
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_password(package.clone(), "dnf", None, window, cx);
+    });
+    assert!(h.has("update-password-ok", cx), "password dialog opens");
+    // Busy, so the install itself is a no-op: this must not run sudo.
+    h.with_app(cx, |app, _, _| app.update_busy = true);
+    h.input("hunter2", cx);
+    h.press("enter", cx);
+    assert!(!h.has("update-password-ok", cx), "dialog closes on Enter");
+}
+
+#[gpui_kit::test]
 fn check_for_updates_menu_action_reaches_the_handler(cx: &mut TestAppContext) {
     use gpui_kit::Action as _;
     let h = Harness::new(cx);

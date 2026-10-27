@@ -572,10 +572,16 @@ impl IsengardApp {
             (cx.entity().downgrade(), package.clone(), input.clone());
         cx.subscribe_in(&input, window, move |_, _, event: &InputEvent, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
-                window.close_dialog(cx);
-                let password = input_enter.read(cx).value().to_string();
-                _ = app_enter.update(cx, |this, cx| {
-                    this.start_package_install(package_enter.clone(), manager, password, window, cx);
+                // This runs inside the input's own update: reading it or
+                // dropping its dialog here is a re-entrant lease. Wait for
+                // the emit to finish.
+                let (app, package, input) = (app_enter.clone(), package_enter.clone(), input_enter.clone());
+                window.defer(cx, move |window, cx| {
+                    let password = input.read(cx).value().to_string();
+                    window.close_dialog(cx);
+                    _ = app.update(cx, |this, cx| {
+                        this.start_package_install(package, manager, password, window, cx);
+                    });
                 });
             }
         })
