@@ -238,8 +238,10 @@ tabs, highlighted editor, status bar):
   Skip this version / Later / Update now. Self-installed copies (writable dir)
   download, verify (minisign signature + SHA-256) and swap the binary, then
   offer Restart now (unsaved-changes prompt first; workspace reopens). RPM/DEB
-  installs download + verify, then Copy command / Open in terminal with
-  `sudo dnf|zypper|apt install '<file>'` typed for the user to run. Dev builds
+  installs download + verify, then **Install now** asks for the sudo password in a
+  masked dialog, runs `sudo -S <manager> install -y <file>` with live output
+  (wrong password re-asks) and restarts into the new binary; Copy command /
+  Open in terminal remain as fallbacks. Dev builds
   and `/usr/local` installs only link to the release page. **Needs one-time
   release setup:** `minisign -G`, secrets `MINISIGN_KEY` / `MINISIGN_PASSWORD`,
   public key into `update::PUBLIC_KEY` — until then the updater never installs.

@@ -1,9 +1,11 @@
 //! Update checks and installs: availability dialog, download progress,
-//! restart (self-installed copies) or a typed install command (RPM/DEB).
+//! restart (self-installed copies), or a sudo-password dialog that installs
+//! the RPM/DEB for the user and restarts.
 use super::*;
 use crate::update::{self, Asset, InstallKind, Progress, Release};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::progress::Progress as ProgressBar;
+use std::sync::Mutex;
 
 const CHECK_INTERVAL_SECS: u64 = 24 * 60 * 60;
 const NOTES_MAX_CHARS: usize = 1200;
@@ -51,6 +53,30 @@ impl Render for DownloadView {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(label),
+            )
+    }
+}
+
+/// Live package-manager output inside the install dialog.
+struct InstallView {
+    lines: Arc<Mutex<Vec<String>>>,
+    done: bool,
+}
+
+impl Render for InstallView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let lines = self.lines.lock().map(|l| l.clone()).unwrap_or_default();
+        let shown = lines.len().saturating_sub(6);
+        v_flex()
+            .gap_2()
+            .child(ProgressBar::new("update-install-progress").loading(true))
+            .child(
+                v_flex()
+                    .h_24()
+                    .overflow_hidden()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .children(lines.into_iter().skip(shown).map(|l| div().child(l))),
             )
     }
 }
@@ -452,6 +478,7 @@ impl IsengardApp {
         window.open_dialog(cx, move |dialog, window, cx| {
             let (app_term, command_term, command_copy) =
                 (app.clone(), command.clone(), command.clone());
+            let (app_install, package_install) = (app.clone(), package.clone());
             let muted = cx.theme().muted_foreground;
             let body = v_flex()
                 .gap_2()
@@ -462,7 +489,7 @@ impl IsengardApp {
                         .text_color(muted)
                         .child(package.display().to_string()),
                 )
-                .child("Installing needs administrator rights. Run this command and enter your password when asked, then restart Isengard:")
+                .child("Installing needs administrator rights. Isengard can install it for you (it asks for your password and restarts afterwards), or you can run this command yourself:")
                 .child(
                     div()
                         .p_2()
@@ -497,7 +524,7 @@ impl IsengardApp {
                         .child(
                             Button::new("update-terminal")
                                 .cursor_pointer()
-                                .primary()
+                                .outline()
                                 .label("Open in terminal")
                                 .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
@@ -506,11 +533,184 @@ impl IsengardApp {
                                         this.type_command_in_terminal(&command, window, cx);
                                     });
                                 }),
+                        )
+                        .child(
+                            Button::new("update-install")
+                                .cursor_pointer()
+                                .primary()
+                                .label("Install now")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let package = package_install.clone();
+                                    _ = app_install.update(cx, |this, cx| {
+                                        this.show_update_password(package, manager, None, window, cx);
+                                    });
+                                }),
                         ),
                 ),
                 window,
             )
         });
+    }
+
+    /// Ask for the sudo password. `error` is shown after a rejected attempt.
+    pub(super) fn show_update_password(
+        &mut self,
+        package: PathBuf,
+        manager: &'static str,
+        error: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Password"));
+        input.update(cx, |state, cx| {
+            state.set_masked(true, window, cx);
+            state.focus(window, cx);
+        });
+        let (app_enter, package_enter, input_enter) =
+            (cx.entity().downgrade(), package.clone(), input.clone());
+        cx.subscribe_in(&input, window, move |_, _, event: &InputEvent, window, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                window.close_dialog(cx);
+                let password = input_enter.read(cx).value().to_string();
+                _ = app_enter.update(cx, |this, cx| {
+                    this.start_package_install(package_enter.clone(), manager, password, window, cx);
+                });
+            }
+        })
+        .detach();
+        let app = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            let (app_ok, package_ok, input_ok) = (app.clone(), package.clone(), input.clone());
+            let mut body = v_flex()
+                .gap_2()
+                .child("Installing the update needs administrator rights. Enter your password to continue.")
+                .child(
+                    Input::new(&input)
+                        .id("update-password")
+                        .mask_toggle()
+                        .w_full(),
+                );
+            if let Some(error) = &error {
+                body = body.child(div().text_xs().text_color(cx.theme().danger).child(error.clone()));
+            }
+            center_dialog(
+                dialog.title("Administrator password").child(body).footer(
+                    DialogFooter::new()
+                        .gap_2()
+                        .child(
+                            Button::new("update-password-cancel")
+                                .cursor_pointer()
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("update-password-ok")
+                                .cursor_pointer()
+                                .primary()
+                                .label("Install")
+                                .on_click(move |_, window, cx| {
+                                    let password = input_ok.read(cx).value().to_string();
+                                    window.close_dialog(cx);
+                                    let package = package_ok.clone();
+                                    _ = app_ok.update(cx, |this, cx| {
+                                        this.start_package_install(package, manager, password, window, cx);
+                                    });
+                                }),
+                        ),
+                ),
+                window,
+            )
+        });
+    }
+
+    /// Run the package install in the background, show its output, then
+    /// restart into the new binary.
+    fn start_package_install(
+        &mut self,
+        package: PathBuf,
+        manager: &'static str,
+        password: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.update_busy {
+            return;
+        }
+        self.update_busy = true;
+        // After the package replaces the file, current_exe() reads "… (deleted)".
+        let exe = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.trim_end_matches(" (deleted)").to_string()))
+            .map_or_else(|| PathBuf::from("/usr/bin/isengard"), PathBuf::from);
+        let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+        let view = cx.new(|_| InstallView {
+            lines: lines.clone(),
+            done: false,
+        });
+        let dialog_view = view.clone();
+        window.open_dialog(cx, move |dialog, window, _| {
+            center_dialog(
+                dialog
+                    .title("Installing update")
+                    .close_button(false)
+                    .overlay_closable(false)
+                    .keyboard(false)
+                    .child(dialog_view.clone()),
+                window,
+            )
+        });
+        let weak_view = view.downgrade();
+        cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(150)).await;
+                let done = weak_view
+                    .update(cx, |view, cx| {
+                        cx.notify();
+                        view.done
+                    })
+                    .unwrap_or(true);
+                if done {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        let task_package = package.clone();
+        cx.spawn_in(window, async move |this, window| {
+            let result = window
+                .background_spawn(async move {
+                    update::install_package(manager, &task_package, &password, |line| {
+                        if let Ok(mut lines) = lines.lock() {
+                            lines.push(line.to_string());
+                        }
+                    })
+                })
+                .await;
+            let _ = this.update_in(window, |this, window, cx| {
+                this.update_busy = false;
+                view.update(cx, |view, _| view.done = true);
+                window.close_dialog(cx);
+                match result {
+                    Ok(()) => {
+                        notify_success("Update installed — restarting Isengard", window, cx);
+                        this.restart_into(exe, window, cx);
+                    }
+                    Err(update::InstallError::WrongPassword) => {
+                        let error = Some("Incorrect password. Try again.".to_string());
+                        this.show_update_password(package, manager, error, window, cx);
+                    }
+                    Err(update::InstallError::Failed(output)) => {
+                        log::warn!("package install failed: {output}");
+                        notify_error(format!("Install failed: {output}"), window, cx);
+                        this.show_update_install_command(package, manager, window, cx);
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// New terminal tab with `command` typed at the prompt — not executed,

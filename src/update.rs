@@ -215,6 +215,118 @@ pub fn install_command(manager: &str, package: &Path) -> String {
     format!("sudo {manager} install '{path}'")
 }
 
+/// Why [`install_package`] failed.
+#[derive(Debug)]
+pub enum InstallError {
+    /// sudo rejected the password; ask again.
+    WrongPassword,
+    /// Anything else, with the tail of the package manager's output.
+    Failed(String),
+}
+
+/// Program and arguments that install `package` without prompting.
+pub fn install_argv(manager: &str, package: &Path) -> Vec<String> {
+    let path = package.to_string_lossy().into_owned();
+    let mut argv: Vec<String> = match manager {
+        "apt" | "apt-get" => vec!["apt-get".into(), "install".into(), "-y".into()],
+        "zypper" => vec![
+            "zypper".into(),
+            "--non-interactive".into(),
+            // The minisign + checksum check already vouched for this file.
+            "--no-gpg-checks".into(),
+            "install".into(),
+        ],
+        other => vec![other.into(), "install".into(), "-y".into()],
+    };
+    argv.push(path);
+    argv
+}
+
+/// Run the install through `sudo`, feeding `password` on stdin and reporting
+/// each line of output to `on_line`. Blocks until the package manager exits.
+pub fn install_package(
+    manager: &str,
+    package: &Path,
+    password: &str,
+    mut on_line: impl FnMut(&str),
+) -> std::result::Result<(), InstallError> {
+    use std::process::{Command, Stdio};
+    let fail = |e: std::io::Error| InstallError::Failed(format!("could not run sudo: {e}"));
+    let mut child = Command::new("sudo")
+        // -k: ignore cached credentials so a wrong password is always caught.
+        .args(["-S", "-k", "-p", ""])
+        .args(install_argv(manager, package))
+        .env("LC_ALL", "C")
+        .env("DEBIAN_FRONTEND", "noninteractive")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(fail)?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = writeln!(stdin, "{password}");
+    }
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let mut readers = Vec::new();
+    for stream in [
+        child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let tx = tx.clone();
+        readers.push(std::thread::spawn(move || {
+            let mut stream = stream;
+            let (mut buf, mut line) = ([0u8; 4096], Vec::new());
+            while let Ok(n) = stream.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                for &b in &buf[..n] {
+                    // Package managers redraw progress with bare `\r`.
+                    if b == b'\n' || b == b'\r' {
+                        if !line.is_empty() {
+                            let _ = tx.send(String::from_utf8_lossy(&line).into_owned());
+                            line.clear();
+                        }
+                    } else {
+                        line.push(b);
+                    }
+                }
+            }
+            if !line.is_empty() {
+                let _ = tx.send(String::from_utf8_lossy(&line).into_owned());
+            }
+        }));
+    }
+    drop(tx);
+    let mut tail: Vec<String> = Vec::new();
+    for line in rx {
+        on_line(&line);
+        tail.push(line);
+        if tail.len() > 12 {
+            tail.remove(0);
+        }
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
+    let status = child.wait().map_err(fail)?;
+    if status.success() {
+        return Ok(());
+    }
+    let text = tail.join("\n");
+    let lower = text.to_lowercase();
+    if lower.contains("incorrect password")
+        || lower.contains("try again")
+        || lower.contains("no password was provided")
+    {
+        return Err(InstallError::WrongPassword);
+    }
+    Err(InstallError::Failed(text))
+}
+
 /// `<cache dir>/isengard/updates`.
 pub fn updates_dir() -> PathBuf {
     dirs::cache_dir()
@@ -539,6 +651,17 @@ mod tests {
         assert!(!is_safe_name("evil; rm -rf ~.rpm"));
         assert!(!is_safe_name("$(x).rpm"));
         assert!(!is_safe_name("-rf"));
+    }
+
+    #[test]
+    fn builds_noninteractive_install_argv() {
+        let rpm = Path::new("/tmp/a.rpm");
+        assert_eq!(install_argv("dnf", rpm), ["dnf", "install", "-y", "/tmp/a.rpm"]);
+        assert_eq!(
+            install_argv("apt", Path::new("/tmp/a.deb")),
+            ["apt-get", "install", "-y", "/tmp/a.deb"]
+        );
+        assert_eq!(install_argv("zypper", rpm)[1], "--non-interactive");
     }
 
     #[test]

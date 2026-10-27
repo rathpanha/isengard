@@ -2095,6 +2095,20 @@ fn update_install_command_dialog_copies_and_types(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn update_install_now_asks_for_the_password(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let package = PathBuf::from("/tmp/isengard-9.9.9-1.x86_64.rpm");
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_install_command(package.clone(), "dnf", window, cx);
+    });
+    h.click("update-install", cx);
+    assert!(h.has("update-password-ok", cx), "password dialog opens");
+    assert!(!h.has("update-install", cx));
+    h.click("update-password-cancel", cx);
+    assert!(!h.has("update-password-ok", cx));
+}
+
+#[gpui_kit::test]
 fn check_for_updates_menu_action_reaches_the_handler(cx: &mut TestAppContext) {
     use gpui_kit::Action as _;
     let h = Harness::new(cx);
