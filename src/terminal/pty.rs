@@ -91,6 +91,21 @@ impl PtySession {
         });
     }
 
+    /// A program other than the shell itself is running in the foreground
+    /// (e.g. `npm run dev`, `sleep`). Unix only; Windows reports `false`.
+    pub fn has_foreground_process(&self) -> bool {
+        #[cfg(unix)]
+        {
+            let leader = self.master.lock().process_group_leader();
+            return match (leader, self._child.process_id()) {
+                (Some(leader), Some(shell)) => i64::from(leader) != i64::from(shell),
+                _ => false,
+            };
+        }
+        #[cfg(not(unix))]
+        false
+    }
+
     pub fn master_handle(&self) -> Arc<Mutex<Box<dyn MasterPty + Send>>> {
         self.master.clone()
     }
@@ -122,6 +137,29 @@ pub fn default_cwd(workspace_folders: &[PathBuf]) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn detects_a_foreground_process() {
+        let shell = TerminalCommand {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-i".into()],
+            env: Vec::new(),
+        };
+        let (session, mut writer, _reader) =
+            PtySession::spawn(Path::new("/tmp"), Some(&shell), 80, 24).unwrap();
+        assert!(!session.has_foreground_process(), "idle shell prompt");
+        writer.write_all(b"sleep 30\n").unwrap();
+        let mut busy = false;
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if session.has_foreground_process() {
+                busy = true;
+                break;
+            }
+        }
+        assert!(busy, "sleep should be the foreground process");
+    }
 
     #[test]
     fn default_cwd_prefers_first_workspace_folder() {

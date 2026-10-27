@@ -818,10 +818,17 @@ impl IsengardApp {
             .agent
             .as_ref()
             .is_some_and(|agent| agent.read(cx).is_turn_running());
-        if agent_running {
+        let busy_terminals = self.terminal.read(cx).busy_tab_count();
+        if agent_running || busy_terminals > 0 {
+            let message = match (agent_running, busy_terminals) {
+                (true, 0) => "The agent is still running. Quitting now will stop it mid-task.".to_string(),
+                (false, 1) => "A process is still running in the terminal. Quitting now will stop it.".to_string(),
+                (false, n) => format!("{n} terminals have running processes. Quitting now will stop them."),
+                (true, _) => "The agent and a terminal process are still running. Quitting now will stop them.".to_string(),
+            };
             self.open_choice_dialog(
                 "Quit Isengard?",
-                "The agent is still running. Quitting now will stop it mid-task.",
+                message,
                 "Quit Anyway",
                 "Keep Working",
                 |this, window, cx| {

@@ -58,6 +58,14 @@ impl TerminalPanel {
         !self.tabs.is_empty()
     }
 
+    /// Tabs whose shell is running a foreground program (build, server, …).
+    pub fn busy_tab_count(&self) -> usize {
+        self.tabs
+            .iter()
+            .filter(|tab| tab._session.has_foreground_process())
+            .count()
+    }
+
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         self.tabs
             .get(self.active)
