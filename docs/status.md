@@ -269,11 +269,11 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.8 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
+- **v0.1.9 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
   + [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
   Tag must match `Cargo.toml`; notes at `docs/releases/<tag>.md`. App id
   `app.isengard.edtir`. macOS / Windows installers not shipping yet.
-- Notes: [docs/releases/v0.1.8.md](releases/v0.1.8.md). Human install:
+- Notes: [docs/releases/v0.1.9.md](releases/v0.1.9.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1

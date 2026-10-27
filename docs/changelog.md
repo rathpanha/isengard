@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-27** — Release: bump to 0.1.9 (settings popover outside-click fix, Approve Plan
+  keeps Claude's own "No, keep planning" label).
 - **2026-10-27** — Agent settings popover closes on outside click again (manual dismiss that
   skips clicks inside its nested model menus).
 - **2026-10-27** — Approve Plan: reverted the "Keep planning and View the plan" relabel; Claude's
