@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-/// Our own chime (see `scripts/gen-agent-sound.py`).
+/// Mixkit "Long pop" (see docs/credits.md).
 const DONE_SOUND: &[u8] = include_bytes!("../assets/sounds/agent-done.wav");
 
 /// The chime written to the cache dir so a player can open it.

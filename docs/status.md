@@ -129,7 +129,7 @@ tabs, highlighted editor, status bar):
   `⌘⇧B` / `Ctrl+Shift+B` / status-bar `Bot`) chatting with an external agent.
   over the Agent Client Protocol, like Zed's external agents. A finished or failed
   run raises an OS notification + sound when the app is in the background
-  (`src/notify.rs`; own chime, logo icon; `notify-send`+`paplay`, `osascript`+`afplay`; no Windows yet). Default is
+  (`src/notify.rs`; Mixkit pop sound, logo icon; `notify-send`+`paplay`, `osascript`+`afplay`; no Windows yet). Default is
   Claude Agent (`@agentclientprotocol/claude-agent-acp`, pinned 0.94.0):
   **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
   Node.js; never global), else `claude-agent-acp` on `PATH`. Uses the user's

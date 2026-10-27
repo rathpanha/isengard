@@ -49,8 +49,9 @@ License: [`assets/icons/material/LICENSE`](../assets/icons/material/LICENSE).
 
 ## Sounds
 
-- `assets/sounds/agent-done.wav` — original chime synthesized by
-  `scripts/gen-agent-sound.py` (no third-party audio).
+- `assets/sounds/agent-done.wav` — "Long pop" (mixkit-long-pop-2358) from
+  [Mixkit](https://mixkit.co/free-sound-effects/), used under the
+  [Mixkit Sound Effects Free License](https://mixkit.co/license/#sfxFree).
 
 ## AI agents
 
