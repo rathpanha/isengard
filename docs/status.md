@@ -30,8 +30,8 @@ tabs, highlighted editor, status bar):
   gitignored rows shown muted; dirty git paths tint the label (modified/
   rename → warning, new/untracked → success, deleted/conflict → danger;
   parent folders roll up); indent guides (design owns the pixel rules).
-  Context menu: files Rename / Delete; folders New File / New Folder /
-  Rename / Delete (multi-root roots also Remove Folder from Workspace).
+  Context menu: files Reveal in File Manager (Finder / File Explorer) / Rename /
+  Delete; folders New File / New Folder / Reveal / Rename / Delete (multi-root roots also Remove Folder from Workspace).
   Right-click empty space in the tree panel → New File / New Folder at
   the workspace root (sole root when single-root; first root when multi).
   Mini toolbar above the tree: New File / New Folder (selection's dir,

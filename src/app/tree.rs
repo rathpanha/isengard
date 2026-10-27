@@ -437,6 +437,17 @@ impl IsengardApp {
         self.delete_path(&action.0, window, cx);
     }
 
+    pub(super) fn on_reveal_path(
+        &mut self,
+        action: &RevealPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(err) = reveal_in_file_manager(&action.0) {
+            notify_error(format!("Could not open the file manager: {err}"), window, cx);
+        }
+    }
+
     pub(super) fn on_new_file_in(
         &mut self,
         action: &NewFileIn,
@@ -476,4 +487,40 @@ impl IsengardApp {
             self.delete_path(&path, window, cx);
         }
     }
+}
+
+/// Open the OS file manager on `path`: a folder is opened, a file is selected
+/// inside its parent where the platform supports it.
+fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("{} no longer exists", path.display()));
+    }
+    let open_dir = |dir: &Path| open::that_detached(dir).map_err(|e| e.to_string());
+    if path.is_dir() {
+        return open_dir(path);
+    }
+    let parent = path.parent().unwrap_or(path);
+    let spawned = if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg("-R").arg(path).spawn().is_ok()
+    } else if cfg!(target_os = "windows") {
+        let mut arg = std::ffi::OsString::from("/select,");
+        arg.push(path);
+        std::process::Command::new("explorer").arg(arg).spawn().is_ok()
+    } else {
+        url::Url::from_file_path(path).is_ok_and(|uri| {
+            std::process::Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                ])
+                .arg(format!("array:string:{uri}"))
+                .arg("string:")
+                .status()
+                .is_ok_and(|s| s.success())
+        })
+    };
+    if spawned { Ok(()) } else { open_dir(parent) }
 }

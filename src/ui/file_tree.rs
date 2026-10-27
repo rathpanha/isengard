@@ -29,6 +29,20 @@ pub struct RemoveWorkspaceFolder(pub PathBuf);
 #[action(namespace = isengard, no_json)]
 pub struct RenamePath(pub PathBuf);
 
+/// Shows a tree path in the OS file manager (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct RevealPath(pub PathBuf);
+
+/// Context-menu label for [`RevealPath`], named after the platform's file manager.
+const REVEAL_LABEL: &str = if cfg!(target_os = "macos") {
+    "Reveal in Finder"
+} else if cfg!(target_os = "windows") {
+    "Reveal in File Explorer"
+} else {
+    "Reveal in File Manager"
+};
+
 /// Moves a tree path to the OS Trash (context menu).
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]
@@ -720,6 +734,8 @@ impl FileTreePanel {
                             .separator();
                     }
                     menu = menu
+                        .menu(REVEAL_LABEL, Box::new(RevealPath(path.clone())))
+                        .separator()
                         .menu("Rename", Box::new(RenamePath(path.clone())))
                         .menu("Delete", Box::new(DeletePath(path.clone())));
                     if is_workspace_root {
