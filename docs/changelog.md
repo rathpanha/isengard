@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-27** — Agent settings popover closes on outside click again (manual dismiss that
+  skips clicks inside its nested model menus).
 - **2026-10-27** — Approve Plan: reverted the "Keep planning and View the plan" relabel; Claude's
   own "No, keep planning" label, default reject style, and no plan Preview on click.
 - **2026-10-27** — File tree: right-click **Reveal in File Manager** (Finder / File Explorer)

@@ -240,7 +240,7 @@ Add a row here whenever a new shared component is created.
   `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
   `Plus` New Chat. When the agent advertises a Model option, ghost
   `SlidersHorizontal` **Agent settings** (Popover, TopRight,
-  `overlay_closable(false)` so nested model menus can be clicked): stacked
+  `overlay_closable(false)` + own outside-click dismiss that ignores clicks while a nested model menu is open): stacked
   rows `Label →` upward Popover selects. **Utility model** → Chat model /
   family (+ Version when split) — Improve / titles / Git Suggest
   (`agent.silent_model`; not an editor Preferences panel). **Subagent

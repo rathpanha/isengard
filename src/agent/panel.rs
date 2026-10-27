@@ -7,7 +7,9 @@
 //! a replay. Anything that touches editor state (file reads/writes, login in
 //! the terminal, hiding, persisting the chat index) is an [`AgentPanelEvent`].
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -450,6 +452,9 @@ pub struct AgentPanel {
     /// Bumped per connection so events from a dropped one are ignored.
     generation: u64,
     turn_running: bool,
+    /// True while a `render_bottom_select` menu is open — the settings popover's
+    /// outside-click dismiss ignores clicks that land in that detached menu.
+    nested_menu_open: Rc<Cell<bool>>,
     /// Prompts typed while a turn (or silent job) is running — drained FIFO
     /// when the current turn ends. User bubbles are already in `entries`.
     outbound: VecDeque<QueuedPrompt>,
@@ -849,6 +854,7 @@ impl AgentPanel {
             connection: None,
             generation: 0,
             turn_running: false,
+            nested_menu_open: Rc::new(Cell::new(false)),
             outbound: VecDeque::new(),
             suspend_after_turn: false,
             chats,
@@ -5794,10 +5800,11 @@ impl AgentPanel {
     fn render_agent_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let locked = self.config_controls_locked();
         let panel = cx.entity().downgrade();
+        let nested_open = self.nested_menu_open.clone();
         Popover::new("agent-settings")
             .anchor(Anchor::TopRight)
-            // Nested model menus open outside this surface; outside-click
-            // dismiss would eat the pick before on_click runs.
+            // Built-in outside-click would eat picks in nested model menus
+            // (detached layer); dismiss manually, skipping while one is open.
             .overlay_closable(false)
             .trigger(
                 Button::new("agent-settings-button")
@@ -5812,7 +5819,20 @@ impl AgentPanel {
                 let Some(entity) = panel.upgrade() else {
                     return div().into_any_element();
                 };
-                entity.update(cx, |this, cx| this.render_agent_settings_body(cx))
+                let body = entity.update(cx, |this, cx| this.render_agent_settings_body(cx));
+                let nested_open = nested_open.clone();
+                let popover = cx.weak_entity();
+                div()
+                    .on_mouse_down_out(move |_, window, cx| {
+                        if nested_open.get() {
+                            return;
+                        }
+                        if let Some(p) = popover.upgrade() {
+                            p.update(cx, |p, cx| p.dismiss(window, cx));
+                        }
+                    })
+                    .child(body)
+                    .into_any_element()
             })
             .into_any_element()
     }
@@ -6210,8 +6230,10 @@ impl AgentPanel {
         let current = current.to_owned();
         let choices = choices.to_vec();
         let trigger_id: SharedString = format!("{popover_id}-button").into();
+        let nested_open = self.nested_menu_open.clone();
         Popover::new(popover_id.clone())
             .anchor(Anchor::BottomLeft)
+            .on_open_change(move |open, _, _| nested_open.set(*open))
             .trigger(
                 Button::new(trigger_id)
                     .ghost()
