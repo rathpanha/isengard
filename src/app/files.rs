@@ -814,6 +814,32 @@ impl IsengardApp {
             self.persist_session(cx);
             return true;
         }
+        let agent_running = self
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.read(cx).is_turn_running());
+        if agent_running {
+            self.open_choice_dialog(
+                "Quit Isengard?",
+                "The agent is still running. Quitting now will stop it mid-task.",
+                "Quit Anyway",
+                "Keep Working",
+                |this, window, cx| {
+                    if this.confirm_quit_prompts(window, cx) {
+                        this.quit(cx);
+                    }
+                },
+                |_, _, _| {},
+                window,
+                cx,
+            );
+            return false;
+        }
+        self.confirm_quit_prompts(window, cx)
+    }
+
+    /// Untitled-workspace and unsaved-file prompts of the quit flow.
+    fn confirm_quit_prompts(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // Same order as workspace switch: offer to persist an untitled
         // multi-root workspace before asking about dirty files.
         if self.workspace.is_untitled_multi_root() {

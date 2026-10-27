@@ -121,7 +121,8 @@ tabs, highlighted editor, status bar):
   per divergence, and Save still writes the buffer.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
-  dir / root). Linux in-window close × confirms unsaved changes. Save All
+  dir / root) or while an agent turn is running (Quit Anyway / Keep Working).
+  Linux in-window close × confirms unsaved changes. Save All
   keeps going past a failed file, lists every failure in one toast, and then
   cancels the pending close / quit / switch.
 - **Agent panel (v1):** right-hand panel (View > Toggle Agent Panel /

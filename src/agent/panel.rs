@@ -1886,8 +1886,7 @@ impl AgentPanel {
         self.can_prompt()
     }
 
-    /// Whether a prompt turn (or silent job) is in flight.
-    #[cfg(test)]
+    /// Whether a prompt turn is in flight (quitting would cut it off).
     pub fn is_turn_running(&self) -> bool {
         self.turn_running
     }

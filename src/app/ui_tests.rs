@@ -1437,6 +1437,34 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn quitting_while_the_agent_runs_asks_first(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("q");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let release = agent.arm_hold();
+    h.input("hold", cx);
+    h.press("enter", cx);
+    h.wait_for(cx, "turn running", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| a.read(cx).is_turn_running())
+        })
+    });
+    h.with_app(cx, |app, window, cx| {
+        assert!(!app.confirm_quit(window, cx), "must ask, not quit");
+    });
+    assert!(h.has("dialog-secondary", cx), "Quit Anyway offered");
+    assert!(h.has("dialog-primary", cx), "Keep Working offered");
+    h.click("dialog-primary", cx);
+    assert!(!h.has("dialog-secondary", cx));
+    agent.release_hold(release);
+}
+
+#[gpui_kit::test]
 fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
