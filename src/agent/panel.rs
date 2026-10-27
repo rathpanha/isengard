@@ -3711,6 +3711,9 @@ impl AgentPanel {
                 if let Some(note) = note {
                     self.push_notice(note, false, cx);
                 }
+                if ok {
+                    alert_if_in_background("Agent finished", "The agent completed its run.", cx);
+                }
                 self.home_turn_finished(ok, cx);
             }
             AgentEvent::SilentTurnEnded { job, ok, text } => {
@@ -3726,6 +3729,7 @@ impl AgentPanel {
                 self.silent_job_finished(ok, cx);
             }
             AgentEvent::TurnFailed(message) => {
+                alert_if_in_background("Agent stopped", "The agent run failed.", cx);
                 self.push_notice(message, true, cx);
                 self.home_turn_finished(false, cx);
             }
@@ -7440,5 +7444,12 @@ mod improve_prompt_tests {
         let content = improved_composer_content("Tighten the error message", &[]);
         assert_eq!(content.text().as_ref(), "Tighten the error message");
         assert!(content.tokens().is_empty());
+    }
+}
+
+/// OS notification + sound, only when Isengard is not the focused app.
+fn alert_if_in_background(title: &str, body: &str, cx: &App) {
+    if cx.active_window().is_none() {
+        crate::notify::alert(title, body);
     }
 }

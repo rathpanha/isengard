@@ -8,6 +8,7 @@ mod file_tree;
 mod git;
 mod lsp;
 mod menus;
+mod notify;
 mod search;
 #[allow(dead_code, clippy::type_complexity, clippy::manual_range_contains)]
 mod terminal;

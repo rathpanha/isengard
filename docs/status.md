@@ -126,7 +126,9 @@ tabs, highlighted editor, status bar):
   cancels the pending close / quit / switch.
 - **Agent panel (v1):** right-hand panel (View > Toggle Agent Panel /
   `⌘⇧B` / `Ctrl+Shift+B` / status-bar `Bot`) chatting with an external agent.
-  over the Agent Client Protocol, like Zed's external agents. Default is
+  over the Agent Client Protocol, like Zed's external agents. A finished or failed
+  run raises an OS notification + sound when the app is in the background
+  (`src/notify.rs`; `notify-send`/`canberra-gtk-play`, `osascript`; no Windows yet). Default is
   Claude Agent (`@agentclientprotocol/claude-agent-acp`, pinned 0.94.0):
   **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
   Node.js; never global), else `claude-agent-acp` on `PATH`. Uses the user's
