@@ -255,8 +255,8 @@ Add a row here whenever a new shared component is created.
   (`theme.muted_foreground` <70%, `theme.warning` 70–90%, `theme.danger`
   ≥90%); expand overlays the transcript (`absolute` under the strip,
   `theme.sidebar` fill + `border_b` — does not push chat) with plan label
-  (`Claude Pro` from OAuth `subscriptionType`), resets, optional Opus/Sonnet,
-  and **What's using your week**; hidden until data arrives.
+  (`Claude Pro` from OAuth `subscriptionType`), resets, optional Opus/Sonnet
+  (no per-product breakdown section); hidden until data arrives.
   Background
   `theme.sidebar` like the other panels. Header also has a ghost
   `MessagesSquare` chat list (Popover, 300px): rows are Kit `ListItem`s —

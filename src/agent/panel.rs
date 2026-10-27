@@ -5595,61 +5595,6 @@ impl AgentPanel {
                 w,
             ));
         }
-        if !l.breakdown.is_empty() {
-            body = body.child(
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .pt_1()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child("What's using your week"),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child("Approximate share of weekly usage by product"),
-                    )
-                    .children(l.breakdown.iter().map(|row| {
-                        let pct = row.percent.clamp(0.0, 100.0);
-                        let color = limit_color(pct);
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_sm()
-                                    .text_color(theme.foreground)
-                                    .child(row.display_name.clone()),
-                            )
-                            .child(
-                                Progress::new(SharedString::from(format!(
-                                    "agent-limit-bd-{}",
-                                    row.key
-                                )))
-                                .w(px(80.))
-                                .color(color)
-                                .value(pct),
-                            )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .text_color(color)
-                                    .w(px(36.))
-                                    .child(format!("{pct:.0}%")),
-                            )
-                    })),
-            );
-        }
         Some(body.into_any_element())
     }
 

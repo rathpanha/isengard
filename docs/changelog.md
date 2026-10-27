@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-27** — Agent: removed the "What's using your week" per-product section from
+  the plan usage detail.
 - **2026-10-27** — Agent: when a run finishes (or fails) while Isengard is in the
   background, show an OS notification and play a sound (`src/notify.rs`).
 - **2026-10-27** — Updates: the downloaded package/tarball is deleted once the update installs.
