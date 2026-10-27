@@ -363,6 +363,7 @@ impl IsengardApp {
                     match kind {
                         InstallKind::InPlace { exe } => {
                             update::install_in_place(&path, &exe)?;
+                            let _ = std::fs::remove_file(&path);
                             Ok(Staged::Installed(exe))
                         }
                         InstallKind::Package { manager, .. } => {
@@ -695,6 +696,8 @@ impl IsengardApp {
                 window.close_dialog(cx);
                 match result {
                     Ok(()) => {
+                        // Installed; the downloaded package is no longer needed.
+                        let _ = std::fs::remove_file(&package);
                         notify_success("Update installed — restarting Isengard", window, cx);
                         this.restart_into(exe, window, cx);
                     }

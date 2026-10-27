@@ -3,6 +3,7 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-27** — Updates: the downloaded package/tarball is deleted once the update installs.
 - **2026-10-27** — Updates: RPM/DEB installs get an **Install now** button — masked sudo
   password dialog, live package-manager output, then automatic restart.
 - **2026-10-26** — Release: bump to 0.1.6 (terminal Tab fix, persisted plan usage bars).
