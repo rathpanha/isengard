@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-27** — Approve Plan: reverted the "Keep planning and View the plan" relabel; Claude's
+  own "No, keep planning" label, default reject style, and no plan Preview on click.
 - **2026-10-27** — File tree: right-click **Reveal in File Manager** (Finder / File Explorer)
   opens the folder, or selects the file in its folder (`RevealPath`).
 - **2026-10-27** — Release: bump to 0.1.8 (terminal Ctrl+C fix, quit protection for terminal

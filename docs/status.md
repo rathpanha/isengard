@@ -151,9 +151,7 @@ tabs, highlighted editor, status bar):
   row-click to open; Git discard removes those paths; strip state persists
   in the workspace session and is spliced back after `session/load` /
   editor restart), plan checklist, inline
-  permission buttons (Approve Plan’s keep-planning option labeled **Keep
-  planning and View the plan**, outline not danger — opens the plan `.md`
-  in Preview), Stop (`.danger()`, `session/cancel`), New Chat.
+  permission buttons, Stop (`.danger()`, `session/cancel`), New Chat.
   While a turn runs, Spinner + activity (tool title, or Thinking/Writing/…)
   appear at the bottom of the transcript only (header stays the session
   title; status square still turns warning). Long chats keep ~half-pane
