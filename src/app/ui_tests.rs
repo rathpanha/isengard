@@ -1437,6 +1437,188 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_opusplan_switch_hides_model_pickers(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("opusplan");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    assert!(cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .opusplan_available()
+    }));
+    assert!(cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .composer_model_pickers_visible()
+    }));
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_model_id()),
+        Some("sonnet-4-5".into())
+    );
+
+    // Prefer 1M context first so OpusPlan picks opusplan[1m].
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_model_version_for_test("4.6", cx);
+            panel.set_model_context_for_test("1M", cx);
+        });
+    });
+    h.wait_for(cx, "sonnet 1M before opusplan", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).current_model_id().as_deref() == Some("sonnet-4-6[1m]")
+            })
+        })
+    });
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_opusplan_for_test(true, cx);
+        });
+    });
+    h.wait_for(cx, "opusplan[1m] set", |_cx| {
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config model=opusplan[1m]")
+    });
+    h.wait_for(cx, "opusplan on + pickers hidden", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.opusplan_on()
+                    && a.current_model_id().as_deref() == Some("opusplan[1m]")
+                    && !a.composer_model_pickers_visible()
+            })
+        })
+    });
+    // OpusPlan is Switch-only — never a Model family row.
+    assert!(
+        !cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .model_picker_families_for_test()
+                .iter()
+                .any(|f| f.to_ascii_lowercase().contains("opus plan"))
+        }),
+        "Opus Plan must not appear in the Model picker"
+    );
+
+    // Claude resolves the alias to a concrete id when Mode changes — Switch
+    // stays on from prefs, pickers stay hidden, and we re-pin `opusplan`.
+    let calls_before_mode = agent.calls().len();
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.simulate_resolved_model_for_test("sonnet-4-6", cx);
+            panel.set_mode_for_test("code", cx);
+        });
+    });
+    h.wait_for(cx, "mode code after opusplan", |cx| {
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).current_mode_id().as_deref() == Some("code"))
+        })
+    });
+    h.wait_for(cx, "reassert opusplan after mode", |_cx| {
+        agent.calls()[calls_before_mode..]
+            .iter()
+            .any(|c| c == "set_config model=opusplan[1m]")
+    });
+    assert!(
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.opusplan_on()
+                    && a.current_model_id().as_deref() == Some("opusplan[1m]")
+                    && !a.composer_model_pickers_visible()
+            })
+        }),
+        "OpusPlan must stay on and re-pin the alias when Mode changes"
+    );
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_opusplan_for_test(false, cx);
+        });
+    });
+    h.wait_for(cx, "restore prior model", |_cx| {
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config model=sonnet-4-6[1m]")
+    });
+    h.wait_for(cx, "opusplan off + pickers back", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                !a.opusplan_on()
+                    && a.current_model_id().as_deref() == Some("sonnet-4-6[1m]")
+                    && a.composer_model_pickers_visible()
+            })
+        })
+    });
+
+    // OpusPlan off + Mode→Plan must re-pin the concrete model (overrides a
+    // Claude settings.json `opusplan` default — Switch stays off).
+    let calls_before_plan = agent.calls().len();
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_mode_for_test("plan", cx);
+        });
+    });
+    h.wait_for(cx, "mode plan with opusplan off", |cx| {
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).current_mode_id().as_deref() == Some("plan"))
+        })
+    });
+    h.wait_for(cx, "re-pin concrete model", |_cx| {
+        agent.calls()[calls_before_plan..]
+            .iter()
+            .any(|c| c == "set_config model=sonnet-4-6[1m]")
+    });
+    assert!(
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                !a.opusplan_on()
+                    && a.current_model_id().as_deref() == Some("sonnet-4-6[1m]")
+                    && a.composer_model_pickers_visible()
+            })
+        }),
+        "OpusPlan off must stay off after Mode→Plan and keep Sonnet"
+    );
+}
+
+#[gpui_kit::test]
 fn quitting_while_the_agent_runs_asks_first(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

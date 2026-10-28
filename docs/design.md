@@ -337,15 +337,25 @@ Add a row here whenever a new shared component is created.
   one Model `Cpu` — not `Bot`, which is the panel/status toggle); Mode
   list omits Claude `auto` when the selected model is older than 4.6
   (agent still advertises it); Context `Maximize2` when size variants exist; Fast
-  `Zap` + Kit `Switch` labeled `Fast`; other options by ACP name with
+  `Zap` + Kit `Switch` labeled `Fast` (Zap / OpusPlan `ListTodo` icons use
+  `theme.foreground` like Mode/Model, not muted); **OpusPlan** pinned
+  right (`justify_between`) when the Model select advertises `opusplan` /
+  `opusplan[1m]` (or an “Opus Plan” name) — Switch-only (alias omitted
+  from Model/family/version/context menus); on sets that alias (prefers
+  `[1m]` if the prior model used 1M), remembers it in `agent_prefs`, and
+  **hides** Model family / Version / flat Model / Context; Mode changes
+  sync Model to the Switch (on → `opusplan`, off → remembered concrete id
+  so `~/.claude/settings.json` `"model":"opusplan"` cannot take over);
+  tooltip says Opus in Plan / Sonnet otherwise; off restores the prior
+  model id; other options by ACP name with
   heuristic icons (`Brain` thought/effort, `Users` agent/persona, else
   `SlidersHorizontal`) — Popover upward, `ListItem`s,
   disabled while a turn runs or the session is not Ready; Prefer
   `configOptions` over legacy `modes`. Config band is always
-  `AGENT_COMPOSER_CONFIG_ROW_H` (36px) with horizontal scroll (no wrap)
-  so open/switch/first options do not change composer height; last
-  options are kept across reconnect and not cleared when an open omits
-  them. (2) action
+  `AGENT_COMPOSER_CONFIG_ROW_H` (36px); left group scrolls horizontally
+  (no wrap) so open/switch/first options do not change composer height;
+  last options are kept across reconnect and not cleared when an open
+  omits them. (2) action
   row: ghost `.small()` Attach (`Paperclip` — OS multi-file picker;
   folders via `@`) + muted hint (`Enter to send`, or `Enter to queue` /
   `N queued · Enter to queue` while busy) + ghost Improve

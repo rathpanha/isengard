@@ -217,7 +217,11 @@ tabs, highlighted editor, status bar):
   config row (icon+label taps:
   Mode icon tracks Ask/Auto/Plan/ accept-edits — Auto omitted for Claude
   models older than 4.6; Model `Cpu` / Version/Context; Fast Switch;
-  Effort/agent/…) sits in a fixed-height band above Attach / Improve
+  Effort/agent/… on the left; OpusPlan Switch pinned right when
+  advertised (Opus in Plan Mode, Sonnet otherwise; Mode change re-pins
+  alias when on / concrete Model when off — blocks Claude settings
+  `opusplan` bleed; not in Model picker; hides Model/Version/Context
+  while on)) sits in a fixed-height band above Attach / Improve
   (`PencilSparkles` silent rewrite on a throwaway session — open chat
   context untouched, chat not marked `turn_running`; Suggest/title leave
   Send alone; Improve swaps to `CircleX` cancel — silent-only, no chat

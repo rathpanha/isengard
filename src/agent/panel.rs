@@ -511,6 +511,8 @@ pub struct AgentPanel {
     config_options: Option<Vec<SessionConfigOption>>,
     /// Last composer choices, re-applied whenever a chat opens.
     prefs: AgentPrefs,
+    /// Model id to restore when OpusPlan Switch turns off (not persisted).
+    model_before_opusplan: Option<String>,
     /// Live context-window usage for the open session (`usage_update`).
     usage: Option<ContextUsage>,
     /// Last known usage per chat id (this process only — not persisted).
@@ -883,6 +885,7 @@ impl AgentPanel {
             modes: None,
             config_options: None,
             prefs,
+            model_before_opusplan: None,
             usage: None,
             usage_by_chat: HashMap::new(),
             plan_limits: saved_limits,
@@ -997,6 +1000,58 @@ impl AgentPanel {
         find_fast_option(&self.config_options).map(fast_is_on)
     }
 
+    /// Whether the OpusPlan Switch is available (agent advertises the alias).
+    #[cfg(test)]
+    pub fn opusplan_available(&self) -> bool {
+        find_opusplan_choice(&self.config_options).is_some()
+    }
+
+    /// Whether OpusPlan is on — sticky prefs, not only live Model current (tests).
+    #[cfg(test)]
+    pub fn opusplan_on(&self) -> bool {
+        opusplan_is_on(&self.prefs, &self.config_options)
+    }
+
+    /// Whether Model / Version / Context pickers should render (tests).
+    #[cfg(test)]
+    pub fn composer_model_pickers_visible(&self) -> bool {
+        !opusplan_is_on(&self.prefs, &self.config_options)
+            && (model_family_split(&self.config_options).is_some()
+                || find_select(
+                    &self.config_options,
+                    Some(SessionConfigOptionCategory::Model),
+                    "model",
+                )
+                .is_some())
+    }
+
+    /// Family labels offered by the Model picker (tests) — excludes OpusPlan.
+    #[cfg(test)]
+    pub fn model_picker_families_for_test(&self) -> Vec<String> {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return Vec::new();
+        };
+        let mut families = Vec::new();
+        for c in &split.choices {
+            if !families.iter().any(|f| f == &c.family) {
+                families.push(c.family.clone());
+            }
+        }
+        families
+    }
+
+    /// Simulate Claude resolving `opusplan` to a concrete Model current (tests).
+    #[cfg(test)]
+    pub fn simulate_resolved_model_for_test(&mut self, model_id: &str, cx: &mut Context<Self>) {
+        if let Some(options) = &mut self.config_options
+            && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == "model")
+            && let SessionConfigKind::Select(select) = &mut opt.kind
+        {
+            select.current_value = model_id.to_owned().into();
+        }
+        cx.notify();
+    }
+
     /// Live context usage label for the open session (tests), e.g. `20K / 200K`.
     #[cfg(test)]
     pub fn context_usage_label(&self) -> Option<String> {
@@ -1108,6 +1163,12 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn set_fast_mode_for_test(&mut self, on: bool, cx: &mut Context<Self>) {
         self.set_fast_mode(on, cx);
+    }
+
+    /// Toggle OpusPlan from tests.
+    #[cfg(test)]
+    pub fn set_opusplan_for_test(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.set_opusplan_mode(on, cx);
     }
 
     /// Labels currently shown in the `@` mention menu (tests).
@@ -2628,6 +2689,9 @@ impl AgentPanel {
             connection.set_mode(mode_id.clone());
         }
         self.remember_pref(None, Some(mode_id), cx);
+        // Mode changes interact with Claude's `settings.json` model (often
+        // `opusplan`) — keep the session aligned with our OpusPlan Switch.
+        self.sync_model_after_mode_change(cx);
         cx.notify();
     }
 
@@ -2705,6 +2769,12 @@ impl AgentPanel {
     }
 
     fn set_config_value(&mut self, config_id: String, value: String, cx: &mut Context<Self>) {
+        let is_mode = self.config_options.as_ref().is_some_and(|opts| {
+            opts.iter().any(|o| {
+                o.id.0.as_ref() == config_id
+                    && o.category == Some(SessionConfigOptionCategory::Mode)
+            })
+        });
         // Optimistic label update; agent reply / ConfigOptionUpdate is source of truth.
         if let Some(options) = &mut self.config_options
             && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == config_id)
@@ -2716,6 +2786,83 @@ impl AgentPanel {
             connection.set_config(config_id.clone(), value.clone());
         }
         self.remember_pref(Some((config_id, AgentPrefValue::Value(value))), None, cx);
+        if is_mode {
+            self.sync_model_after_mode_change(cx);
+        }
+        cx.notify();
+    }
+
+    /// After Mode changes: OpusPlan on → pin `opusplan`; off → pin the concrete
+    /// Model from prefs so `~/.claude/settings.json` `"model":"opusplan"` cannot
+    /// take over when the Switch is off.
+    fn sync_model_after_mode_change(&mut self, cx: &mut Context<Self>) {
+        if prefs_want_opusplan(&self.prefs) {
+            self.wire_model_id(self.preferred_opusplan_id(), cx);
+        } else {
+            self.wire_model_id(self.preferred_concrete_model_id(), cx);
+        }
+    }
+
+    fn preferred_opusplan_id(&self) -> Option<String> {
+        let model = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        )?;
+        if find_opusplan_choice(&self.config_options).is_none() {
+            return None;
+        }
+        let prefer_1m = match self.prefs.config.get("model") {
+            Some(AgentPrefValue::Value(id)) => id.to_ascii_lowercase().contains("[1m]"),
+            _ => false,
+        };
+        pick_opusplan_id(&model.choices, prefer_1m)
+    }
+
+    fn preferred_concrete_model_id(&self) -> Option<String> {
+        let model = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        )?;
+        if let Some(AgentPrefValue::Value(id)) = self.prefs.config.get("model")
+            && !is_opusplan_model_id(id)
+            && model.choices.iter().any(|(c, _)| c == id)
+        {
+            return Some(id.clone());
+        }
+        if !is_opusplan_model_id(&model.current) {
+            return Some(model.current.clone());
+        }
+        model
+            .choices
+            .iter()
+            .find(|(c, n)| !is_opusplan_model_choice(c, n))
+            .map(|(c, _)| c.clone())
+    }
+
+    /// `session/set_config_option` for Model without rewriting prefs.
+    /// Always sends — Mode changes must override Claude `settings.json` model.
+    fn wire_model_id(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        let Some(id) = id else {
+            return;
+        };
+        let Some(model) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        ) else {
+            return;
+        };
+        if let Some(options) = &mut self.config_options
+            && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == model.config_id)
+            && let SessionConfigKind::Select(select) = &mut opt.kind
+        {
+            select.current_value = id.clone().into();
+        }
+        if let Some(connection) = &self.connection {
+            connection.set_config(model.config_id, id);
+        }
         cx.notify();
     }
 
@@ -2747,6 +2894,65 @@ impl AgentPanel {
                 self.set_config_value(config_id, value, cx);
             }
             _ => {}
+        }
+    }
+
+    /// Select Claude's `opusplan` Model alias (Opus in Plan, Sonnet otherwise).
+    fn set_opusplan_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        let Some(model) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        ) else {
+            return;
+        };
+        if find_opusplan_choice(&self.config_options).is_none() {
+            return;
+        }
+        if on {
+            // Sticky prefs may already be on while Claude shows a resolved id.
+            if prefs_want_opusplan(&self.prefs) {
+                return;
+            }
+            if is_opusplan_model_id(&model.current) {
+                // Live alias without prefs (e.g. agent default) — pin prefs.
+                self.set_config_value(model.config_id, model.current.clone(), cx);
+                return;
+            }
+            let prefer_1m = context_from_model_id(&model.current).as_deref() == Some("1M")
+                || model_family_split(&self.config_options)
+                    .and_then(|s| s.context_label)
+                    .as_deref()
+                    == Some("1M");
+            let Some(id) = pick_opusplan_id(&model.choices, prefer_1m) else {
+                return;
+            };
+            self.model_before_opusplan = Some(model.current.clone());
+            self.set_config_value(model.config_id, id, cx);
+        } else {
+            if !prefs_want_opusplan(&self.prefs) && !is_opusplan_model_id(&model.current) {
+                return;
+            }
+            let restore = self
+                .model_before_opusplan
+                .take()
+                .filter(|id| model.choices.iter().any(|(c, _)| c == id));
+            let id = restore.or_else(|| {
+                if !is_opusplan_model_id(&model.current) {
+                    // Already resolved away — keep live current, clear sticky prefs.
+                    Some(model.current.clone())
+                } else {
+                    model
+                        .choices
+                        .iter()
+                        .find(|(c, n)| !is_opusplan_model_choice(c, n))
+                        .map(|(c, _)| c.clone())
+                }
+            });
+            let Some(id) = id else {
+                return;
+            };
+            self.set_config_value(model.config_id, id, cx);
         }
     }
 
@@ -3748,11 +3954,15 @@ impl AgentPanel {
                 if let Some(modes) = &mut self.modes {
                     modes.current_mode_id = update.current_mode_id;
                 }
+                self.sync_model_after_mode_change(cx);
             }
             SessionUpdate::ConfigOptionUpdate(update) => {
                 self.config_options = Some(update.config_options);
                 // Model / context size may have changed before the next turn.
                 self.ensure_usage_placeholder();
+                // Don't reassert here — Claude often reports the resolved
+                // Opus/Sonnet id under an active `opusplan` alias; looping
+                // set_config would fight that. Mode changes call reassert.
             }
             SessionUpdate::AvailableCommandsUpdate(update) => {
                 self.available_commands = update.available_commands;
@@ -4342,11 +4552,21 @@ fn parse_model_choice(id: &str, name: &str) -> ModelChoice {
     }
 }
 
+/// Model select choices shown in pickers — OpusPlan is Switch-only.
+fn model_picker_choices(choices: &[(String, String)]) -> Vec<(String, String)> {
+    choices
+        .iter()
+        .filter(|(id, name)| !is_opusplan_model_choice(id, name))
+        .cloned()
+        .collect()
+}
+
 /// When ≥2 families have versions, expose family + version pickers.
 fn model_family_split(options: &Option<Vec<SessionConfigOption>>) -> Option<ModelFamilySplit> {
     let model = find_select(options, Some(SessionConfigOptionCategory::Model), "model")?;
-    let parsed: Vec<ModelChoice> = model
-        .choices
+    // OpusPlan lives on its Switch, not as a Model family row.
+    let picker = model_picker_choices(&model.choices);
+    let parsed: Vec<ModelChoice> = picker
         .iter()
         .map(|(id, name)| parse_model_choice(id, name))
         .collect();
@@ -4373,6 +4593,7 @@ fn model_family_split(options: &Option<Vec<SessionConfigOption>>) -> Option<Mode
     if !worth_splitting {
         return None;
     }
+    // Live current may still be the alias while OpusPlan is on — fall back.
     let current = parsed
         .iter()
         .find(|c| c.id == model.current)
@@ -4492,6 +4713,106 @@ fn fast_select_value(opt: &SessionConfigOption, on: bool) -> Option<String> {
             want.iter()
                 .any(|w| id_l == *w || name == w || name.contains(w))
         })
+        .map(|(id, _)| id.clone())
+}
+
+/// Claude's plan/write alias: `opusplan` or `opusplan[1m]`.
+fn is_opusplan_model_id(id: &str) -> bool {
+    let lower = id.to_ascii_lowercase();
+    lower == "opusplan" || lower.starts_with("opusplan[")
+}
+
+fn is_opusplan_model_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n == "opus plan" || n.starts_with("opus plan ") || n.contains("opus plan mode")
+}
+
+fn is_opusplan_model_choice(id: &str, name: &str) -> bool {
+    is_opusplan_model_id(id) || is_opusplan_model_name(name)
+}
+
+/// First advertised OpusPlan Model choice, if any.
+fn find_opusplan_choice(options: &Option<Vec<SessionConfigOption>>) -> Option<(String, String)> {
+    let model = find_select(options, Some(SessionConfigOptionCategory::Model), "model")?;
+    model
+        .choices
+        .into_iter()
+        .find(|(id, name)| is_opusplan_model_choice(id, name))
+}
+
+/// Prefs remember the alias; Claude may rewrite Model `current` to Opus/Sonnet
+/// when Mode changes — Switch state must follow prefs, not only live current.
+fn prefs_want_opusplan(prefs: &AgentPrefs) -> bool {
+    match prefs.config.get("model") {
+        Some(AgentPrefValue::Value(id)) => is_opusplan_model_id(id),
+        _ => false,
+    }
+}
+
+fn opusplan_is_on(prefs: &AgentPrefs, options: &Option<Vec<SessionConfigOption>>) -> bool {
+    prefs_want_opusplan(prefs)
+        || find_select(options, Some(SessionConfigOptionCategory::Model), "model")
+            .is_some_and(|m| is_opusplan_model_id(&m.current))
+}
+
+/// Whether the session Mode is Plan (OpusPlan → Opus); else Sonnet.
+fn current_mode_is_plan(
+    modes: &Option<SessionModeState>,
+    options: &Option<Vec<SessionConfigOption>>,
+) -> bool {
+    let looks_like_plan = |id: &str, name: &str| {
+        let id = id.to_ascii_lowercase();
+        let name = name.to_ascii_lowercase();
+        id.contains("plan") || name.contains("plan")
+    };
+    if let Some(opt) =
+        find_select(options, Some(SessionConfigOptionCategory::Mode), "mode")
+    {
+        let name = opt
+            .choices
+            .iter()
+            .find(|(id, _)| id == &opt.current)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or("");
+        return looks_like_plan(&opt.current, name);
+    }
+    modes.as_ref().is_some_and(|m| {
+        let id = m.current_mode_id.to_string();
+        let name = m
+            .available_modes
+            .iter()
+            .find(|mode| mode.id.0.as_ref() == id)
+            .map(|mode| mode.name.as_str())
+            .unwrap_or("");
+        looks_like_plan(&id, name)
+    })
+}
+
+/// Prefer `opusplan[1m]` when the prior model used 1M context.
+fn pick_opusplan_id(choices: &[(String, String)], prefer_1m: bool) -> Option<String> {
+    let opusplans: Vec<&(String, String)> = choices
+        .iter()
+        .filter(|(id, name)| is_opusplan_model_choice(id, name))
+        .collect();
+    if opusplans.is_empty() {
+        return None;
+    }
+    if prefer_1m
+        && let Some((id, _)) = opusplans
+            .iter()
+            .copied()
+            .find(|(id, _)| id.to_ascii_lowercase().contains("[1m]"))
+    {
+        return Some(id.clone());
+    }
+    opusplans
+        .iter()
+        .copied()
+        .find(|(id, _)| {
+            let lower = id.to_ascii_lowercase();
+            lower == "opusplan" || !lower.contains('[')
+        })
+        .or_else(|| opusplans.first().copied())
         .map(|(id, _)| id.clone())
 }
 
@@ -5763,12 +6084,13 @@ impl AgentPanel {
         let checked = fast_is_on(opt);
         let busy = self.config_controls_locked();
         let panel = cx.entity().downgrade();
-        let muted = cx.theme().muted_foreground;
+        // Match Mode/Model ghost-button icons (`theme.foreground`), not muted.
+        let icon_color = cx.theme().foreground;
         h_flex()
             .id("agent-fast-mode-wrap")
             .gap_1()
             .items_center()
-            .child(Icon::new(LucideIcon::Zap).small().text_color(muted))
+            .child(Icon::new(LucideIcon::Zap).small().text_color(icon_color))
             .child(
                 Switch::new("agent-fast-mode")
                     .label("Fast")
@@ -5785,26 +6107,73 @@ impl AgentPanel {
             .into_any_element()
     }
 
+    /// OpusPlan as a Kit Switch — sets Claude's `opusplan` Model alias.
+    fn render_opusplan_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
+        if find_opusplan_choice(&self.config_options).is_none() {
+            return div().into_any_element();
+        }
+        let checked = opusplan_is_on(&self.prefs, &self.config_options);
+        let busy = self.config_controls_locked();
+        let panel = cx.entity().downgrade();
+        // Match Mode/Model ghost-button icons (`theme.foreground`), not muted.
+        let icon_color = cx.theme().foreground;
+        let tooltip: SharedString = if !checked {
+            "Opus in Plan mode, Sonnet otherwise (Claude)".into()
+        } else if current_mode_is_plan(&self.modes, &self.config_options) {
+            "On · Opus (Mode is Plan)".into()
+        } else {
+            // Sonnet here is correct — not a broken Switch.
+            "On · Sonnet (Mode is not Plan) — pick Mode Plan for Opus".into()
+        };
+        h_flex()
+            .id("agent-opusplan-wrap")
+            .gap_1()
+            .items_center()
+            .child(Icon::new(LucideIcon::ListTodo).small().text_color(icon_color))
+            .child(
+                Switch::new("agent-opusplan")
+                    .label("OpusPlan")
+                    .small()
+                    .checked(checked)
+                    .disabled(busy)
+                    .tooltip(tooltip)
+                    .when(!busy, |s| s.cursor_pointer())
+                    .on_click(move |on, _, cx| {
+                        let on = *on;
+                        _ = panel.update(cx, |this, cx| this.set_opusplan_mode(on, cx));
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn render_flat_model_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(opt) =
             find_select(&self.config_options, Some(SessionConfigOptionCategory::Model), "model")
         else {
             return div().into_any_element();
         };
+        let choices = model_picker_choices(&opt.choices);
+        if choices.is_empty() {
+            return div().into_any_element();
+        }
         let config_id = opt.config_id.clone();
-        let label = opt
-            .choices
+        let current = if choices.iter().any(|(id, _)| id == &opt.current) {
+            opt.current.clone()
+        } else {
+            choices[0].0.clone()
+        };
+        let label = choices
             .iter()
-            .find(|(id, _)| id == &opt.current)
+            .find(|(id, _)| id == &current)
             .map(|(_, n)| n.as_str())
-            .unwrap_or(opt.current.as_str());
+            .unwrap_or(current.as_str());
         self.render_bottom_select(
             "agent-model",
             LucideIcon::Cpu,
             &opt.name,
             label,
-            &opt.current,
-            &opt.choices,
+            &current,
+            &choices,
             self.config_controls_locked(),
             cx,
             move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
@@ -6863,14 +7232,15 @@ impl AgentPanel {
                 .is_some_and(|opts| !opts.is_empty())
     }
 
-    /// Mode / Model / Version / Context / Fast / Effort — one horizontal row
-    /// (scroll if narrow) so height stays stable and does not wrap-jump.
+    /// Mode / Model / Version / Context / Fast / Effort on the left (scroll);
+    /// OpusPlan pinned right via `justify_between` when advertised. OpusPlan on
+    /// hides Model/Version/Context (Claude owns the alias). Height stays fixed.
     fn render_composer_config_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        h_flex()
-            .id("agent-composer-config")
-            .w_full()
+        let show_model_pickers = !opusplan_is_on(&self.prefs, &self.config_options);
+        let left = h_flex()
+            .id("agent-composer-config-left")
             .min_w_0()
-            .h(px(theme::AGENT_COMPOSER_CONFIG_ROW_H))
+            .flex_1()
             .gap_1()
             .items_center()
             .overflow_x_scroll()
@@ -6884,12 +7254,16 @@ impl AgentPanel {
                     || self.modes.is_some(),
                 |row| row.child(self.render_mode_picker(cx)),
             )
-            .when(model_family_split(&self.config_options).is_some(), |row| {
-                row.child(self.render_model_family_picker(cx))
-                    .child(self.render_model_version_picker(cx))
-            })
             .when(
-                model_family_split(&self.config_options).is_none()
+                show_model_pickers && model_family_split(&self.config_options).is_some(),
+                |row| {
+                    row.child(self.render_model_family_picker(cx))
+                        .child(self.render_model_version_picker(cx))
+                },
+            )
+            .when(
+                show_model_pickers
+                    && model_family_split(&self.config_options).is_none()
                     && find_select(
                         &self.config_options,
                         Some(SessionConfigOptionCategory::Model),
@@ -6899,15 +7273,34 @@ impl AgentPanel {
                 |row| row.child(self.render_flat_model_picker(cx)),
             )
             .when(
-                find_context_select(&self.config_options).is_some()
-                    || model_family_split(&self.config_options)
-                        .is_some_and(|s| context_choices(&s).len() >= 2),
+                show_model_pickers
+                    && (find_context_select(&self.config_options).is_some()
+                        || model_family_split(&self.config_options)
+                            .is_some_and(|s| context_choices(&s).len() >= 2)),
                 |row| row.child(self.render_context_picker(cx)),
             )
             .when(find_fast_option(&self.config_options).is_some(), |row| {
                 row.child(self.render_fast_toggle(cx))
             })
-            .children(self.render_extra_config_pickers(cx))
+            .children(self.render_extra_config_pickers(cx));
+        h_flex()
+            .id("agent-composer-config")
+            .w_full()
+            .min_w_0()
+            .h(px(theme::AGENT_COMPOSER_CONFIG_ROW_H))
+            .gap_1()
+            .items_center()
+            .justify_between()
+            .child(left)
+            .when(find_opusplan_choice(&self.config_options).is_some(), |row| {
+                row.child(
+                    h_flex()
+                        .id("agent-composer-config-right")
+                        .flex_none()
+                        .items_center()
+                        .child(self.render_opusplan_toggle(cx)),
+                )
+            })
             .into_any_element()
     }
 
@@ -7283,6 +7676,74 @@ mod mode_filter_tests {
         assert_eq!(ids("opus-5"), vec!["ask", "auto", "plan"]);
         // Non-Claude agents keep Auto.
         assert_eq!(ids("gpt-4o"), vec!["ask", "auto", "plan"]);
+    }
+}
+
+#[cfg(test)]
+mod opusplan_tests {
+    use super::{
+        is_opusplan_model_choice, is_opusplan_model_id, model_picker_choices, pick_opusplan_id,
+        prefs_want_opusplan,
+    };
+    use crate::config::{AgentPrefValue, AgentPrefs};
+
+    #[test]
+    fn detects_opusplan_ids_and_names() {
+        assert!(is_opusplan_model_id("opusplan"));
+        assert!(is_opusplan_model_id("opusplan[1m]"));
+        assert!(is_opusplan_model_id("OpusPlan"));
+        assert!(!is_opusplan_model_id("opus-5"));
+        assert!(!is_opusplan_model_id("opusplan-extra"));
+        assert!(is_opusplan_model_choice("x", "Opus Plan Mode"));
+        assert!(is_opusplan_model_choice("x", "Opus Plan"));
+        assert!(!is_opusplan_model_choice("opus-5", "Opus 5"));
+    }
+
+    #[test]
+    fn pick_prefers_1m_when_requested() {
+        let choices = vec![
+            ("opusplan".into(), "Opus Plan Mode".into()),
+            ("opusplan[1m]".into(), "Opus Plan Mode 1M".into()),
+            ("sonnet-4-6".into(), "Sonnet 4.6".into()),
+        ];
+        assert_eq!(
+            pick_opusplan_id(&choices, false).as_deref(),
+            Some("opusplan")
+        );
+        assert_eq!(
+            pick_opusplan_id(&choices, true).as_deref(),
+            Some("opusplan[1m]")
+        );
+    }
+
+    #[test]
+    fn picker_choices_exclude_opusplan() {
+        let choices = vec![
+            ("sonnet-4-6".into(), "Sonnet 4.6".into()),
+            ("opusplan".into(), "Opus Plan Mode".into()),
+            ("opus-5".into(), "Opus 5".into()),
+        ];
+        let filtered = model_picker_choices(&choices);
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sonnet-4-6", "opus-5"]
+        );
+    }
+
+    #[test]
+    fn prefs_keep_opusplan_when_resolved_away() {
+        let mut prefs = AgentPrefs::default();
+        prefs
+            .config
+            .insert("model".into(), AgentPrefValue::Value("opusplan".into()));
+        assert!(prefs_want_opusplan(&prefs));
+        prefs
+            .config
+            .insert("model".into(), AgentPrefValue::Value("sonnet-4-6".into()));
+        assert!(!prefs_want_opusplan(&prefs));
     }
 }
 

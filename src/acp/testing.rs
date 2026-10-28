@@ -117,6 +117,9 @@ fn session_config(mode_id: &str, model_id: &str, fast_mode: bool) -> Vec<Session
                 SessionConfigSelectOption::new("haiku-4-5", "Haiku 4.5"),
                 SessionConfigSelectOption::new("opus-5", "Opus 5"),
                 SessionConfigSelectOption::new("opus-5[1m]", "Opus 5 1M"),
+                // Claude alias: Opus in Plan, Sonnet otherwise — composer OpusPlan Switch.
+                SessionConfigSelectOption::new("opusplan", "Opus Plan Mode"),
+                SessionConfigSelectOption::new("opusplan[1m]", "Opus Plan Mode 1M"),
             ],
         )
         .category(SessionConfigOptionCategory::Model),

@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Agent OpusPlan: Mode changes sync model to the Switch —
+  on → re-pin `opusplan`, off → re-pin concrete Model (blocks Claude
+  `settings.json` `opusplan` bleed); tooltip shows Opus vs Sonnet.
 - **2026-10-28** — Agent Improve: while rewriting, the Improve icon becomes ×
   (cancels only the silent session); chat Stop no longer appears for Improve.
 - **2026-10-27** — Removed the Edit and View menus, Quit Isengard (still `⌘Q` / `Ctrl+Q`), Open Config File… from the Isengard menu, and

@@ -97,10 +97,10 @@ impl PtySession {
         #[cfg(unix)]
         {
             let leader = self.master.lock().process_group_leader();
-            return match (leader, self._child.process_id()) {
+            match (leader, self._child.process_id()) {
                 (Some(leader), Some(shell)) => i64::from(leader) != i64::from(shell),
                 _ => false,
-            };
+            }
         }
         #[cfg(not(unix))]
         false
