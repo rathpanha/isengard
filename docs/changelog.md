@@ -3,8 +3,13 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Disabled buttons no longer show the pointer hand: Git
+  (Pull/Push/Commit/Discard/Refresh/Open), Search Replace and the chat title
+  Generate button now add `cursor_pointer` only when enabled; `outline_btn`
+  no longer sets it. Rule + disabled-color convention added to design.md.
 - **2026-10-28** — Agent composer: Fast / Opus Plan Switch labels now gray
-  with the icons while locked (drawn label, same as Mode/Model); label
+  with the icons while locked (drawn label, same gray as disabled Mode/Model
+  buttons: `muted_foreground` @ 0.5); label
   renamed "Opus Plan".
 - **2026-10-28** — Editor right-click on macOS now shows the drawn Kit menu
   instead of the system NSMenu (vendored `gpui-component` `NativeMenu::show`).

@@ -84,7 +84,12 @@ section here.
   buttons, so add `.cursor_pointer()` to every other clickable component
   (for list/tree rows and checkboxes: `.when(!disabled, |el|
   el.cursor_pointer())`). Shared components in `src/ui/components.rs`
-  already include it.
+  already include it. Buttons too: Kit replays the caller's style over its
+  disabled style, so an unconditional `.cursor_pointer()` keeps the hand on a
+  disabled button — always `.disabled(x).when(!x, |b| b.cursor_pointer())`.
+- **Disabled color:** use Kit `.disabled()` (fg `muted_foreground` @ 0.5). Custom
+  pieces Kit can't dim (Material SVGs, drawn Switch labels/icons, composer
+  icons) use the same `muted_foreground` @ 0.5 / `opacity(0.5)`.
 - **Tooltips** on every icon-only button, naming the action ("Close",
   "Remove from recent"). Kit's managed tooltip can stick if the trigger
   unmounts while a delayed show is in flight (or on keyboard close while
@@ -339,8 +344,8 @@ Add a row here whenever a new shared component is created.
   list omits Claude `auto` when the selected model is older than 4.6
   (agent still advertises it); Context `Maximize2` when size variants exist; Fast
   `Zap` + Kit `Switch` labeled `Fast` (Zap / Opus Plan `ListTodo` icons and the
-  drawn label use `theme.foreground` like Mode/Model, `muted_foreground` while
-  locked — label is not `Switch::label`, which stays bright); **Opus Plan** (label) pinned
+  drawn label use `theme.foreground` like Mode/Model, `muted_foreground` @ 0.5
+  (same as a disabled ghost Button) while locked — label is not `Switch::label`, which stays bright); **Opus Plan** (label) pinned
   right (`justify_between`) when the Model select advertises `opusplan` /
   `opusplan[1m]` (or an “Opus Plan” name) — Switch-only (alias omitted
   from Model/family/version/context menus); on sets that alias (prefers

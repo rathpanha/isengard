@@ -888,7 +888,9 @@ fn short_toast(s: &str) -> String {
 }
 
 fn outline_btn(id: SharedString) -> Button {
-    Button::new(id).outline().cursor_pointer().small()
+    // No `cursor_pointer` here: Kit replays the caller's style on top of the
+    // disabled style, so add it at the call site only when enabled.
+    Button::new(id).outline().small()
 }
 
 /// Kit only paints `.loading()` when the button has an `.icon()` — label-only
@@ -1131,6 +1133,7 @@ impl Render for GitPanel {
                                                     busy_op == Some(BusyOp::Pull),
                                                 )
                                                 .disabled(busy || lock_sync)
+                                                .when(!(busy || lock_sync), |b| b.cursor_pointer())
                                                 .on_click({
                                                     let root = root.clone();
                                                     cx.listener(move |this, _, window, cx| {
@@ -1155,6 +1158,7 @@ impl Render for GitPanel {
                                                     busy_op == Some(BusyOp::Push),
                                                 )
                                                 .disabled(busy || lock_sync)
+                                                .when(!(busy || lock_sync), |b| b.cursor_pointer())
                                                 .on_click({
                                                     let root = root.clone();
                                                     cx.listener(move |this, _, window, cx| {
@@ -1255,6 +1259,13 @@ impl Render for GitPanel {
                                                         || nothing_selected
                                                         || lock_commit,
                                                 )
+                                                .when(
+                                                    !(busy
+                                                        || message_empty
+                                                        || nothing_selected
+                                                        || lock_commit),
+                                                    |b| b.cursor_pointer(),
+                                                )
                                                 .on_click({
                                                     let root = root.clone();
                                                     cx.listener(move |this, _, window, cx| {
@@ -1348,12 +1359,12 @@ impl Render for GitPanel {
                                 row.child(
                                     Button::new(format!("git-discard-all-{si}"))
                                         .ghost()
-                                        .cursor_pointer()
                                         .small()
                                         .icon(LucideIcon::Undo2)
                                         .tooltip("Discard All Changes")
                                         .loading(busy_op == Some(BusyOp::DiscardAll))
                                         .disabled(busy || lock_sync)
+                                        .when(!(busy || lock_sync), |b| b.cursor_pointer())
                                         .on_click({
                                             let root = root.clone();
                                             cx.listener(move |this, _, _, cx| {
@@ -1482,12 +1493,12 @@ impl Render for GitPanel {
                     .child(
                         Button::new("git-refresh")
                             .ghost()
-                            .cursor_pointer()
                             .small()
                             .icon(LucideIcon::RefreshCw)
                             .tooltip("Refresh")
                             .loading(self.loading)
                             .disabled(self.loading)
+                            .when(!self.loading, |b| b.cursor_pointer())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.refresh(window, cx);
                             })),
@@ -1633,7 +1644,6 @@ fn render_change_row(
         .child(
             Button::new(format!("git-open-{si}-{ci}"))
                 .ghost()
-                .cursor_pointer()
                 .small()
                 .icon(LucideIcon::ExternalLink)
                 .tooltip(if is_conflict {
@@ -1642,6 +1652,7 @@ fn render_change_row(
                     "Open File"
                 })
                 .disabled(status == 'D')
+                .when(status != 'D', |b| b.cursor_pointer())
                 .on_click({
                     let repo = repo.clone();
                     let path = path.clone();
@@ -1666,12 +1677,12 @@ fn render_change_row(
             row.child(
                 Button::new(format!("git-discard-{si}-{ci}"))
                     .ghost()
-                    .cursor_pointer()
                     .small()
                     .icon(LucideIcon::Undo2)
                     .tooltip("Discard Changes")
                     .loading(discard_loading)
                     .disabled(busy || lock_discard)
+                    .when(!(busy || lock_discard), |b| b.cursor_pointer())
                     .on_click({
                         let repo = repo.clone();
                         let rel = rel.clone();

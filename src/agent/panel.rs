@@ -2617,7 +2617,7 @@ impl AgentPanel {
                             )
                             .child(
                                 Button::new("dialog-generate")
-                                    .cursor_pointer()
+                                    .when(can_generate, |b| b.cursor_pointer())
                                     .outline()
                                     .label("Generate")
                                     .tooltip("Ask the agent for a title from this chat")
@@ -6086,7 +6086,8 @@ impl AgentPanel {
         let panel = cx.entity().downgrade();
         // Match Mode/Model ghost-button icons (`theme.foreground`); gray when locked.
         let icon_color = if busy {
-            cx.theme().muted_foreground
+            // Same as a disabled ghost Button (`Button` disabled fg).
+            cx.theme().muted_foreground.opacity(0.5)
         } else {
             cx.theme().foreground
         };
@@ -6131,7 +6132,8 @@ impl AgentPanel {
         let panel = cx.entity().downgrade();
         // Match Mode/Model ghost-button icons (`theme.foreground`); gray when locked.
         let icon_color = if busy {
-            cx.theme().muted_foreground
+            // Same as a disabled ghost Button (`Button` disabled fg).
+            cx.theme().muted_foreground.opacity(0.5)
         } else {
             cx.theme().foreground
         };

@@ -391,12 +391,12 @@ impl Render for SearchPanel {
                             .child(
                                 Button::new("search-replace-file")
                                     .ghost()
-                                    .cursor_pointer()
                                     .small()
                                     .icon(LucideIcon::Replace)
                                     .tooltip("Replace in File")
                                     .loading(self.searching)
                                     .disabled(replace_file_disabled)
+                                    .when(!replace_file_disabled, |b| b.cursor_pointer())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(path) = this.selected_file() {
                                             cx.emit(SearchPanelEvent::ReplaceInFile(path));
@@ -406,12 +406,12 @@ impl Render for SearchPanel {
                             .child(
                                 Button::new("search-replace-all")
                                     .ghost()
-                                    .cursor_pointer()
                                     .small()
                                     .icon(LucideIcon::ReplaceAll)
                                     .tooltip("Replace All")
                                     .loading(self.searching)
                                     .disabled(!can_replace)
+                                    .when(can_replace, |b| b.cursor_pointer())
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(SearchPanelEvent::ReplaceAll);
                                     })),
