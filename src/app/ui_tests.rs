@@ -1167,6 +1167,9 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
     h.open_folder(&a, cx);
     h.wait_ready(cx);
     assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
+    h.wait_for(cx, "agent got resume", |_| {
+        agent.calls().iter().any(|c| c == "resume s1")
+    });
     let calls = agent.calls();
     assert!(calls.contains(&"resume s1".to_string()), "{calls:?}");
     assert!(!calls.contains(&"load s1".to_string()), "{calls:?}");
@@ -1411,6 +1414,10 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     assert_eq!(saved.as_ref(), Some(&live));
     assert_eq!(global, live);
     h.ask("other", cx);
+    // The auto-title silent job after that turn must finish before Generate.
+    h.wait_for(cx, "auto-title job done", |cx| {
+        panel_get(&h, cx, |p, _| p.silent_idle_for_test())
+    });
     assert_ne!(
         cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_id()),
         Some(first_id.clone())
@@ -1618,6 +1625,245 @@ fn agent_opusplan_switch_hides_model_pickers(cx: &mut TestAppContext) {
     );
 }
 
+fn panel_do(
+    h: &Harness,
+    cx: &mut TestAppContext,
+    f: impl FnOnce(&mut crate::agent::AgentPanel, &mut gpui_kit::Context<crate::agent::AgentPanel>),
+) {
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, f);
+    });
+}
+
+fn panel_get<R>(
+    h: &Harness,
+    cx: &mut TestAppContext,
+    f: impl FnOnce(&crate::agent::AgentPanel, &gpui_kit::App) -> R,
+) -> R {
+    cx.read(|cx| f(h.app.read(cx).agent.as_ref().unwrap().read(cx), cx))
+}
+
+/// Open a ready agent panel on a fresh folder.
+fn opusplan_harness(name: &str, cx: &mut TestAppContext) -> (Harness, FakeAgent) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder(name);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+    (h, agent)
+}
+
+fn calls_since(agent: &FakeAgent, from: usize) -> Vec<String> {
+    agent.calls()[from..].to_vec()
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_mode_picker_path_repins_alias(cx: &mut TestAppContext) {
+    let (h, agent) = opusplan_harness("opusplan-picker", cx);
+
+    // Plain (non-1M) alias, remembered previous model.
+    panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(true, cx));
+    h.wait_for(cx, "opusplan set", |_| {
+        agent.calls().iter().any(|c| c == "set_config model=opusplan")
+    });
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()),
+        Some("sonnet-4-5".into())
+    );
+
+    // The Mode picker uses `set_config_value`, not legacy `set_mode`.
+    let before = agent.calls().len();
+    panel_do(&h, cx, |p, cx| p.set_config_for_test("mode", "plan", cx));
+    h.wait_for(cx, "mode + alias re-pinned", |_| {
+        let c = calls_since(&agent, before);
+        c.iter().any(|c| c == "set_config mode=plan")
+            && c.iter().any(|c| c == "set_config model=opusplan")
+    });
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.mode_config_current_for_test()),
+        Some("plan".into())
+    );
+    assert!(panel_get(&h, cx, |p, _| p.opusplan_on()));
+    assert!(!panel_get(&h, cx, |p, _| p.composer_model_pickers_visible()));
+
+    // Off restores the model used before turning it on.
+    panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(false, cx));
+    h.wait_for(cx, "previous model restored", |_| {
+        agent.calls().iter().any(|c| c == "set_config model=sonnet-4-5")
+    });
+    assert_eq!(panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()), None);
+    assert!(!panel_get(&h, cx, |p, _| p.opusplan_on()));
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_remembers_previous_model_across_restart(cx: &mut TestAppContext) {
+    use crate::config::{AgentPrefValue, AgentPrefs};
+
+    let (h, agent) = opusplan_harness("opusplan-restart", cx);
+
+    // Turning on persists the previous model with the other prefs.
+    panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(true, cx));
+    h.wait_for(cx, "opusplan on", |cx| {
+        panel_get(&h, cx, |p, _| p.opusplan_on())
+    });
+    let saved = cx.read(|cx| h.app.read(cx).config.agent_prefs.clone());
+    assert_eq!(saved.model_before_opusplan.as_deref(), Some("sonnet-4-5"));
+
+    // A restart leaves only the saved prefs: alias on, previous = Opus 5.
+    let mut prefs = AgentPrefs::default();
+    prefs
+        .config
+        .insert("model".into(), AgentPrefValue::Value("opusplan".into()));
+    prefs.model_before_opusplan = Some("opus-5".into());
+    panel_do(&h, cx, |p, _| p.seed_prefs_for_test(prefs));
+    let before = agent.calls().len();
+    panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(false, cx));
+    h.wait_for(cx, "saved previous model restored", |_| {
+        calls_since(&agent, before)
+            .iter()
+            .any(|c| c == "set_config model=opus-5")
+    });
+    assert_eq!(panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()), None);
+    let saved = cx.read(|cx| h.app.read(cx).config.agent_prefs.clone());
+    assert_eq!(saved.model_before_opusplan, None);
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_off_ignores_previous_model_agent_no_longer_offers(cx: &mut TestAppContext) {
+    use crate::config::{AgentPrefValue, AgentPrefs};
+
+    let (h, agent) = opusplan_harness("opusplan-stale", cx);
+    let mut prefs = AgentPrefs::default();
+    prefs
+        .config
+        .insert("model".into(), AgentPrefValue::Value("opusplan".into()));
+    prefs.model_before_opusplan = Some("retired-model".into());
+    panel_do(&h, cx, |p, _| p.seed_prefs_for_test(prefs));
+    let before = agent.calls().len();
+    panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(false, cx));
+    // Falls back to the live model — never the retired id, never list order.
+    h.wait_for(cx, "live model kept", |_| {
+        calls_since(&agent, before)
+            .iter()
+            .any(|c| c == "set_config model=sonnet-4-5")
+    });
+    assert!(
+        !agent.calls().iter().any(|c| c.contains("retired-model")),
+        "must not send a model the agent does not advertise"
+    );
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_agent_mode_update_repins_but_config_update_does_not(cx: &mut TestAppContext) {
+    use agent_client_protocol::schema::v1::{ConfigOptionUpdate, CurrentModeUpdate, SessionUpdate};
+
+    let (h, agent) = opusplan_harness("opusplan-updates", cx);
+    panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(true, cx));
+    h.wait_for(cx, "opusplan on", |cx| {
+        panel_get(&h, cx, |p, _| p.opusplan_on())
+    });
+
+    // Claude changes Mode by itself (e.g. leaves Plan) — re-pin the alias.
+    let before = agent.calls().len();
+    panel_do(&h, cx, |p, cx| {
+        p.apply_update_for_test(
+            SessionUpdate::CurrentModeUpdate(CurrentModeUpdate::new("plan")),
+            cx,
+        );
+    });
+    h.wait_for(cx, "alias re-pinned after agent mode change", |_| {
+        calls_since(&agent, before)
+            .iter()
+            .any(|c| c == "set_config model=opusplan")
+    });
+
+    // A config update reporting the resolved model must NOT trigger set_config
+    // (that would fight Claude's own resolution in a loop).
+    let options = panel_get(&h, cx, |p, _| p.config_options_for_test());
+    panel_do(&h, cx, |p, cx| {
+        p.simulate_resolved_model_for_test("sonnet-4-6", cx);
+        p.apply_update_for_test(
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options)),
+            cx,
+        );
+    });
+    let after = agent.calls().len();
+    cx.run_until_parked();
+    assert_eq!(
+        calls_since(&agent, after)
+            .iter()
+            .filter(|c| c.starts_with("set_config"))
+            .count(),
+        0,
+        "ConfigOptionUpdate must not re-assert the model"
+    );
+    assert!(panel_get(&h, cx, |p, _| p.opusplan_on()), "Switch stays on from prefs");
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_switch_click_toggles_and_locks_during_turn(cx: &mut TestAppContext) {
+    let (h, agent) = opusplan_harness("opusplan-click", cx);
+    assert!(h.has("agent-opusplan", cx), "Switch mounted when advertised");
+
+    // Locked while a chat turn runs (start it first: clicking the Switch
+    // moves focus off the composer).
+    assert!(!panel_get(&h, cx, |p, _| p.config_controls_locked_for_test()));
+    let release = agent.arm_hold();
+    h.input("hold", cx);
+    h.press("enter", cx);
+    h.wait_for(cx, "turn running", |cx| {
+        panel_get(&h, cx, |p, _| p.is_turn_running())
+    });
+    assert!(panel_get(&h, cx, |p, _| p.config_controls_locked_for_test()));
+    let before = agent.calls().len();
+    h.click("agent-opusplan", cx);
+    assert!(
+        !calls_since(&agent, before).iter().any(|c| c.starts_with("set_config")),
+        "disabled Switch must not change the model mid-turn"
+    );
+    agent.release_hold(release);
+    h.wait_ready(cx);
+
+    h.click("agent-opusplan", cx);
+    h.wait_for(cx, "switch on via click", |cx| {
+        panel_get(&h, cx, |p, _| p.opusplan_on() && !p.composer_model_pickers_visible())
+    });
+    h.click("agent-opusplan", cx);
+    h.wait_for(cx, "switch off via click", |cx| {
+        panel_get(&h, cx, |p, _| !p.opusplan_on() && p.composer_model_pickers_visible())
+    });
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_switch_hidden_when_agent_lacks_alias(cx: &mut TestAppContext) {
+    let (h, _agent) = opusplan_harness("opusplan-absent", cx);
+    // Drop the alias from the advertised Model choices.
+    panel_do(&h, cx, |p, cx| {
+        use agent_client_protocol::schema::v1::{
+            ConfigOptionUpdate, SessionConfigKind, SessionConfigSelectOptions, SessionUpdate,
+        };
+        let mut options = p.config_options_for_test();
+        for opt in &mut options {
+            if opt.id.0.as_ref() == "model"
+                && let SessionConfigKind::Select(select) = &mut opt.kind
+                && let SessionConfigSelectOptions::Ungrouped(list) = &mut select.options
+            {
+                list.retain(|o| !o.value.0.starts_with("opusplan"));
+            }
+        }
+        p.apply_update_for_test(
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options)),
+            cx,
+        );
+    });
+    assert!(!panel_get(&h, cx, |p, _| p.opusplan_available()));
+    assert!(!h.has("agent-opusplan", cx), "no alias → no Switch");
+    assert!(panel_get(&h, cx, |p, _| p.composer_model_pickers_visible()));
+}
+
 #[gpui_kit::test]
 fn quitting_while_the_agent_runs_asks_first(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
@@ -1778,6 +2024,10 @@ fn agent_improve_cancel_does_not_show_chat_stop(cx: &mut TestAppContext) {
         "Improve is silent — open chat must stay idle"
     );
 
+    // The throwaway session must exist agent-side before cancel can target it.
+    h.wait_for(cx, "improve prompt reached the agent", |_| {
+        agent.calls().iter().any(|c| c == "improve s2")
+    });
     h.click("agent-improve", cx);
     h.wait_for(cx, "improve cancelled", |cx| {
         cx.read(|cx| {
@@ -1796,7 +2046,36 @@ fn agent_improve_cancel_does_not_show_chat_stop(cx: &mut TestAppContext) {
         !cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).is_turn_running()),
         "Improve cancel must not touch the open chat turn"
     );
+    // Wire level: only the throwaway Improve session is cancelled — never the
+    // open chat's session (the old `cancel()` hit both).
+    let home = cx
+        .read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_id())
+        .expect("open chat");
+    // The fake agent is single-threaded and blocked on the hold, so it only
+    // reads the cancel notification once released; the late reply must then be
+    // dropped by the panel.
     agent.release_hold(release);
+    h.wait_for(cx, "cancel reaches the agent", |_| {
+        agent.calls().iter().any(|c| c.starts_with("cancel "))
+    });
+    assert!(
+        !agent.calls().iter().any(|c| c == &format!("cancel {home}")),
+        "Improve cancel must not cancel the open chat session"
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .composer_text_for_test(cx)
+        }),
+        "fix the flaky overlay",
+        "cancelled Improve must leave the draft untouched"
+    );
 }
 
 #[gpui_kit::test]
@@ -1897,6 +2176,10 @@ fn agent_deletes_chat(cx: &mut TestAppContext) {
 
     let ids = h.saved_chats(&folder, cx).0;
     assert!(!ids.contains(&"s1".to_string()), "s1 removed from index: {ids:?}");
+    // The agent runs on its own thread — wait for the request to land.
+    h.wait_for(cx, "agent got delete", |_| {
+        agent.calls().iter().any(|c| c == "delete s1")
+    });
     let calls = agent.calls();
     assert!(
         calls.iter().any(|c| c == "delete s1"),

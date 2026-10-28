@@ -511,8 +511,6 @@ pub struct AgentPanel {
     config_options: Option<Vec<SessionConfigOption>>,
     /// Last composer choices, re-applied whenever a chat opens.
     prefs: AgentPrefs,
-    /// Model id to restore when OpusPlan Switch turns off (not persisted).
-    model_before_opusplan: Option<String>,
     /// Live context-window usage for the open session (`usage_update`).
     usage: Option<ContextUsage>,
     /// Last known usage per chat id (this process only — not persisted).
@@ -885,7 +883,6 @@ impl AgentPanel {
             modes: None,
             config_options: None,
             prefs,
-            model_before_opusplan: None,
             usage: None,
             usage_by_chat: HashMap::new(),
             plan_limits: saved_limits,
@@ -1169,6 +1166,56 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn set_opusplan_for_test(&mut self, on: bool, cx: &mut Context<Self>) {
         self.set_opusplan_mode(on, cx);
+    }
+
+    /// Set a config option like the composer pickers do (tests) — the Mode
+    /// picker goes through this path, not legacy `set_mode`.
+    #[cfg(test)]
+    pub fn set_config_for_test(&mut self, config_id: &str, value: &str, cx: &mut Context<Self>) {
+        self.set_config_value(config_id.to_owned(), value.to_owned(), cx);
+    }
+
+    /// Feed an agent `session/update` straight into the panel (tests).
+    #[cfg(test)]
+    pub fn apply_update_for_test(&mut self, update: SessionUpdate, cx: &mut Context<Self>) {
+        self.apply_update(update, cx);
+    }
+
+    /// Current value of the Mode config option (tests).
+    #[cfg(test)]
+    pub fn mode_config_current_for_test(&self) -> Option<String> {
+        find_select(&self.config_options, Some(SessionConfigOptionCategory::Mode), "mode")
+            .map(|s| s.current)
+    }
+
+    /// Whether Mode / Model / Fast / OpusPlan controls are locked (tests).
+    #[cfg(test)]
+    pub fn config_controls_locked_for_test(&self) -> bool {
+        self.config_controls_locked()
+    }
+
+    /// Model remembered for the OpusPlan Switch to restore (tests).
+    #[cfg(test)]
+    pub fn model_before_opusplan_for_test(&self) -> Option<String> {
+        self.prefs.model_before_opusplan.clone()
+    }
+
+    /// Clone of the agent's config options (tests) — for fake `ConfigOptionUpdate`.
+    #[cfg(test)]
+    pub fn config_options_for_test(&self) -> Vec<SessionConfigOption> {
+        self.config_options.clone().unwrap_or_default()
+    }
+
+    /// Plain composer draft text (tests).
+    #[cfg(test)]
+    pub fn composer_text_for_test(&self, cx: &App) -> String {
+        self.input.read(cx).content().text().to_string()
+    }
+
+    /// Seed sticky prefs as if loaded from disk (tests).
+    #[cfg(test)]
+    pub fn seed_prefs_for_test(&mut self, prefs: AgentPrefs) {
+        self.prefs = prefs;
     }
 
     /// Labels currently shown in the `@` mention menu (tests).
@@ -1887,6 +1934,12 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn is_improving_for_test(&self) -> bool {
         matches!(self.silent, Some(SilentTurn::Improve { .. }))
+    }
+
+    /// No silent job (Improve / title / Suggest) is in flight (tests).
+    #[cfg(test)]
+    pub fn silent_idle_for_test(&self) -> bool {
+        self.silent.is_none()
     }
 
     /// Start Improve from tests (same path as the composer button).
@@ -2927,13 +2980,14 @@ impl AgentPanel {
             let Some(id) = pick_opusplan_id(&model.choices, prefer_1m) else {
                 return;
             };
-            self.model_before_opusplan = Some(model.current.clone());
+            self.prefs.model_before_opusplan = Some(model.current.clone());
             self.set_config_value(model.config_id, id, cx);
         } else {
             if !prefs_want_opusplan(&self.prefs) && !is_opusplan_model_id(&model.current) {
                 return;
             }
             let restore = self
+                .prefs
                 .model_before_opusplan
                 .take()
                 .filter(|id| model.choices.iter().any(|(c, _)| c == id));
@@ -7702,8 +7756,8 @@ mod mode_filter_tests {
 #[cfg(test)]
 mod opusplan_tests {
     use super::{
-        is_opusplan_model_choice, is_opusplan_model_id, model_picker_choices, pick_opusplan_id,
-        prefs_want_opusplan,
+        current_mode_is_plan, is_opusplan_model_choice, is_opusplan_model_id,
+        model_picker_choices, pick_opusplan_id, prefs_want_opusplan,
     };
     use crate::config::{AgentPrefValue, AgentPrefs};
 
@@ -7751,6 +7805,36 @@ mod opusplan_tests {
                 .collect::<Vec<_>>(),
             vec!["sonnet-4-6", "opus-5"]
         );
+    }
+
+    #[test]
+    fn pick_falls_back_to_only_1m_variant() {
+        let choices = vec![
+            ("opusplan[1m]".into(), "Opus Plan Mode 1M".into()),
+            ("sonnet-4-6".into(), "Sonnet 4.6".into()),
+        ];
+        assert_eq!(
+            pick_opusplan_id(&choices, false).as_deref(),
+            Some("opusplan[1m]")
+        );
+        assert_eq!(pick_opusplan_id(&[], true), None);
+    }
+
+    #[test]
+    fn plan_mode_detected_from_legacy_modes() {
+        use agent_client_protocol::schema::v1::{SessionMode, SessionModeState};
+        let state = |current: &str| {
+            Some(SessionModeState::new(
+                current.to_owned(),
+                vec![
+                    SessionMode::new("code", "Code"),
+                    SessionMode::new("plan", "Plan"),
+                ],
+            ))
+        };
+        assert!(current_mode_is_plan(&state("plan"), &None));
+        assert!(!current_mode_is_plan(&state("code"), &None));
+        assert!(!current_mode_is_plan(&None, &None));
     }
 
     #[test]

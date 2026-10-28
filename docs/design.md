@@ -353,8 +353,10 @@ Add a row here whenever a new shared component is created.
   **hides** Model family / Version / flat Model / Context; Mode changes
   sync Model to the Switch (on → `opusplan`, off → remembered concrete id
   so `~/.claude/settings.json` `"model":"opusplan"` cannot take over);
-  tooltip says Opus in Plan / Sonnet otherwise; off restores the prior
-  model id; other options by ACP name with
+  tooltip says Opus in Plan / Sonnet otherwise; off restores the model
+  used before turning on (saved in `agent_prefs.model_before_opusplan`, so
+  it survives restarts; an id the agent no longer offers falls back to the
+  live model); other options by ACP name with
   heuristic icons (`Brain` thought/effort, `Users` agent/persona, else
   `SlidersHorizontal`) — Popover upward, `ListItem`s,
   disabled while a turn runs or the session is not Ready; Prefer

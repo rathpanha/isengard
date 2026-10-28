@@ -199,11 +199,15 @@ pub struct AgentPrefs {
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub config: BTreeMap<String, AgentPrefValue>,
+    /// Model in use before the OpusPlan Switch turned on — restored when it
+    /// turns off (survives restarts).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_before_opusplan: Option<String>,
 }
 
 impl AgentPrefs {
     pub fn is_empty(&self) -> bool {
-        self.mode.is_none() && self.config.is_empty()
+        self.mode.is_none() && self.config.is_empty() && self.model_before_opusplan.is_none()
     }
 }
 

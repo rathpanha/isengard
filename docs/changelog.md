@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Agent OpusPlan off now restores the model used before
+  turning it on, persisted in `agent_prefs.model_before_opusplan` (survives
+  restarts; was in-memory, so it fell back to the first list entry). Tests:
+  Mode-picker path, agent Mode/Config updates, Switch click + lock, absent
+  alias, restart/stale previous model; Improve cancel now asserts only the
+  Improve session is cancelled (FakeAgent records `cancel <sid>`).
 - **2026-10-28** — Disabled buttons no longer show the pointer hand: Git
   (Pull/Push/Commit/Discard/Refresh/Open), Search Replace and the chat title
   Generate button now add `cursor_pointer` only when enabled; `outline_btn`

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk,
     DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
     InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
     NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest,
@@ -197,6 +197,7 @@ impl FakeAgent {
                 st.model_id = "sonnet-4-5".into();
             }
         }
+        let s_cancel = self.state.clone();
         let (s_new, s_load, s_resume, s_close, s_delete, s_prompt, s_mode, s_cfg) = (
             self.state.clone(),
             self.state.clone(),
@@ -350,6 +351,7 @@ impl FakeAgent {
                                     format!("echo: {text}")
                                 } else if text.starts_with("Rewrite this user message") {
                                     // Improve prompt: optional hold for cancel-mid-flight tests.
+                                    state.lock().unwrap().calls.push(format!("improve {sid}"));
                                     let gate = state.lock().unwrap().hold_rx.take();
                                     if let Some(rx) = gate {
                                         let _ = rx.recv();
@@ -387,6 +389,17 @@ impl FakeAgent {
                             })
                         },
                         agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_notification(
+                        async move |n: CancelNotification, _cx: ConnectionTo<Client>| {
+                            s_cancel
+                                .lock()
+                                .unwrap()
+                                .calls
+                                .push(format!("cancel {}", n.session_id));
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_notification!(),
                     )
                     .on_receive_request(
                         async move |req: SetSessionModeRequest, responder, _cx| {
