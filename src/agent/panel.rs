@@ -6097,7 +6097,6 @@ impl AgentPanel {
             .child(Icon::new(LucideIcon::Zap).small().text_color(icon_color))
             .child(
                 Switch::new("agent-fast-mode")
-                    .label("Fast")
                     .small()
                     .checked(checked)
                     .disabled(busy)
@@ -6108,7 +6107,18 @@ impl AgentPanel {
                         _ = panel.update(cx, |this, cx| this.set_fast_mode(on, cx));
                     }),
             )
+            .child(self.render_switch_label("Fast", icon_color, busy))
             .into_any_element()
+    }
+
+    /// Composer Switch label drawn here (not `Switch::label`) so a locked Switch
+    /// grays its text like the Mode/Model ghost buttons.
+    fn render_switch_label(&self, text: &'static str, color: Hsla, busy: bool) -> Div {
+        div()
+            .text_sm()
+            .text_color(color)
+            .when(busy, |d| d.cursor_not_allowed())
+            .child(text)
     }
 
     /// OpusPlan as a Kit Switch — sets Claude's `opusplan` Model alias.
@@ -6140,7 +6150,6 @@ impl AgentPanel {
             .child(Icon::new(LucideIcon::ListTodo).small().text_color(icon_color))
             .child(
                 Switch::new("agent-opusplan")
-                    .label("OpusPlan")
                     .small()
                     .checked(checked)
                     .disabled(busy)
@@ -6151,6 +6160,7 @@ impl AgentPanel {
                         _ = panel.update(cx, |this, cx| this.set_opusplan_mode(on, cx));
                     }),
             )
+            .child(self.render_switch_label("Opus Plan", icon_color, busy))
             .into_any_element()
     }
 

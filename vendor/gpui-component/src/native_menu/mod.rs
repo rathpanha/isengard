@@ -22,6 +22,9 @@
 //!     .show(position, window, cx);
 //! ```
 
+// Isengard patch: macOS no longer calls the NSMenu backend (see `show`).
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
 #[cfg(target_os = "windows")]
 use crate::ActiveTheme as _;
 use crate::Icon;
@@ -203,10 +206,10 @@ impl NativeMenu {
             return;
         }
 
+        // Isengard patch: macOS uses the drawn Kit popup (like the terminal /
+        // tab menus) instead of the system NSMenu. See vendor/README.md.
         #[cfg(target_os = "macos")]
-        {
-            macos::show(self.items, cx.asset_source().clone(), position, window, cx);
-        }
+        fallback::show(self.items, position, window, cx);
         #[cfg(target_os = "windows")]
         {
             windows::show(

@@ -12,5 +12,9 @@ pane was laid out past the window edge and clipped.
 (sidebar-aware max width; do not stretch to full remaining width), stack when
 side-by-side would squeeze either pane, scroll docs at max 240px height.
 
+**Also:** `src/native_menu/mod.rs` — `NativeMenu::show` uses the drawn
+`fallback::show` popup on macOS instead of the system NSMenu, so the editor
+right-click menu matches the Kit terminal / tab menus. Windows is unchanged.
+
 Wired via `[patch.crates-io]` in the repo `Cargo.toml`. Drop the patch (and
 this folder) once upstream includes the same fix.

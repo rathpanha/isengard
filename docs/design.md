@@ -137,8 +137,9 @@ Add a row here whenever a new shared component is created.
 - **Editor context menu:** right-click in a text editor → Kit defaults
   (Cut/Copy/Paste/Select All, plus Go to Definition / Code Actions when
   available) plus **Add Selection to Agent** (same as `⌘L` / Edit menu).
-  On Linux the Kit NativeMenu fallback keeps editor focus so the selection
-  highlight stays (gpui-base only paints selection while focused).
+  On Linux and macOS the drawn Kit popup (vendored `NativeMenu` fallback, not
+  the system NSMenu) keeps editor focus so the selection highlight stays
+  (gpui-base only paints selection while focused).
 - **LSP Format / Rename:** Edit → **Format Document** (`⌘⇧I` / `Ctrl+Shift+I`);
   Edit → **Rename Symbol** (`F2` while the editor Input is focused — Tree
   keeps `F2` for path rename). Format-on-save defaults on
@@ -337,8 +338,9 @@ Add a row here whenever a new shared component is created.
   one Model `Cpu` — not `Bot`, which is the panel/status toggle); Mode
   list omits Claude `auto` when the selected model is older than 4.6
   (agent still advertises it); Context `Maximize2` when size variants exist; Fast
-  `Zap` + Kit `Switch` labeled `Fast` (Zap / OpusPlan `ListTodo` icons use
-  `theme.foreground` like Mode/Model, not muted); **OpusPlan** pinned
+  `Zap` + Kit `Switch` labeled `Fast` (Zap / Opus Plan `ListTodo` icons and the
+  drawn label use `theme.foreground` like Mode/Model, `muted_foreground` while
+  locked — label is not `Switch::label`, which stays bright); **Opus Plan** (label) pinned
   right (`justify_between`) when the Model select advertises `opusplan` /
   `opusplan[1m]` (or an “Opus Plan” name) — Switch-only (alias omitted
   from Model/family/version/context menus); on sets that alias (prefers

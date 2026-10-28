@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Agent composer: Fast / Opus Plan Switch labels now gray
+  with the icons while locked (drawn label, same as Mode/Model); label
+  renamed "Opus Plan".
+- **2026-10-28** — Editor right-click on macOS now shows the drawn Kit menu
+  instead of the system NSMenu (vendored `gpui-component` `NativeMenu::show`).
 - **2026-10-28** — Removed the Open Config File action entirely (it never had
   a shortcut; edit `config.json` by hand). Agent Fast / OpusPlan Switch icons
   now turn gray with the Switch while the agent is running.
