@@ -35,6 +35,27 @@ included in the packages).
 
 Verify downloads with `SHA256SUMS` on the release.
 
+## Install (macOS)
+
+Isengard is not notarized by Apple (that needs a paid developer account), so
+macOS treats a browser download as untrusted. Pick one:
+
+**Terminal (no warnings):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rathpanha/isengard/master/scripts/install-macos.sh | bash
+```
+
+Files downloaded by `curl` are not quarantined, so Isengard opens normally.
+
+**Disk image:** download `isengard-*-macos-universal.dmg`, drag Isengard to
+Applications, then open **System Settings → Privacy & Security** and click
+**Open Anyway** (or run `xattr -dr com.apple.quarantine /Applications/Isengard.app`).
+
+Once installed, **Check for Updates…** updates Isengard in place with no
+prompts. The first time the Claude Agent reads your Claude Code login, macOS
+asks for Keychain access once — choose **Always Allow**.
+
 ### After install
 
 - **Language servers** are not inside the package. Use the status-bar LSP menu
@@ -53,6 +74,12 @@ Package on Linux after a release build:
 ```sh
 cargo build --release
 ./scripts/package-linux.sh   # needs `nfpm` on PATH → writes dist/linux/
+```
+
+Package on macOS (`.app`, `.dmg`, `.tar.gz` → `dist/macos/`):
+
+```sh
+./scripts/package-macos.sh   # universal; TARGETS=aarch64-apple-darwin for one arch
 ```
 
 ## License

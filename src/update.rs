@@ -120,19 +120,50 @@ pub enum InstallKind {
         kind: PackageKind,
         manager: &'static str,
     },
+    /// macOS `Isengard.app` in a writable folder (`/Applications` for admin
+    /// users): swap the whole bundle, then restart.
+    MacApp { bundle: PathBuf },
     /// Cannot update itself (dev build, `/usr/local`, other OS): link only.
     Manual,
 }
 
 pub fn detect_install_kind() -> InstallKind {
-    if !cfg!(target_os = "linux") {
-        return InstallKind::Manual;
-    }
     let Ok(exe) = std::env::current_exe() else {
         return InstallKind::Manual;
     };
+    if cfg!(target_os = "macos") {
+        let writable = app_bundle_of(&exe)
+            .and_then(Path::parent)
+            .is_some_and(dir_writable);
+        return classify_macos(&exe, writable);
+    }
+    if !cfg!(target_os = "linux") {
+        return InstallKind::Manual;
+    }
     let writable = exe.parent().is_some_and(dir_writable);
     classify(&exe, writable, command_on_path)
+}
+
+/// `…/Isengard.app` when `exe` is `…/Isengard.app/Contents/MacOS/<bin>`.
+fn app_bundle_of(exe: &Path) -> Option<&Path> {
+    let macos_dir = exe.parent()?;
+    let contents = macos_dir.parent()?;
+    let bundle = contents.parent()?;
+    (macos_dir.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && bundle.extension()? == "app")
+        .then_some(bundle)
+}
+
+/// Pure decision behind [`detect_install_kind`] on macOS (unit-tested).
+pub fn classify_macos(exe: &Path, parent_writable: bool) -> InstallKind {
+    // `cargo run` builds and anything outside a bundle are never updated.
+    match app_bundle_of(exe) {
+        Some(bundle) if parent_writable => InstallKind::MacApp {
+            bundle: bundle.to_path_buf(),
+        },
+        _ => InstallKind::Manual,
+    }
 }
 
 /// Pure decision behind [`detect_install_kind`] (unit-tested).
@@ -204,6 +235,7 @@ pub fn pick_asset<'a>(release: &'a Release, kind: &InstallKind) -> Option<&'a As
                     kind: PackageKind::Deb,
                     ..
                 } => a.name.ends_with(".deb") && a.name.contains(deb_arch),
+                InstallKind::MacApp { .. } => a.name.ends_with("-macos-universal.tar.gz"),
                 InstallKind::Manual => false,
             }
     })
@@ -554,6 +586,86 @@ pub fn install_in_place(tarball: &Path, exe: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Name of the app inside the macOS release tarball.
+const MAC_APP_NAME: &str = "Isengard.app";
+
+/// Unpack the release tarball into a hidden folder next to `bundle` (same
+/// volume, so the final rename is atomic). Returns the new `Isengard.app`.
+/// Files we write ourselves carry no quarantine flag, so Gatekeeper stays out.
+fn stage_app_bundle(tarball: &Path, bundle: &Path) -> Result<PathBuf> {
+    let parent = bundle.parent().context("app bundle has no parent folder")?;
+    let staging = parent.join(".isengard-update");
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging).with_context(|| format!("create {}", staging.display()))?;
+    let unpack = || -> Result<PathBuf> {
+        let file =
+            fs::File::open(tarball).with_context(|| format!("open {}", tarball.display()))?;
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+        archive.set_preserve_permissions(true);
+        archive.unpack(&staging).context("unpack archive")?;
+        let new = staging.join(MAC_APP_NAME);
+        if !new.join("Contents/MacOS/isengard").is_file() {
+            bail!("archive has no {MAC_APP_NAME}");
+        }
+        Ok(new)
+    };
+    unpack().inspect_err(|_| {
+        let _ = fs::remove_dir_all(&staging);
+    })
+}
+
+/// Put `new` where `bundle` is. The old bundle is moved aside first and
+/// restored if the second rename fails, so an interrupted update never leaves
+/// the user without an app.
+fn swap_app_bundle(new: &Path, bundle: &Path) -> Result<()> {
+    let parent = bundle.parent().context("app bundle has no parent folder")?;
+    let old = parent.join(".isengard-old.app");
+    let _ = fs::remove_dir_all(&old);
+    fs::rename(bundle, &old).with_context(|| format!("move aside {}", bundle.display()))?;
+    if let Err(err) = fs::rename(new, bundle) {
+        let _ = fs::rename(&old, bundle);
+        return Err(err).with_context(|| format!("replace {}", bundle.display()));
+    }
+    let _ = fs::remove_dir_all(&old);
+    if let Some(staging) = new.parent() {
+        let _ = fs::remove_dir(staging);
+    }
+    Ok(())
+}
+
+/// `codesign --verify`: the unpacked bundle must be intact (any identity).
+#[cfg(target_os = "macos")]
+fn verify_bundle_intact(new: &Path) -> Result<()> {
+    let output = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(new)
+        .output()
+        .context("run codesign")?;
+    if !output.status.success() {
+        bail!(
+            "downloaded app failed its code-signature check: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Replace the running `bundle` with `Isengard.app` from the release tarball
+/// and return the binary to restart into.
+pub fn install_app_bundle(tarball: &Path, bundle: &Path) -> Result<PathBuf> {
+    let new = stage_app_bundle(tarball, bundle)?;
+    #[cfg(target_os = "macos")]
+    if let Err(err) = verify_bundle_intact(&new) {
+        if let Some(staging) = new.parent() {
+            let _ = fs::remove_dir_all(staging);
+        }
+        return Err(err);
+    }
+    swap_app_bundle(&new, bundle)?;
+    let _ = fs::remove_file(tarball);
+    Ok(bundle.join("Contents/MacOS/isengard"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,6 +860,104 @@ mod tests {
         assert_eq!(fs::read(&exe).unwrap(), b"new binary");
         assert!(!dir.path().join(".isengard.update").exists());
         assert!(!tarball.exists(), "tarball removed after install");
+    }
+
+    #[test]
+    fn classifies_macos_installs() {
+        let exe = Path::new("/Applications/Isengard.app/Contents/MacOS/isengard");
+        let bundle = PathBuf::from("/Applications/Isengard.app");
+        assert_eq!(
+            classify_macos(exe, true),
+            InstallKind::MacApp { bundle: bundle.clone() }
+        );
+        assert_eq!(classify_macos(exe, false), InstallKind::Manual);
+        assert_eq!(
+            classify_macos(Path::new("/Users/u/isengard/target/release/isengard"), true),
+            InstallKind::Manual,
+            "bare binaries (cargo run) are never updated"
+        );
+        assert_eq!(
+            classify_macos(Path::new("/Applications/Foo/Contents/MacOS/isengard"), true),
+            InstallKind::Manual,
+            "the folder must be an .app"
+        );
+    }
+
+    #[test]
+    fn picks_macos_tarball() {
+        let asset = |name: &str| Asset { name: name.into(), url: format!("https://x/{name}") };
+        let release = Release {
+            tag: "v0.2.0".into(),
+            version: "0.2.0".into(),
+            notes: String::new(),
+            page_url: String::new(),
+            assets: vec![
+                asset("isengard-0.2.0-linux-aarch64.tar.gz"),
+                asset("isengard-0.2.0-macos-universal.tar.gz"),
+                asset("isengard-0.2.0-macos-universal.dmg"),
+            ],
+        };
+        let kind = InstallKind::MacApp { bundle: "/Applications/Isengard.app".into() };
+        assert_eq!(
+            pick_asset(&release, &kind).map(|a| a.name.as_str()),
+            Some("isengard-0.2.0-macos-universal.tar.gz")
+        );
+    }
+
+    /// A gzip tarball holding `Isengard.app/Contents/MacOS/isengard` = `body`.
+    fn mac_tarball(path: &Path, body: &[u8], with_binary: bool) {
+        let gz = flate2::write::GzEncoder::new(
+            fs::File::create(path).unwrap(),
+            flate2::Compression::fast(),
+        );
+        let mut tar = tar::Builder::new(gz);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        let name = if with_binary {
+            "Isengard.app/Contents/MacOS/isengard"
+        } else {
+            "Isengard.app/Contents/Info.plist"
+        };
+        tar.append_data(&mut header, name, body).unwrap();
+        tar.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[test]
+    fn swaps_app_bundle_from_tarball() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Isengard.app");
+        fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        fs::write(bundle.join("Contents/MacOS/isengard"), b"old").unwrap();
+        fs::write(bundle.join("Contents/stale"), b"gone after update").unwrap();
+        let tarball = dir.path().join("isengard-0.2.0-macos-universal.tar.gz");
+        mac_tarball(&tarball, b"new", true);
+
+        let new = stage_app_bundle(&tarball, &bundle).unwrap();
+        swap_app_bundle(&new, &bundle).unwrap();
+
+        assert_eq!(fs::read(bundle.join("Contents/MacOS/isengard")).unwrap(), b"new");
+        assert!(!bundle.join("Contents/stale").exists());
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(leftovers.len(), 2, "only app + tarball remain: {leftovers:?}");
+    }
+
+    #[test]
+    fn bad_mac_tarball_leaves_app_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Isengard.app");
+        fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        fs::write(bundle.join("Contents/MacOS/isengard"), b"old").unwrap();
+        let tarball = dir.path().join("t.tar.gz");
+        mac_tarball(&tarball, b"x", false);
+
+        assert!(stage_app_bundle(&tarball, &bundle).is_err());
+        assert_eq!(fs::read(bundle.join("Contents/MacOS/isengard")).unwrap(), b"old");
+        assert!(!dir.path().join(".isengard-update").exists(), "staging cleaned up");
     }
 
     #[test]

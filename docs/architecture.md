@@ -26,6 +26,29 @@ Version comes from `VERSION` or `Cargo.toml`. Contents: `/usr/bin/isengard`,
 (tag must equal `Cargo.toml`; notes = `docs/releases/<tag>.md`) and attaches
 those assets to a GitHub Release.
 
+On macOS, `./scripts/package-macos.sh` builds `Isengard.app` (hand-assembled
+from `packaging/macos/Info.plist.in`, `Isengard.icns`, a `lipo` universal binary
+of `aarch64`/`x86_64-apple-darwin`; `TARGETS=…` overrides) and writes
+`isengard-<ver>-macos-universal.{tar.gz,dmg}` + `SHA256SUMS` under
+`dist/macos/`. The same workflow's `macos` job (runner `macos-14`) runs it and
+feeds the shared `publish` job (Linux still publishes if macOS fails).
+There is **no Apple Developer ID / notarization** (costs $99/yr), so:
+- The app must still be code-signed (Apple Silicon refuses unsigned code). A
+  *self-signed* certificate (`scripts/create-macos-cert.sh`, one time) is used
+  so the signature identity is stable across releases — the Keychain's "Always
+  Allow" for the Claude Code token then survives updates. Secrets
+  `MACOS_CERT_P12` (base64 `.p12`) / `MACOS_CERT_PASSWORD`;
+  `scripts/ci-macos-keychain.sh` imports it into a throwaway keychain and marks
+  it trusted for code signing (codesign ignores untrusted identities). Without
+  the secret the build is signed ad-hoc (`-`) and the Keychain re-asks after
+  each update. Back the `.p12` up: a new certificate = a new identity.
+- Gatekeeper blocks quarantined (browser-downloaded) copies until the user does
+  System Settings > Privacy & Security > Open Anyway. Files fetched by `curl`
+  or written by the app's own updater are not quarantined, so
+  `scripts/install-macos.sh` (curl one-liner in the README) and in-app updates
+  run without any prompt. `install-macos.sh` embeds the minisign public key —
+  keep it equal to `update::PUBLIC_KEY`.
+
 Agents: see `.cursor/rules/cargo-warning-free.mdc`. Finish no `src/` task while
 `cargo check` still prints `isengard` warnings — fix the code; do not disable
 or filter warning output. `block v0.1.6` is upstream, not this package.
@@ -44,7 +67,11 @@ Settings: `dirs::config_dir()/isengard/config.json` (macOS:
    ```
 
 3. App icon: automatic at runtime (`branding::set_dock_icon`) for `cargo run`.
-   Bundled `.app` builds use `Isengard.icns` via cargo-bundle.
+   Bundled `.app` builds (`scripts/package-macos.sh`) use `Isengard.icns`;
+   the `[package.metadata.bundle]` table in `Cargo.toml` is only for an
+   optional manual `cargo bundle`.
+4. Release builds for both architectures need
+   `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
 
 ### Linux (Fedora example)
 
@@ -388,7 +415,10 @@ src/
   command / Open in terminal — `sudo <mgr> install '<path>'` is *typed, not run*,
   so the user enters their own password); otherwise writable → **InPlace**
   (download tarball, verify, write `.isengard.update` beside the exe and rename
-  over it, then "Restart now" → `restart_into` sets `relaunch_exe`, goes through
+  over it; on macOS an `Isengard.app` whose parent folder is writable is
+  **MacApp** — `install_app_bundle` unpacks `…-macos-universal.tar.gz` into a
+  hidden sibling folder, `codesign --verify`s it, then swaps the whole bundle
+  (old one moved aside, restored if the swap fails), then "Restart now" → `restart_into` sets `relaunch_exe`, goes through
   `confirm_quit`, and `quit()` re-spawns the exe on the open workspace/folder;
   plain Quit / window close clears the flag). Verification: `SHA256SUMS` +
   `SHA256SUMS.minisig` must verify against `update::PUBLIC_KEY`, then the asset

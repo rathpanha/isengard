@@ -2582,6 +2582,28 @@ fn update_dialog_later_closes_without_skipping(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn update_dialog_offers_mac_app_update(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let mut release = fake_release("9.9.9");
+    release.assets.push(crate::update::Asset {
+        name: "isengard-9.9.9-macos-universal.tar.gz".into(),
+        url: "https://example.invalid/a.tar.gz".into(),
+    });
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_available(
+            release,
+            crate::update::InstallKind::MacApp { bundle: "/Applications/Isengard.app".into() },
+            true,
+            window,
+            cx,
+        );
+    });
+    assert!(h.has("update-primary", cx), "macOS app copies get an update prompt");
+    h.click("update-later", cx);
+    assert!(!h.has("update-primary", cx));
+}
+
+#[gpui_kit::test]
 fn update_check_result_decides_whether_to_prompt(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     // Same version: silent on startup checks, no dialog, check time recorded.

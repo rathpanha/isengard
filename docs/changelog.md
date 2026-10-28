@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — macOS release pipeline without an Apple Developer ID:
+  `scripts/package-macos.sh` (universal `Isengard.app`, `.dmg`, `.tar.gz`,
+  signed with a self-signed cert or ad-hoc), `scripts/create-macos-cert.sh`,
+  `scripts/ci-macos-keychain.sh`, `scripts/install-macos.sh` (curl installer),
+  `macos` job in the release workflow (now named Release), README macOS
+  install section. In-app updater gains `InstallKind::MacApp` (swap the whole
+  bundle after `codesign --verify`, restart). Tests: `classify_macos`,
+  macOS asset pick, bundle swap / bad-tarball rollback, MacApp update dialog.
 - **2026-10-28** — Agent OpusPlan off now restores the model used before
   turning it on, persisted in `agent_prefs.model_before_opusplan` (survives
   restarts; was in-memory, so it fell back to the first list entry). Tests:

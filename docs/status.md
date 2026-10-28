@@ -241,11 +241,13 @@ tabs, highlighted editor, status bar):
   reopens via `session/load` (history replays). Verified end to end against
   the real adapter on Linux (read + shell tool turn; load replays and the
   model keeps context; resume does not replay).
-- **Updates (Linux):** checks GitHub releases at startup (≤ once a day; opt out
+- **Updates (Linux, macOS):** checks GitHub releases at startup (≤ once a day; opt out
   with `updates.check: false`) and via Isengard > Check for Updates…. Dialog:
   Skip this version / Later / Update now. Self-installed copies (writable dir)
   download, verify (minisign signature + SHA-256) and swap the binary, then
-  offer Restart now (unsaved-changes prompt first; workspace reopens). RPM/DEB
+  offer Restart now (unsaved-changes prompt first; workspace reopens). On macOS
+  an `Isengard.app` in a writable folder (e.g. `/Applications`) swaps itself the
+  same way (no password, no Gatekeeper prompt). RPM/DEB
   installs download + verify, then **Install now** asks for the sudo password in a
   masked dialog, runs `sudo -S <manager> install -y <file>` with live output
   (wrong password re-asks) and restarts into the new binary; Copy command /
@@ -276,7 +278,15 @@ not a product TODO. License is **GPL-3.0-only** — see
 - **v0.1.9 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
   + [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
   Tag must match `Cargo.toml`; notes at `docs/releases/<tag>.md`. App id
-  `app.isengard.edtir`. macOS / Windows installers not shipping yet.
+  `app.isengard.edtir`. Windows installer not shipping yet.
+- **macOS (unreleased, pipeline ready):** `scripts/package-macos.sh` +
+  `macos` CI job + `scripts/install-macos.sh`; no Apple Developer ID (see
+  [architecture.md](architecture.md) for the signing / Gatekeeper trade-offs).
+  **Before the first macOS release:** run `scripts/create-macos-cert.sh` and add
+  secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`; the CI keychain-trust step
+  and the x86_64 cross-build have not run on a real runner yet, so tag a
+  throwaway version (or use "Run workflow") first and open the resulting `.dmg`
+  on a clean Mac.
 - Notes: [docs/releases/v0.1.9.md](releases/v0.1.9.md). Human install:
   root [README.md](../README.md).
 

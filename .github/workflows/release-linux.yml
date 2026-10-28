@@ -1,6 +1,7 @@
-# Build, test, package (.deb / .rpm / tarball), and attach to a GitHub Release.
+# Build, test, package (Linux .deb / .rpm / tarball, macOS .dmg / tarball), and
+# attach to a GitHub Release.
 # Trigger: push tag v* (must match Cargo.toml version), or manual “Run workflow”.
-name: Release Linux
+name: Release
 
 on:
   push:
@@ -104,8 +105,69 @@ jobs:
           name: linux-${{ matrix.arch_deb }}
           path: dist/linux/*
 
+  # Universal (arm64 + x86_64) Isengard.app as .dmg + .tar.gz. Signed with the
+  # self-signed certificate when MACOS_CERT_P12 is set, else ad-hoc (the
+  # Keychain then re-asks for access after every update).
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert tag matches Cargo.toml
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_VER="${TAG#v}"
+          CARGO_VER="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$TAG_VER" != "$CARGO_VER" ]; then
+            echo "Tag $TAG (version $TAG_VER) != Cargo.toml $CARGO_VER" >&2
+            exit 1
+          fi
+          echo "VERSION=$TAG_VER" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERT_P12" ]; then
+            echo "::warning::MACOS_CERT_P12 not set — signing ad-hoc (Keychain re-prompts after each update)"
+            exit 0
+          fi
+          scripts/ci-macos-keychain.sh >> "$GITHUB_ENV"
+
+      - name: Package
+        run: scripts/package-macos.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: |
+            dist/macos/*.dmg
+            dist/macos/*.tar.gz
+
   publish:
-    needs: linux
+    needs: [linux, macos]
+    # A broken macOS build must not block the Linux release (the run still
+    # shows red so the missing macOS assets are noticed).
+    if: ${{ !cancelled() && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
