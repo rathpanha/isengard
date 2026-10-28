@@ -275,18 +275,25 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.11 — Linux + macOS** (Linux `.deb` / `.rpm` / tarball via
+- **v0.1.12 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
-  `scripts/package-macos.sh`; both from
+  `scripts/package-macos.sh`; Windows x86_64 `.zip` via
+  `scripts/package-windows.ps1`; all from
   [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
   Tag must match `Cargo.toml`; notes at `docs/releases/<tag>.md`. App id
-  `app.isengard.edtir`. Windows installer not shipping yet.
+  `app.isengard.edtir`.
+- **Windows (first release v0.1.12):** `scripts/package-windows.ps1` +
+  `windows` CI job + `scripts/install-windows.ps1` + in-app updater
+  (`InstallKind::WinExe`); unsigned (see [architecture.md](architecture.md)).
+  Never run on a real Windows machine before v0.1.12 — the installer and
+  updater still need a test on a clean PC (the updater needs a second release
+  to update to). Only x86_64.
 - **macOS:** no Apple Developer ID (see [architecture.md](architecture.md) for
   the signing / Gatekeeper trade-offs); signed with the self-signed cert from
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.1.11.md](releases/v0.1.11.md). Human install:
+- Notes: [docs/releases/v0.1.12.md](releases/v0.1.12.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1

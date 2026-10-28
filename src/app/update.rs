@@ -366,6 +366,10 @@ impl IsengardApp {
                             let _ = std::fs::remove_file(&path);
                             Ok(Staged::Installed(exe))
                         }
+                        InstallKind::WinExe { exe } => {
+                            update::install_windows_exe(&path, &exe)?;
+                            Ok(Staged::Installed(exe))
+                        }
                         InstallKind::MacApp { bundle } => {
                             let exe = update::install_app_bundle(&path, &bundle)?;
                             Ok(Staged::Installed(exe))

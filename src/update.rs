@@ -123,6 +123,10 @@ pub enum InstallKind {
     /// macOS `Isengard.app` in a writable folder (`/Applications` for admin
     /// users): swap the whole bundle, then restart.
     MacApp { bundle: PathBuf },
+    /// Windows `isengard.exe` in a writable folder (the per-user install in
+    /// `%LOCALAPPDATA%\Programs\Isengard`): rename the running exe aside, put
+    /// the new one in its place, then restart.
+    WinExe { exe: PathBuf },
     /// Cannot update itself (dev build, `/usr/local`, other OS): link only.
     Manual,
 }
@@ -137,11 +141,26 @@ pub fn detect_install_kind() -> InstallKind {
             .is_some_and(dir_writable);
         return classify_macos(&exe, writable);
     }
+    if cfg!(windows) {
+        let writable = exe.parent().is_some_and(dir_writable);
+        return classify_windows(&exe, writable);
+    }
     if !cfg!(target_os = "linux") {
         return InstallKind::Manual;
     }
     let writable = exe.parent().is_some_and(dir_writable);
     classify(&exe, writable, command_on_path)
+}
+
+/// Pure decision behind [`detect_install_kind`] on Windows (unit-tested).
+pub fn classify_windows(exe: &Path, dir_writable: bool) -> InstallKind {
+    // `cargo run` / `target\release` builds are never updated in place.
+    if exe.ancestors().any(|a| a.file_name().is_some_and(|n| n == "target")) || !dir_writable {
+        return InstallKind::Manual;
+    }
+    InstallKind::WinExe {
+        exe: exe.to_path_buf(),
+    }
 }
 
 /// `…/Isengard.app` when `exe` is `…/Isengard.app/Contents/MacOS/<bin>`.
@@ -236,6 +255,7 @@ pub fn pick_asset<'a>(release: &'a Release, kind: &InstallKind) -> Option<&'a As
                     ..
                 } => a.name.ends_with(".deb") && a.name.contains(deb_arch),
                 InstallKind::MacApp { .. } => a.name.ends_with("-macos-universal.tar.gz"),
+                InstallKind::WinExe { .. } => a.name.ends_with(&format!("-windows-{rpm_arch}.zip")),
                 InstallKind::Manual => false,
             }
     })
@@ -586,6 +606,69 @@ pub fn install_in_place(tarball: &Path, exe: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Where the previous exe waits until the next update or launch removes it.
+fn old_exe_path(exe: &Path) -> PathBuf {
+    let mut name = exe.file_name().unwrap_or_default().to_os_string();
+    name.push(".old");
+    exe.with_file_name(name)
+}
+
+/// Replace `exe` with `isengard.exe` from the release zip. Windows will not
+/// overwrite a running executable but does allow renaming it, so the old file
+/// moves to `isengard.exe.old` (restored if the swap fails).
+pub fn install_windows_exe(zip_path: &Path, exe: &Path) -> Result<()> {
+    let file =
+        fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file).context("read zip")?;
+    let mut name = exe.file_name().unwrap_or_default().to_os_string();
+    name.push(".update");
+    let staged = exe.with_file_name(name);
+    let mut found = false;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).context("zip entry")?;
+        let is_exe = entry.is_file()
+            && entry
+                .enclosed_name()
+                .is_some_and(|p| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("isengard.exe")));
+        if !is_exe {
+            continue;
+        }
+        let mut out =
+            fs::File::create(&staged).with_context(|| format!("create {}", staged.display()))?;
+        std::io::copy(&mut entry, &mut out).context("extract exe")?;
+        out.flush().context("flush exe")?;
+        found = true;
+        break;
+    }
+    if !found {
+        bail!("archive has no isengard.exe");
+    }
+    let old = old_exe_path(exe);
+    let _ = fs::remove_file(&old);
+    if let Err(err) = fs::rename(exe, &old) {
+        let _ = fs::remove_file(&staged);
+        return Err(err).with_context(|| format!("move aside {}", exe.display()));
+    }
+    if let Err(err) = fs::rename(&staged, exe) {
+        let _ = fs::rename(&old, exe);
+        let _ = fs::remove_file(&staged);
+        return Err(err).with_context(|| format!("replace {}", exe.display()));
+    }
+    let _ = fs::remove_file(zip_path);
+    Ok(())
+}
+
+/// Remove the `.old` exe an earlier update left behind (Windows only; it was
+/// still running when it was renamed, so it could not be deleted then).
+pub fn cleanup_old_exe() {
+    if !cfg!(windows) {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = fs::remove_file(old_exe_path(&exe));
+    }
+}
+
 /// Name of the app inside the macOS release tarball.
 const MAC_APP_NAME: &str = "Isengard.app";
 
@@ -881,6 +964,81 @@ mod tests {
             InstallKind::Manual,
             "the folder must be an .app"
         );
+    }
+
+    #[test]
+    fn classifies_windows_installs() {
+        let exe = Path::new(r"C:\Users\u\AppData\Local\Programs\Isengard\isengard.exe");
+        assert_eq!(classify_windows(exe, true), InstallKind::WinExe { exe: exe.to_path_buf() });
+        assert_eq!(classify_windows(exe, false), InstallKind::Manual, "read-only folder");
+        assert_eq!(
+            classify_windows(Path::new("/src/isengard/target/release/isengard.exe"), true),
+            InstallKind::Manual,
+            "cargo builds are never updated"
+        );
+    }
+
+    #[test]
+    fn picks_windows_zip() {
+        if std::env::consts::ARCH != "x86_64" {
+            return;
+        }
+        let asset = |name: &str| Asset { name: name.into(), url: format!("https://x/{name}") };
+        let release = Release {
+            tag: "v0.2.0".into(),
+            version: "0.2.0".into(),
+            notes: String::new(),
+            page_url: String::new(),
+            assets: vec![
+                asset("isengard-0.2.0-linux-x86_64.tar.gz"),
+                asset("isengard-0.2.0-windows-x86_64.zip"),
+            ],
+        };
+        let kind = InstallKind::WinExe { exe: "/x/isengard.exe".into() };
+        assert_eq!(
+            pick_asset(&release, &kind).map(|a| a.name.as_str()),
+            Some("isengard-0.2.0-windows-x86_64.zip")
+        );
+    }
+
+    /// A zip holding `entries` (name, body).
+    fn windows_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        for (name, body) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn swaps_windows_exe_from_zip() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("isengard.exe");
+        fs::write(&exe, b"old").unwrap();
+        fs::write(dir.path().join("isengard.exe.old"), b"older").unwrap();
+        let zip = dir.path().join("isengard-0.2.0-windows-x86_64.zip");
+        windows_zip(&zip, &[("LICENSE", b"gpl"), ("isengard.exe", b"new")]);
+
+        install_windows_exe(&zip, &exe).unwrap();
+
+        assert_eq!(fs::read(&exe).unwrap(), b"new");
+        assert_eq!(fs::read(dir.path().join("isengard.exe.old")).unwrap(), b"old");
+        assert!(!dir.path().join("isengard.exe.update").exists());
+        assert!(!zip.exists(), "zip removed after install");
+    }
+
+    #[test]
+    fn zip_without_exe_leaves_windows_exe_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("isengard.exe");
+        fs::write(&exe, b"old").unwrap();
+        let zip = dir.path().join("t.zip");
+        windows_zip(&zip, &[("LICENSE", b"gpl")]);
+
+        assert!(install_windows_exe(&zip, &exe).is_err());
+        assert_eq!(fs::read(&exe).unwrap(), b"old");
+        assert!(!dir.path().join("isengard.exe.old").exists());
     }
 
     #[test]

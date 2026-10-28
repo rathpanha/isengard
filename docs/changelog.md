@@ -3,6 +3,30 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Release prep v0.1.12 (first Windows release, Rename-chat
+  Generate, silent jobs during a turn): version bump, `docs/releases/v0.1.12.md`,
+  README / status release lines.
+- **2026-10-28** — Improve, Git Suggest and chat-title Generate now work while
+  a user turn is running (they run on throwaway sessions): `can_silent_prompt`,
+  `can_suggest_commit`, `can_generate_title` and the Improve / history-row Rename
+  buttons no longer require an idle chat (Generate that must load an unopened
+  chat still does). `apply_update` no longer routes the open chat's stream into
+  a running silent job (it would have swallowed the reply and aborted on tool
+  calls); `start_silent` keeps a running turn's file tracking. FakeAgent's
+  `hold` is now async so it can serve other sessions meanwhile. Test:
+  `silent_jobs_run_while_a_user_turn_runs`.
+- **2026-10-28** — Rename-chat dialog: Generate no longer closes the dialog and
+  renames at once. It shows a spinner, fills the input with the generated title,
+  and the chat is only renamed when the user clicks Rename (Cancel aborts the
+  silent title turn). New `RenameChatView` + `RenameDialog` state in
+  `agent/panel.rs`; UI test `rename_dialog_generate_fills_input_and_saves_only_on_rename`.
+- **2026-10-28** — Windows release pipeline without a signing certificate:
+  `scripts/package-windows.ps1` (x86_64 zip), `scripts/install-windows.ps1`
+  (PowerShell installer, no SmartScreen mark), `windows` job in the release
+  workflow, release builds use the GUI subsystem, in-app updater gains
+  `InstallKind::WinExe` (rename running exe to `.old`, swap, restart; old file
+  cleaned at launch). Tests: `classify_windows`, Windows asset pick, zip swap /
+  missing-exe rollback, WinExe update dialog. Not yet run on Windows.
 - **2026-10-28** — Release prep v0.1.11 (macOS launch + PATH fixes): version
   bump, `docs/releases/v0.1.11.md`, README / status release lines.
 - **2026-10-28** — macOS apps launched from Finder/Dock now adopt the login

@@ -479,6 +479,8 @@ pub struct AgentPanel {
     pending_title: Option<String>,
     /// Improved composer draft waiting for `render` (needs `Window` for set_value).
     pending_improve: Option<String>,
+    /// The open Rename dialog's Generate state (see [`RenameDialog`]).
+    rename_dialog: Option<RenameDialog>,
     /// New chats get a first-prompt placeholder title; after the first real
     /// turn we run a silent title turn once (cleared on rename / success).
     needs_auto_title: HashSet<String>,
@@ -543,16 +545,127 @@ struct ContextUsage {
     size: u64,
 }
 
+/// Generate state of the Rename dialog. A title generated from the dialog is
+/// only shown in its input box; the chat is renamed when the user clicks Rename.
+struct RenameDialog {
+    chat_id: String,
+    /// A title turn started from this dialog is in flight.
+    generating: bool,
+    /// Finished title waiting for the dialog's next render (`set_value` needs a `Window`).
+    result: Option<String>,
+}
+
 /// One-shot prompt that accumulates assistant text without chat bubbles.
 enum SilentTurn {
     /// `notify`: show toasts when Generate was user-requested (not auto).
+    /// `dialog`: started from the Rename dialog — fill its input, never rename.
     Title {
         chat_id: String,
         text: String,
         notify: bool,
+        dialog: bool,
     },
     /// Rewrite composer draft; applied through `pending_improve` on next render.
     Improve { text: String },
+}
+
+/// Body of the Rename dialog. A view of its own so the buttons can show
+/// Generate's spinner and the generated title can land in the input.
+struct RenameChatView {
+    id: String,
+    input: Entity<InputState>,
+    panel: WeakEntity<AgentPanel>,
+    can_generate: bool,
+    _sub: Subscription,
+}
+
+impl Render for RenameChatView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A finished title goes into the input; the user decides whether to save it.
+        let generated = self
+            .panel
+            .update(cx, |panel, _| {
+                panel.rename_dialog.as_mut().and_then(|d| d.result.take())
+            })
+            .ok()
+            .flatten();
+        if let Some(title) = generated {
+            self.input.update(cx, |input, cx| {
+                input.set_value(title, window, cx);
+                input.focus(window, cx);
+            });
+        }
+        let generating = self
+            .panel
+            .read_with(cx, |panel, _| {
+                panel.rename_dialog.as_ref().is_some_and(|d| d.generating)
+            })
+            .unwrap_or(false);
+        let can_generate = self.can_generate && !generating;
+
+        let (panel_cancel, panel_gen, panel_ok) =
+            (self.panel.clone(), self.panel.clone(), self.panel.clone());
+        let (id_gen, id_ok) = (self.id.clone(), self.id.clone());
+        let input_ok = self.input.clone();
+        v_flex()
+            .gap_4()
+            .child(
+                Input::new(&self.input)
+                    .w_full()
+                    .min_w(px(280.))
+                    .disabled(generating),
+            )
+            .child(
+                DialogFooter::new()
+                    .gap_2()
+                    .child(
+                        Button::new("dialog-cancel")
+                            .cursor_pointer()
+                            .outline()
+                            .label("Cancel")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                _ = panel_cancel.update(cx, |this, cx| this.close_rename_dialog(cx));
+                            }),
+                    )
+                    .child(
+                        Button::new("dialog-generate")
+                            .when(can_generate, |b| b.cursor_pointer())
+                            .outline()
+                            .label(if generating { "Generating…" } else { "Generate" })
+                            .tooltip("Ask the agent for a title from this chat")
+                            // Kit paints the spinner only on buttons that have an icon.
+                            .when(generating, |b| b.icon(LucideIcon::Loader).loading(true))
+                            .disabled(!can_generate)
+                            .when(can_generate, |b| {
+                                b.on_click(move |_, window, cx| {
+                                    let id = id_gen.clone();
+                                    _ = panel_gen.update(cx, |this, cx| {
+                                        this.start_dialog_title(id, window, cx);
+                                    });
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new("dialog-primary")
+                            .when(!generating, |b| b.cursor_pointer())
+                            .primary()
+                            .label("Rename")
+                            .disabled(generating)
+                            .when(!generating, |b| {
+                                b.on_click(move |_, window, cx| {
+                                    let title = input_ok.read(cx).value().to_string();
+                                    window.close_dialog(cx);
+                                    let id = id_ok.clone();
+                                    _ = panel_ok.update(cx, |this, cx| {
+                                        this.close_rename_dialog(cx);
+                                        this.rename_chat(&id, &title, cx);
+                                    });
+                                })
+                            }),
+                    ),
+            )
+    }
 }
 
 /// A user prompt waiting for the current turn to finish.
@@ -866,6 +979,7 @@ impl AgentPanel {
             title_transcripts: HashMap::new(),
             pending_title: None,
             pending_improve: None,
+            rename_dialog: None,
             needs_auto_title: HashSet::new(),
             pending_file_change_restore: false,
             entries: Vec::new(),
@@ -1849,20 +1963,17 @@ impl AgentPanel {
     /// Agent can run a throwaway silent job (Improve / title / Git Suggest).
     ///
     /// Silent turns open their own ACP session (open chat `session_id`
-    /// untouched). Requires Ready + no in-flight silent; home-chat
-    /// `turn_running` still blocks so we do not stack a Suggest on top of an
-    /// active user turn (Cancel would be ambiguous).
+    /// untouched), so they run beside a user turn. Requires Ready + no
+    /// in-flight silent.
     pub fn can_silent_prompt(&self) -> bool {
-        matches!(self.status, Status::Ready)
-            && !self.turn_running
-            && self.connection.is_some()
-            && self.silent.is_none()
+        matches!(self.status, Status::Ready) && self.connection.is_some() && self.silent.is_none()
     }
 
-    /// Git Suggest can start: Ready and no home turn. Unlike
-    /// [`Self::can_silent_prompt`], other Suggest jobs (other repos) do not block.
+    /// Git Suggest can start: Ready (a running user turn does not matter).
+    /// Unlike [`Self::can_silent_prompt`], other Suggest jobs (other repos) do
+    /// not block.
     pub fn can_suggest_commit(&self) -> bool {
-        matches!(self.status, Status::Ready) && !self.turn_running && self.connection.is_some()
+        matches!(self.status, Status::Ready) && self.connection.is_some()
     }
 
     /// Fold a poll result into the usage strip. A failure keeps the last
@@ -2077,9 +2188,12 @@ impl AgentPanel {
             configs,
         );
         // Do not set `turn_running` — that is the open chat's turn. Silent
-        // uses a throwaway session; the open transcript must stay idle.
-        self.turn_file_changes.clear();
-        self.turn_git_baseline = None;
+        // uses a throwaway session; the open transcript must stay idle. A
+        // running user turn keeps its file tracking.
+        if !self.turn_running {
+            self.turn_file_changes.clear();
+            self.turn_git_baseline = None;
+        }
         self.silent = Some(kind);
         self.emit_promptability_changed(cx);
         cx.notify();
@@ -2141,17 +2255,20 @@ impl AgentPanel {
 
     /// Whether Rename → Generate can run for `chat_id` (live, cached, or loadable).
     fn can_generate_title(&self, chat_id: &str, cx: &App) -> bool {
-        if self.turn_running || self.silent.is_some() {
+        if self.silent.is_some() {
             return false;
         }
         if !matches!(self.status, Status::Ready) || self.connection.is_none() {
             return false;
         }
+        // Text in hand: a silent turn runs beside a user turn.
         if self.title_source(chat_id, cx).is_some() {
             return true;
         }
-        // Not opened this session — Generate will load it first.
-        self.info.as_ref().is_some_and(|i| i.can_load)
+        // Not opened this session — Generate will load it first, which
+        // switches chats and so needs an idle panel.
+        !self.turn_running
+            && self.info.as_ref().is_some_and(|i| i.can_load)
             && self.chats.iter().any(|c| c.id == chat_id)
     }
 
@@ -2188,12 +2305,17 @@ impl AgentPanel {
         self.title_transcripts
             .insert(chat_id.clone(), transcript.clone());
         self.needs_auto_title.remove(&chat_id);
+        let dialog = self
+            .rename_dialog
+            .as_ref()
+            .is_some_and(|d| d.generating && d.chat_id == chat_id);
         self.start_silent(
             build_chat_title_prompt(&transcript),
             SilentTurn::Title {
                 chat_id,
                 text: String::new(),
                 notify,
+                dialog,
             },
             cx,
         )
@@ -2305,6 +2427,30 @@ impl AgentPanel {
                 chat_id,
                 text,
                 notify,
+                dialog: true,
+            } => {
+                let title = if ok { scrub_chat_title(&text) } else { String::new() };
+                // Closing the dialog clears `rename_dialog`: then say nothing.
+                if let Some(dialog) = self.rename_dialog.as_mut().filter(|d| d.chat_id == chat_id) {
+                    dialog.generating = false;
+                    if !title.is_empty() {
+                        dialog.result = Some(title);
+                    } else if notify {
+                        let notice = if ok {
+                            "Could not generate a title."
+                        } else {
+                            "Title generation stopped."
+                        };
+                        self.push_notice(notice, ok, cx);
+                    }
+                }
+                cx.notify();
+            }
+            SilentTurn::Title {
+                chat_id,
+                text,
+                notify,
+                dialog: false,
             } => {
                 if ok {
                     let title = scrub_chat_title(&text);
@@ -2635,7 +2781,18 @@ impl AgentPanel {
         });
     }
 
-    fn confirm_rename_chat(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// `Some(generating)` while the Rename dialog is open (UI tests).
+    #[cfg(test)]
+    pub(crate) fn rename_dialog_generating(&self) -> Option<bool> {
+        self.rename_dialog.as_ref().map(|d| d.generating)
+    }
+
+    pub(crate) fn confirm_rename_chat(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let title = self
             .chats
             .iter()
@@ -2643,72 +2800,51 @@ impl AgentPanel {
             .map(|c| c.title.clone())
             .unwrap_or_default();
         let can_generate = self.can_generate_title(&id, cx);
-        let panel = cx.entity().downgrade();
+        let panel_entity = cx.entity();
         let input = cx.new(|cx| InputState::new(window, cx).default_value(title));
         input.update(cx, |input, cx| input.focus(window, cx));
-        window.open_dialog(cx, move |dialog, window, _| {
-            let (panel_ok, panel_gen, panel_cancel) =
-                (panel.clone(), panel.clone(), panel.clone());
-            let (input_ok, input_view) = (input.clone(), input.clone());
-            let (id_ok, id_gen) = (id.clone(), id.clone());
-            center_dialog(
-                dialog
-                    .title("Rename chat")
-                    .child(Input::new(&input_view).w_full().min_w(px(280.)))
-                    .footer(
-                        DialogFooter::new()
-                            .gap_2()
-                            .child(
-                                Button::new("dialog-cancel")
-                                    .cursor_pointer()
-                                    .outline()
-                                    .label("Cancel")
-                                    .on_click(move |_, window, cx| {
-                                        window.close_dialog(cx);
-                                        let _ = panel_cancel;
-                                    }),
-                            )
-                            .child(
-                                Button::new("dialog-generate")
-                                    .when(can_generate, |b| b.cursor_pointer())
-                                    .outline()
-                                    .label("Generate")
-                                    .tooltip("Ask the agent for a title from this chat")
-                                    .disabled(!can_generate)
-                                    .when(can_generate, |b| {
-                                        b.on_click(move |_, window, cx| {
-                                            window.close_dialog(cx);
-                                            let id = id_gen.clone();
-                                            _ = panel_gen.update(cx, |this, cx| {
-                                                if !this.begin_chat_title(id, window, cx) {
-                                                    this.push_notice(
-                                                        "Could not generate a title right now.",
-                                                        true,
-                                                        cx,
-                                                    );
-                                                }
-                                            });
-                                        })
-                                    }),
-                            )
-                            .child(
-                                Button::new("dialog-primary")
-                                    .cursor_pointer()
-                                    .primary()
-                                    .label("Rename")
-                                    .on_click(move |_, window, cx| {
-                                        let title = input_ok.read(cx).value().to_string();
-                                        window.close_dialog(cx);
-                                        let id = id_ok.clone();
-                                        _ = panel_ok.update(cx, |this, cx| {
-                                            this.rename_chat(&id, &title, cx);
-                                        });
-                                    }),
-                            ),
-                    ),
-                window,
-            )
+        self.rename_dialog = Some(RenameDialog {
+            chat_id: id.clone(),
+            generating: false,
+            result: None,
         });
+        let view = cx.new(|cx| RenameChatView {
+            id,
+            input,
+            panel: panel_entity.downgrade(),
+            can_generate,
+            // Re-render the buttons when Generate starts / finishes.
+            _sub: cx.observe(&panel_entity, |_, _, cx| cx.notify()),
+        });
+        window.open_dialog(cx, move |dialog, window, _| {
+            center_dialog(dialog.title("Rename chat").child(view.clone()), window)
+        });
+    }
+
+    /// Rename dialog → Generate: ask for a title and show it in the dialog's
+    /// input (the chat is only renamed when the user clicks Rename).
+    fn start_dialog_title(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.rename_dialog.as_mut() {
+            dialog.generating = true;
+            dialog.result = None;
+        }
+        if !self.begin_chat_title(id, window, cx) {
+            if let Some(dialog) = self.rename_dialog.as_mut() {
+                dialog.generating = false;
+            }
+            self.push_notice("Could not generate a title right now.", true, cx);
+        }
+        cx.notify();
+    }
+
+    /// The Rename dialog closed (Cancel / Rename): stop a title still being
+    /// generated for it so it can never rename the chat behind the user's back.
+    fn close_rename_dialog(&mut self, cx: &mut Context<Self>) {
+        let generating = self.rename_dialog.take().is_some_and(|d| d.generating);
+        if generating && matches!(self.silent, Some(SilentTurn::Title { dialog: true, .. })) {
+            self.abort_silent(cx);
+        }
+        self.pending_title = None;
     }
 
     /// Local title only (ACP has no rename). Empty → keep current.
@@ -3952,34 +4088,24 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Updates for the open chat. Throwaway silent sessions (Improve / title /
+    /// Suggest) never get here — the client collects their text and aborts them
+    /// on tool use — so a silent job running beside a user turn cannot swallow
+    /// or abort the chat's own stream.
     fn apply_update(&mut self, update: SessionUpdate, cx: &mut Context<Self>) {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => {
                 if let Some(text) = block_text(&chunk.content) {
-                    if let Some(pending) = &mut self.silent {
-                        pending.text_mut().push_str(&text);
-                    } else {
-                        self.append_text(false, &text, cx);
-                    }
+                    self.append_text(false, &text, cx);
                 }
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
-                // Thoughts are not the commit message — ignore during Suggest.
-                if self.silent.is_some() {
-                    return;
-                }
                 if let Some(text) = block_text(&chunk.content) {
                     self.append_text(true, &text, cx);
                 }
             }
-            SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_)
-                if self.silent.is_some() =>
-            {
-                self.abort_silent(cx);
-            }
             SessionUpdate::ToolCall(call) => self.upsert_tool_call(call, cx),
             SessionUpdate::ToolCallUpdate(update) => self.update_tool_call(update, cx),
-            SessionUpdate::Plan(_) if self.silent.is_some() => {}
             SessionUpdate::Plan(plan) => {
                 if let Some(ix) = self.entries.iter().rposition(|e| matches!(e, Entry::Plan(_))) {
                     self.entries[ix] = Entry::Plan(plan.entries);
@@ -3989,7 +4115,6 @@ impl AgentPanel {
                 }
             }
             // Only arrives while `session/load` replays history.
-            SessionUpdate::UserMessageChunk(_) if self.silent.is_some() => {}
             SessionUpdate::UserMessageChunk(chunk) => {
                 if let Some(text) = block_text(&chunk.content) {
                     self.append_user(&text, cx);
@@ -4040,9 +4165,6 @@ impl AgentPanel {
                     self.usage_by_chat.insert(id, snap);
                 }
                 cx.notify();
-            }
-            SessionUpdate::CompactionUpdate(update) if self.silent.is_some() => {
-                self.compacting = matches!(update.status, CompactionStatus::InProgress);
             }
             SessionUpdate::CompactionUpdate(update) => {
                 match update.status {
@@ -6816,8 +6938,7 @@ impl AgentPanel {
                                         .xsmall()
                                         .icon(LucideIcon::Pencil)
                                         .tooltip("Rename Chat")
-                                        .disabled(busy)
-                                        .when(!busy, |b| b.cursor_pointer())
+                                        .cursor_pointer()
                                         .on_click(move |_, window, cx| {
                                             cx.stop_propagation();
                                             if let Some(p) = rename_popover.upgrade() {
@@ -7047,10 +7168,8 @@ impl AgentPanel {
         // Send stays available while a user turn runs — it queues. Stop is
         // separate. Suggest/title do not switch Send→Queue.
         let can_send = ready && draft && !improving;
-        let can_improve = ready
-            && !chat_busy
-            && self.silent.is_none()
-            && !draft_plain.is_empty();
+        // Improve runs on a throwaway session, so a user turn does not block it.
+        let can_improve = ready && self.silent.is_none() && !draft_plain.is_empty();
         // Stop is for the open chat turn only — Improve cancel is the × on
         // the Improve control (must not call `stop`, which cancels home too).
         let stop = chat_busy.then(|| {

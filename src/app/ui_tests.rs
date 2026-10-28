@@ -1184,6 +1184,58 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn rename_dialog_generate_fills_input_and_saves_only_on_rename(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+    h.ask("please fix the flaky test", cx);
+    h.wait_for(cx, "auto title lands", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
+        })
+    });
+    let title = |cx: &mut TestAppContext| {
+        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_title())
+    };
+    type PanelFn<'a> = &'a dyn Fn(
+        &mut crate::agent::AgentPanel,
+        &mut gpui_kit::Window,
+        &mut gpui_kit::Context<crate::agent::AgentPanel>,
+    );
+    let panel_update = |cx: &mut TestAppContext, f: PanelFn| {
+        h.with_app(cx, |app, window, cx| {
+            app.agent.clone().unwrap().update(cx, |panel, cx| f(panel, window, cx));
+        });
+    };
+    panel_update(cx, &|panel, _, cx| panel.rename_chat("s1", "Old name", cx));
+
+    panel_update(cx, &|panel, window, cx| panel.confirm_rename_chat("s1".into(), window, cx));
+    assert!(h.has("dialog-generate", cx), "Rename dialog is open");
+    h.click("dialog-generate", cx);
+
+    // Generating keeps the dialog open and does not rename anything yet.
+    assert!(h.has("dialog-generate", cx), "dialog stays open while generating");
+    h.wait_for(cx, "title generated", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().unwrap().read(cx).rename_dialog_generating()
+                == Some(false)
+        })
+    });
+    assert!(h.has("dialog-primary", cx), "dialog still open with the result");
+    assert_eq!(title(cx).as_deref(), Some("Old name"), "Generate alone never renames");
+
+    h.click("dialog-primary", cx);
+    assert!(!h.has("dialog-primary", cx), "Rename closes the dialog");
+    assert_eq!(title(cx).as_deref(), Some("Generated Title"), "Rename saves the generated title");
+}
+
+#[gpui_kit::test]
 fn agent_auto_titles_after_first_turn(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
@@ -1981,6 +2033,79 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
     );
 }
 
+/// Improve, Git Suggest and titles run on throwaway sessions, so a running user
+/// turn must neither block them nor have its own stream swallowed by them.
+#[gpui_kit::test]
+fn silent_jobs_run_while_a_user_turn_runs(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("beside");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+    h.ask("first question", cx);
+    h.wait_for(cx, "auto title lands", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
+        })
+    });
+    let panel_read = |cx: &mut TestAppContext, f: &dyn Fn(&crate::agent::AgentPanel) -> bool| {
+        cx.read(|cx| f(h.app.read(cx).agent.as_ref().unwrap().read(cx)))
+    };
+
+    // A user turn is now running (held open).
+    let release = agent.arm_hold();
+    h.input("hold", cx);
+    h.press("enter", cx);
+    h.wait_for(cx, "turn running", |cx| panel_read(cx, &|p| p.is_turn_running()));
+    assert!(panel_read(cx, &|p| p.can_suggest_commit()), "Git Suggest allowed during a turn");
+    assert!(panel_read(cx, &|p| p.can_silent_prompt()), "silent jobs allowed during a turn");
+
+    // Improve beside the turn: the draft is rewritten, the turn keeps running.
+    h.agent_composer("fix the flaky overlay", cx);
+    assert!(
+        cx.update(|cx| {
+            let panel = h.app.read(cx).agent.clone().unwrap();
+            panel.update(cx, |panel, cx| panel.request_improve_for_test(cx))
+        }),
+        "Improve starts while a turn runs"
+    );
+    h.wait_for(cx, "improve finished", |cx| panel_read(cx, &|p| !p.is_improving_for_test()));
+    assert!(panel_read(cx, &|p| p.is_turn_running()), "Improve leaves the user turn running");
+
+    // A title for the open chat beside the turn.
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.rename_chat("s1", "Old name", cx);
+            assert!(panel.request_chat_title("s1".into(), cx), "title starts while a turn runs");
+        });
+    });
+    h.wait_for(cx, "title beside the turn", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
+        })
+    });
+    assert!(panel_read(cx, &|p| p.is_turn_running()), "title leaves the user turn running");
+
+    // The turn's own reply is intact: nothing was swallowed by the silent jobs.
+    agent.release_hold(release);
+    h.wait_for(cx, "held turn finishes", |cx| {
+        h.transcript(cx).iter().any(|l| l == "agent: echo: hold")
+    });
+    let lines = h.transcript(cx);
+    assert_eq!(
+        lines,
+        ["you: first question", "agent: echo: first question", "you: hold", "agent: echo: hold"],
+        "{lines:?}"
+    );
+}
+
 #[gpui_kit::test]
 fn agent_improve_cancel_does_not_show_chat_stop(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
@@ -2599,6 +2724,28 @@ fn update_dialog_offers_mac_app_update(cx: &mut TestAppContext) {
         );
     });
     assert!(h.has("update-primary", cx), "macOS app copies get an update prompt");
+    h.click("update-later", cx);
+    assert!(!h.has("update-primary", cx));
+}
+
+#[gpui_kit::test]
+fn update_dialog_offers_windows_exe_update(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let mut release = fake_release("9.9.9");
+    release.assets.push(crate::update::Asset {
+        name: "isengard-9.9.9-windows-x86_64.zip".into(),
+        url: "https://example.invalid/a.zip".into(),
+    });
+    h.with_app(cx, |app, window, cx| {
+        app.show_update_available(
+            release,
+            crate::update::InstallKind::WinExe { exe: "C:/Isengard/isengard.exe".into() },
+            true,
+            window,
+            cx,
+        );
+    });
+    assert!(h.has("update-primary", cx), "Windows installs get an update prompt");
     h.click("update-later", cx);
     assert!(!h.has("update-primary", cx));
 }

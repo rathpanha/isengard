@@ -1,5 +1,5 @@
-# Build, test, package (Linux .deb / .rpm / tarball, macOS .dmg / tarball), and
-# attach to a GitHub Release.
+# Build, test, package (Linux .deb / .rpm / tarball, macOS .dmg / tarball,
+# Windows .zip), and attach to a GitHub Release.
 # Trigger: push tag v* (must match Cargo.toml version), or manual “Run workflow”.
 name: Release
 
@@ -163,8 +163,45 @@ jobs:
             dist/macos/*.dmg
             dist/macos/*.tar.gz
 
+  # Unsigned x86_64 zip (isengard.exe + LICENSE + credits). Installed by
+  # scripts/install-windows.ps1 and updated in place by the app.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert tag matches Cargo.toml
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") { $tag = "${{ inputs.tag }}" } else { $tag = $env:GITHUB_REF_NAME }
+          $tagVer = $tag.TrimStart('v')
+          $cargoVer = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($tagVer -ne $cargoVer) {
+            Write-Error "Tag $tag (version $tagVer) != Cargo.toml $cargoVer"
+            exit 1
+          }
+          "VERSION=$tagVer" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Tests and clippy run on the Linux and macOS jobs; the suite assumes
+      # Unix paths in places, so Windows only builds and packages.
+      - name: Package
+        run: ./scripts/package-windows.ps1
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/windows/*.zip
+
   publish:
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     # A broken macOS build must not block the Linux release (the run still
     # shows red so the missing macOS assets are noticed).
     if: ${{ !cancelled() && needs.linux.result == 'success' }}

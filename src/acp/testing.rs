@@ -342,11 +342,12 @@ impl FakeAgent {
                                     shout(&cx2, &sid).await?;
                                     "done".to_string()
                                 } else if text == "hold" {
-                                    // Block until the test releases — keeps the turn open
-                                    // so a follow-up can be queued.
+                                    // Wait (without blocking the agent's other sessions)
+                                    // until the test releases — keeps the turn open so a
+                                    // follow-up can be queued or a silent job run beside it.
                                     let gate = state.lock().unwrap().hold_rx.take();
                                     if let Some(rx) = gate {
-                                        let _ = rx.recv();
+                                        let _ = rx.recv_async().await;
                                     }
                                     format!("echo: {text}")
                                 } else if text.starts_with("Rewrite this user message") {
@@ -354,7 +355,7 @@ impl FakeAgent {
                                     state.lock().unwrap().calls.push(format!("improve {sid}"));
                                     let gate = state.lock().unwrap().hold_rx.take();
                                     if let Some(rx) = gate {
-                                        let _ = rx.recv();
+                                        let _ = rx.recv_async().await;
                                     }
                                     "Clearer coding-agent prompt.".to_string()
                                 } else if text.starts_with("Write a short chat title") {

@@ -128,6 +128,27 @@ Settings: `dirs::config_dir()/isengard/config.json` (macOS:
 4. App icon: automatic — `build.rs` embeds `assets/logo/Isengard.ico` into every
    Windows binary (`cargo run` / `cargo build`). No install script. Optional
    reminder: `.\scripts\install-dev-icon.ps1`.
+5. Release builds are GUI-subsystem (`windows_subsystem = "windows"` in
+   `main.rs`, release only) so no console window opens behind the editor.
+   `.\scripts\package-windows.ps1` writes `dist\windows\isengard-<ver>-windows-x86_64.zip`
+   (`isengard.exe`, `LICENSE`, `credits.md`); the workflow's `windows` job
+   (`windows-latest`) builds and packages only — tests/clippy run on the Linux
+   and macOS jobs because the suite assumes Unix paths in places.
+
+**Windows distribution has no code-signing certificate** (costs money). A
+browser-downloaded zip gets SmartScreen's "Windows protected your PC"
+(More info > Run anyway); files fetched by PowerShell or written by the app's own
+updater carry no internet mark. So `scripts/install-windows.ps1`
+(`irm … | iex`, README) checks SHA256SUMS (+ minisign when installed), unpacks
+into `%LOCALAPPDATA%\Programs\Isengard` (no admin), adds a Start Menu shortcut
+and the folder to the user `PATH`. It embeds the minisign public key — keep it
+equal to `update::PUBLIC_KEY`. In-app updates (`InstallKind::WinExe`,
+`classify_windows`: writable folder and not a `target\` build) extract
+`isengard.exe` from `…-windows-x86_64.zip`, rename the running exe to
+`isengard.exe.old` (Windows allows renaming, not overwriting, a running exe),
+move the new one in, restore on failure, then restart; `cleanup_old_exe` removes
+the `.old` at the next launch. Free signing is possible later through the
+SignPath Foundation (open-source projects) — not applied for yet.
 
 ### App icon matrix (`cargo run`)
 

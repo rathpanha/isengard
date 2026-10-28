@@ -1,3 +1,6 @@
+// Release builds on Windows are GUI apps: no console window behind the editor.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod acp;
 mod agent;
 mod app;
@@ -108,6 +111,7 @@ fn main() {
     env_logger::init();
     // Before any thread starts: set_var is only sound while single-threaded.
     shell_env::import_login_path();
+    update::cleanup_old_exe();
     // `isengard <folder>` opens a folder, `isengard <x.isengard-workspace>` a workspace,
     // and `isengard <file>` opens its parent folder and the file.
     let initial_path = std::env::args_os().nth(1).map(PathBuf::from);

@@ -274,9 +274,16 @@ Add a row here whenever a new shared component is created.
   `turn_running` / Working…) for a title for **any** chat when Ready
   (uses the open transcript, a per-session cache from chats opened
   earlier, or loads that chat then generates) — Cancel outline · Generate
-  outline · Rename primary) + ghost
+  outline · Rename primary). Generate keeps the dialog **open**: the button
+  becomes a spinner ("Generating…"), the input is disabled and Rename is
+  disabled until the title lands **in the input box**; the chat is renamed only
+  when the user clicks Rename (Cancel mid-run aborts the silent turn; the
+  automatic first-turn title still renames directly) + ghost
   `Trash` (confirm: Cancel outline · Delete danger); rows and New Chat
   disabled while a **user** turn runs (silent jobs do not lock history).
+  Rename (and Generate / Improve / Git Suggest) stay enabled during a user
+  turn — they are local or run on throwaway sessions beside it; only a
+  Generate that must first *load* an unopened chat waits for idle.
   Empty list: muted "No chats in this workspace yet." Loading a saved chat
   shows Spinner + "Loading chat…" until the replay lands; reconnecting
   keeps the old transcript on screen.

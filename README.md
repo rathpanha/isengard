@@ -3,8 +3,8 @@
 **The already configured editor.**
 
 Cross-platform desktop code editor built in Rust on [GPUI Kit](https://gpui-kit.com).
-**v0.1.11 ships Linux** (`.deb`, `.rpm`, and a binary tarball) **and macOS**
-(universal `.dmg` / tarball, not notarized). Windows builds are not released yet.
+Ships for **Linux** (`.deb`, `.rpm`, and a binary tarball), **macOS** (universal
+`.dmg` / tarball, not notarized) and **Windows** (x86_64 zip, not code-signed).
 
 ## Install (Linux)
 
@@ -55,6 +55,21 @@ Applications, then open **System Settings → Privacy & Security** and click
 Once installed, **Check for Updates…** updates Isengard in place with no
 prompts. The first time the Claude Agent reads your Claude Code login, macOS
 asks for Keychain access once — choose **Always Allow**.
+
+## Install (Windows)
+
+Isengard is not code-signed (that needs a paid certificate), so a zip downloaded
+in a browser shows SmartScreen's "Windows protected your PC" (**More info → Run
+anyway**). To avoid it, install from PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/rathpanha/isengard/master/scripts/install-windows.ps1 | iex
+```
+
+It installs to `%LOCALAPPDATA%\Programs\Isengard` (no administrator rights),
+adds a Start Menu shortcut, and puts the folder on your `PATH`. **Check for
+Updates…** then updates Isengard in place. Only 64-bit Intel/AMD Windows is
+built.
 
 ### After install
 
