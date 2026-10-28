@@ -39,6 +39,13 @@ else
   cp "${BINS[0]}" "$TMP/isengard"
 fi
 
+# The app must run on Macs with nothing from Homebrew installed: only system
+# libraries (/usr/lib, /System) may be linked dynamically.
+if otool -L "$TMP/isengard" | grep -E '^\s' | grep -vE '^\s(/usr/lib/|/System/)'; then
+  echo "error: binary links non-system libraries (listed above)" >&2
+  exit 1
+fi
+
 APP="$TMP/stage/Isengard.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$TMP/isengard" "$APP/Contents/MacOS/isengard"

@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Fix macOS crash at launch ("Library not loaded:
+  liblzma.5.dylib"): CI's Homebrew `xz` was linked dynamically into the arm64
+  slice. `xz2` now uses the `static` feature on macOS, and
+  `scripts/package-macos.sh` fails if the binary links any non-system library.
+  The v0.1.10 release assets were rebuilt from `master` via "Run workflow"
+  (the tag itself still points at the pre-fix commit f646dae).
 - **2026-10-28** — Release prep v0.1.10 (first macOS release): version bump,
   `docs/releases/v0.1.10.md`, README / status release lines.
 - **2026-10-28** — macOS release pipeline without an Apple Developer ID:

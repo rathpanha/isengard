@@ -61,6 +61,11 @@ objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 
+# Release builds picked up Homebrew's liblzma through pkg-config and linked it
+# dynamically (/opt/homebrew/opt/xz/...), so the app crashed at launch on Macs
+# without Homebrew xz. Build liblzma from source and link it statically.
+xz2 = { version = "0.1", features = ["static"] }
+
 [build-dependencies]
 embed-resource = "3"
 
