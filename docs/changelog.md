@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Removed the Open Config File action entirely (it never had
+  a shortcut; edit `config.json` by hand). Agent Fast / OpusPlan Switch icons
+  now turn gray with the Switch while the agent is running.
 - **2026-10-28** — Agent OpusPlan: Mode changes sync model to the Switch —
   on → re-pin `opusplan`, off → re-pin concrete Model (blocks Claude
   `settings.json` `opusplan` bleed); tooltip shows Opus vs Sonnet.

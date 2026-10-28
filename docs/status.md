@@ -71,7 +71,7 @@ tabs, highlighted editor, status bar):
   (`⇧⌘I` / `Ctrl+Shift+I`; format-on-save default on via `lsp.format_on_save`),
   Rename Symbol (F2 in editor, dialog), `textDocument/didSave` after write.
   Saving `config.json` with `lsp` changes restarts servers and re-attaches
-  open tabs. `config.json` → `lsp`; Open Config File…. Untitled buffers skip
+  open tabs. `config.json` → `lsp`. Untitled buffers skip
   LSP until saved. Command-only code actions run via
   `workspace/executeCommand` (and `workspace/applyEdit` when the server
   pushes edits).
@@ -232,7 +232,7 @@ tabs, highlighted editor, status bar):
   Follow-ups while a turn runs go into an outbound FIFO queue (strip
   under the composer with remove; drained when the turn ends).
   (`session/set_config_option`). Process-level agent still comes from
-  `config.json` `agent.command` / `agent.silent_model` (Open Config File…).
+  `config.json` `agent.command` / `agent.silent_model`.
   Switching workspace
   parks the old panel: a
   running turn finishes in the background (approval requests toast), then its
@@ -283,5 +283,5 @@ not a product TODO. License is **GPL-3.0-only** — see
 ## Roadmap — Agent panel after v1
 
 - Process-level agent switch in the panel — **deferred** (one agent today;
-  change via `config.json` / Open Config File…). Mode/model pickers + chat
+  change via `config.json`). Mode/model pickers + chat
   rename + auto titles shipped.

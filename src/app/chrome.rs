@@ -28,30 +28,6 @@ impl IsengardApp {
         });
     }
 
-    pub(super) fn on_open_config_file(
-        &mut self,
-        _: &OpenConfigFile,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(path) = AppConfig::default_path() else {
-            return notify_error("Could not resolve config directory", window, cx);
-        };
-        if !path.exists() {
-            self.config.save();
-        }
-        // Ensure parent exists even if save was a no-op somehow.
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if !path.exists()
-            && let Err(err) = self.config.save_to(&path)
-        {
-            return notify_error(format!("Could not create config: {err:#}"), window, cx);
-        }
-        self.open_file(&path, true, window, cx);
-    }
-
     pub(super) fn on_quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
         // A plain Quit is not a pending "restart to update".
         self.relaunch_exe = None;

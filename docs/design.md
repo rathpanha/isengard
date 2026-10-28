@@ -584,7 +584,7 @@ Add a row here whenever a new shared component is created.
   "The already configured editor" (no settings-panel cosplay). About may add
   one short supporting line; don't invent a second tagline.
 - **Config, not Preferences UI:** durable knobs (e.g. LSP enable/command)
-  live in `config.json`. **Open Config File…** is shortcut-only (no menu item);
+  live in `config.json`. There is no in-app Open Config File action (no menu item, no shortcut);
   do not add a settings / preferences panel.
 
 - Status-bar toggle buttons: active = info-blue icon (`theme.info`), never the gray `selected` fill.

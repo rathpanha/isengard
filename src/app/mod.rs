@@ -125,7 +125,7 @@ pub use actions::init;
 pub use actions::{
     About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseAllTabs, CloseOtherTabs, CloseTab,
     CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
-    IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenConfigFile, OpenFile,
+    IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenFile,
     FormatDocument, OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, RenameSymbol,
     ResetFontSize, Save, SaveAll, SaveAs,
     SaveWorkspaceAs, NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel,

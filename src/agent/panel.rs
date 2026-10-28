@@ -6084,8 +6084,12 @@ impl AgentPanel {
         let checked = fast_is_on(opt);
         let busy = self.config_controls_locked();
         let panel = cx.entity().downgrade();
-        // Match Mode/Model ghost-button icons (`theme.foreground`), not muted.
-        let icon_color = cx.theme().foreground;
+        // Match Mode/Model ghost-button icons (`theme.foreground`); gray when locked.
+        let icon_color = if busy {
+            cx.theme().muted_foreground
+        } else {
+            cx.theme().foreground
+        };
         h_flex()
             .id("agent-fast-mode-wrap")
             .gap_1()
@@ -6115,8 +6119,12 @@ impl AgentPanel {
         let checked = opusplan_is_on(&self.prefs, &self.config_options);
         let busy = self.config_controls_locked();
         let panel = cx.entity().downgrade();
-        // Match Mode/Model ghost-button icons (`theme.foreground`), not muted.
-        let icon_color = cx.theme().foreground;
+        // Match Mode/Model ghost-button icons (`theme.foreground`); gray when locked.
+        let icon_color = if busy {
+            cx.theme().muted_foreground
+        } else {
+            cx.theme().foreground
+        };
         let tooltip: SharedString = if !checked {
             "Opus in Plan mode, Sonnet otherwise (Claude)".into()
         } else if current_mode_is_plan(&self.modes, &self.config_options) {
