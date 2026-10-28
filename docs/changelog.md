@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Release prep v0.1.13 (macOS notification icon): version
+  bump, `docs/releases/v0.1.13.md`, status release lines.
+- **2026-10-28** — macOS "Agent finished" notifications now come from Isengard
+  itself (`UNUserNotificationCenter` via `objc2-user-notifications`, only when
+  running from an app bundle) so they show the app icon; `osascript` (which
+  showed Script Editor's icon) remains the fallback for `cargo run`. macOS asks
+  to allow notifications on first use. Test: native path is skipped without a
+  bundle.
 - **2026-10-28** — Renamed `.github/workflows/release-linux.yml` to
   `release.yml` (it builds Linux, macOS and Windows); doc links updated. Use
   `gh workflow run release.yml -f tag=<tag>` for manual runs.

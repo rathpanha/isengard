@@ -1,6 +1,6 @@
 [package]
 name = "isengard"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 license = "GPL-3.0-only"
 
@@ -60,6 +60,10 @@ minisign-verify = "0.2"
 objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
+# Native notifications (UNUserNotificationCenter) so they carry the app's icon;
+# `osascript display notification` shows Script Editor's instead.
+objc2-user-notifications = "0.3"
+block2 = "0.6"
 
 # Release builds picked up Homebrew's liblzma through pkg-config and linked it
 # dynamically (/opt/homebrew/opt/xz/...), so the app crashed at launch on Macs

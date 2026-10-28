@@ -132,7 +132,10 @@ tabs, highlighted editor, status bar):
   `⌘⇧B` / `Ctrl+Shift+B` / status-bar `Bot`) chatting with an external agent.
   over the Agent Client Protocol, like Zed's external agents. A finished or failed
   run raises an OS notification + sound when the app is in the background
-  (`src/notify.rs`; Mixkit pop sound, logo icon; `notify-send`+`paplay`, `osascript`+`afplay`; no Windows yet). Default is
+  (`src/notify.rs`; Mixkit pop sound, logo icon; Linux `notify-send`+`paplay`; macOS
+  native `UNUserNotificationCenter` from the app bundle — app icon, listed under
+  Isengard in System Settings > Notifications, asks permission on first use — with
+  `osascript` only for unbundled `cargo run` builds, plus `afplay`; no Windows yet). Default is
   Claude Agent (`@agentclientprotocol/claude-agent-acp`, pinned 0.94.0):
   **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
   Node.js; never global), else `claude-agent-acp` on `PATH`. Uses the user's
@@ -275,7 +278,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.12 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.1.13 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -293,7 +296,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.1.12.md](releases/v0.1.12.md). Human install:
+- Notes: [docs/releases/v0.1.13.md](releases/v0.1.13.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1
