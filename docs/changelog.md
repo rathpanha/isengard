@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Agent Improve: while rewriting, the Improve icon becomes ×
+  (cancels only the silent session); chat Stop no longer appears for Improve.
 - **2026-10-27** — Removed the Edit and View menus, Quit Isengard (still `⌘Q` / `Ctrl+Q`), Open Config File… from the Isengard menu, and
   all File items except Add Folder to Workspace…, Save Workspace As…, Close Folder/Workspace
   (File hidden on welcome). Removed actions keep their keyboard shortcuts.

@@ -350,13 +350,15 @@ Add a row here whenever a new shared component is created.
   folders via `@`) + muted hint (`Enter to send`, or `Enter to queue` /
   `N queued · Enter to queue` while busy) + ghost Improve
   (`PencilSparkles` — not Mode Auto's `Sparkles`) — silent ACP rewrite on a
-  throwaway session (open chat untouched; Improve `.loading` + Stop only —
+  throwaway session (open chat untouched; while rewriting the Improve
+  control becomes ghost `CircleX` “Cancel improve” and aborts only the
+  silent session — never mounts chat Stop / never cancels the open turn;
   no transcript Working…; Suggest/title do not change Send/Stop); never
   auto-sends; strips `@` chips only for the rewrite request, then puts
   them back in front of the improved prose; paperclip chips untouched)
   left of primary Send (`ArrowUp`, label **Queue** while a **user** turn
   runs — Suggest does not force Queue; home Send may run while a silent
-  job is in flight) and, while a user turn or Improve runs, a sibling
+  job is in flight) and, while a **user** turn runs, a sibling
   `.danger()` Stop (solid square block, not Lucide stroke `Square`).
   Queued prompts stay out of the transcript until drained FIFO when the
   current user turn ends (cleared on disconnect / suspend) so the

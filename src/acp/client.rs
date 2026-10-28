@@ -60,6 +60,8 @@ enum AgentCommand {
         configs: Vec<(String, SilentConfigValue)>,
     },
     Cancel,
+    /// Cancel throwaway silent jobs only — leave the open chat turn alone.
+    CancelSilent,
     Delete(String),
     SetMode(String),
     SetConfig { config_id: String, value: String },
@@ -220,6 +222,12 @@ impl AgentConnection {
 
     pub fn cancel(&self) {
         let _ = self.commands.send(AgentCommand::Cancel);
+    }
+
+    /// Abort in-flight Improve / title / Suggest sessions without stopping the
+    /// open chat turn.
+    pub fn cancel_silent(&self) {
+        let _ = self.commands.send(AgentCommand::CancelSilent);
     }
 
     /// `session/set_mode` — no-op if no chat is open.
@@ -658,6 +666,13 @@ async fn session(
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
                 if let Some(session_id) = current.clone() {
+                    cx.send_notification(CancelNotification::new(session_id))?;
+                }
+            }
+            AgentCommand::CancelSilent => {
+                let silent_ids: Vec<SessionId> =
+                    silent.lock().unwrap().keys().cloned().collect();
+                for session_id in silent_ids {
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
             }

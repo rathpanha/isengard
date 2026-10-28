@@ -220,9 +220,9 @@ tabs, highlighted editor, status bar):
   Effort/agent/…) sits in a fixed-height band above Attach / Improve
   (`PencilSparkles` silent rewrite on a throwaway session — open chat
   context untouched, chat not marked `turn_running`; Suggest/title leave
-  Send alone; Improve uses Stop + `.loading`; `@` chips + paperclip chips
-  kept; review then Send) / Queue+Stop (horizontal scroll; disabled until
-  Ready). Picks are remembered per folder/workspace
+  Send alone; Improve swaps to `CircleX` cancel — silent-only, no chat
+  Stop; `@` chips + paperclip chips kept; review then Send) / Queue+Stop
+  on user turns only (horizontal scroll; disabled until Ready). Picks are remembered per folder/workspace
   (`sessions.<key>.agent_prefs`, seeded from global last-used `agent_prefs`)
   and re-applied to every chat opened — new, loaded, or after a restart.
   Follow-ups while a turn runs go into an outbound FIFO queue (strip

@@ -1554,6 +1554,70 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_improve_cancel_does_not_show_chat_stop(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    let folder = h.folder("improv");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let release = agent.arm_hold();
+    h.agent_composer("fix the flaky overlay", cx);
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            assert!(
+                panel.request_improve_for_test(cx),
+                "Improve should start on a ready draft"
+            );
+        });
+    });
+    h.wait_for(cx, "improve in flight", |cx| {
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).is_improving_for_test())
+        })
+    });
+    assert!(
+        !h.has("agent-stop", cx),
+        "Improve must not mount the chat Stop control"
+    );
+    assert!(
+        h.has("agent-improve", cx),
+        "Improve control stays mounted as cancel ×"
+    );
+    assert!(
+        !cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).is_turn_running()),
+        "Improve is silent — open chat must stay idle"
+    );
+
+    h.click("agent-improve", cx);
+    h.wait_for(cx, "improve cancelled", |cx| {
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| !a.read(cx).is_improving_for_test())
+        })
+    });
+    assert!(
+        !h.has("agent-stop", cx),
+        "cancelling Improve must not leave Stop visible"
+    );
+    assert!(
+        !cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).is_turn_running()),
+        "Improve cancel must not touch the open chat turn"
+    );
+    agent.release_hold(release);
+}
+
+#[gpui_kit::test]
 fn switching_away_mid_turn_lets_it_finish_then_stops_the_agent(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

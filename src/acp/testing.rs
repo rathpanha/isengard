@@ -345,6 +345,13 @@ impl FakeAgent {
                                         let _ = rx.recv();
                                     }
                                     format!("echo: {text}")
+                                } else if text.starts_with("Rewrite this user message") {
+                                    // Improve prompt: optional hold for cancel-mid-flight tests.
+                                    let gate = state.lock().unwrap().hold_rx.take();
+                                    if let Some(rx) = gate {
+                                        let _ = rx.recv();
+                                    }
+                                    "Clearer coding-agent prompt.".to_string()
                                 } else if text.starts_with("Write a short chat title") {
                                     "Generated Title".to_string()
                                 } else {

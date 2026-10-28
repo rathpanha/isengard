@@ -1822,6 +1822,18 @@ impl AgentPanel {
         self.turn_running
     }
 
+    /// Whether Improve prompt is rewriting the composer (tests).
+    #[cfg(test)]
+    pub fn is_improving_for_test(&self) -> bool {
+        matches!(self.silent, Some(SilentTurn::Improve { .. }))
+    }
+
+    /// Start Improve from tests (same path as the composer button).
+    #[cfg(test)]
+    pub fn request_improve_for_test(&mut self, cx: &mut Context<Self>) -> bool {
+        self.request_improve_prompt(cx)
+    }
+
     /// Seed a tool row with Allow/Reject pending permission (tests).
     #[cfg(test)]
     pub fn inject_pending_permission_for_test(
@@ -2255,15 +2267,18 @@ impl AgentPanel {
         )
     }
 
-    /// Abort an in-flight silent turn (tools / permissions / disconnect).
+    /// Abort an in-flight silent turn (Improve cancel / tools / disconnect).
+    ///
+    /// Does not cancel the open chat turn — only throwaway silent sessions.
     fn abort_silent(&mut self, cx: &mut Context<Self>) {
         if self.silent.is_none() {
             return;
         }
         if let Some(connection) = &self.connection {
-            connection.cancel();
+            connection.cancel_silent();
         }
         self.finish_silent(false, cx);
+        cx.notify();
     }
 
     /// Prompt box (the app focuses it when showing the panel).
@@ -6572,7 +6587,7 @@ impl AgentPanel {
     fn render_composer(&self, ready: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         // Open-chat turn only — Suggest / title silent jobs must not look like
-        // the chat is busy. Improve keeps its own Stop + button spinner.
+        // the chat is busy. Improve swaps its own icon to cancel (not Stop).
         let chat_busy = self.turn_running;
         let improving = matches!(self.silent, Some(SilentTurn::Improve { .. }));
         let queueing = chat_busy;
@@ -6593,7 +6608,9 @@ impl AgentPanel {
             && !chat_busy
             && self.silent.is_none()
             && !draft_plain.is_empty();
-        let stop = (chat_busy || improving).then(|| {
+        // Stop is for the open chat turn only — Improve cancel is the × on
+        // the Improve control (must not call `stop`, which cancels home too).
+        let stop = chat_busy.then(|| {
             // Lucide `Square` is stroke-only (hollow); stop needs a solid block.
             Button::new("agent-stop")
                 .danger()
@@ -6609,20 +6626,30 @@ impl AgentPanel {
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
                 .into_any_element()
         });
-        let improve = Button::new("agent-improve")
-            .ghost()
-            .small()
-            .icon(LucideIcon::PencilSparkles)
-            .tooltip("Improve prompt")
-            .loading(improving)
-            .disabled(!can_improve && !improving)
-            .when(can_improve, |b| {
-                b.cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let _ = this.request_improve_prompt(cx);
-                    }))
-            })
-            .into_any_element();
+        let improve = if improving {
+            Button::new("agent-improve")
+                .ghost()
+                .small()
+                .icon(LucideIcon::CircleX)
+                .tooltip("Cancel improve")
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, _, cx| this.abort_silent(cx)))
+                .into_any_element()
+        } else {
+            Button::new("agent-improve")
+                .ghost()
+                .small()
+                .icon(LucideIcon::PencilSparkles)
+                .tooltip("Improve prompt")
+                .disabled(!can_improve)
+                .when(can_improve, |b| {
+                    b.cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let _ = this.request_improve_prompt(cx);
+                        }))
+                })
+                .into_any_element()
+        };
         let send = Button::new("agent-send")
             .primary()
             .small()
