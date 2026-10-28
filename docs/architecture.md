@@ -22,7 +22,7 @@ writes `.deb`, `.rpm`, and a `.tar.gz` under `dist/linux/`, plus `SHA256SUMS`.
 Version comes from `VERSION` or `Cargo.toml`. Contents: `/usr/bin/isengard`,
 `.desktop` + hicolor icon for `app.isengard.edtir`, `LICENSE` / credits under
 `/usr/share/doc/isengard/`. Tag `v*` runs
-[`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)
+[`.github/workflows/release.yml`](../.github/workflows/release.yml)
 (tag must equal `Cargo.toml`; notes = `docs/releases/<tag>.md`) and attaches
 those assets to a GitHub Release.
 
@@ -456,7 +456,7 @@ src/
   plain Quit / window close clears the flag). Verification: `SHA256SUMS` +
   `SHA256SUMS.minisig` must verify against `update::PUBLIC_KEY`, then the asset
   hash must match; with an empty `PUBLIC_KEY` nothing is installed (link only).
-  Release signing: `release-linux.yml` signs `SHA256SUMS` with secrets
+  Release signing: `release.yml` signs `SHA256SUMS` with secrets
   `MINISIGN_KEY` / `MINISIGN_PASSWORD` (generate once with `minisign -G`, paste
   the public key line into `PUBLIC_KEY`; losing the key means shipping a build
   with a new key). Asset names are restricted to `[A-Za-z0-9._+~-]` because they

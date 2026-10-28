@@ -279,7 +279,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
-  [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
+  [`.github/workflows/release.yml`](../.github/workflows/release.yml)).
   Tag must match `Cargo.toml`; notes at `docs/releases/<tag>.md`. App id
   `app.isengard.edtir`.
 - **Windows (first release v0.1.12):** `scripts/package-windows.ps1` +

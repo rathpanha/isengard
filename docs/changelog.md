@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Renamed `.github/workflows/release-linux.yml` to
+  `release.yml` (it builds Linux, macOS and Windows); doc links updated. Use
+  `gh workflow run release.yml -f tag=<tag>` for manual runs.
 - **2026-10-28** — Release prep v0.1.12 (first Windows release, Rename-chat
   Generate, silent jobs during a turn): version bump, `docs/releases/v0.1.12.md`,
   README / status release lines.

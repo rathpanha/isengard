@@ -1153,6 +1153,17 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
     h.wait_ready(cx);
     h.ask("hello", cx);
     assert_eq!(h.transcript(cx), ["you: hello", "agent: echo: hello"]);
+    // The first turn starts a silent auto-title job. While it runs, leaving the
+    // folder only *defers* the suspend and coming back cancels it — no
+    // reconnect, so no `resume` — which is correct but would make this test
+    // timing-dependent. Let the job finish first.
+    h.wait_for(cx, "auto title lands", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
+        })
+    });
     assert_eq!(h.saved_chats(&a, cx), (vec!["s1".into()], Some("s1".into())));
 
     // Folder B gets its own, empty chat.
