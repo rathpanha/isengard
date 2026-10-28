@@ -275,7 +275,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.10 — Linux + macOS** (Linux `.deb` / `.rpm` / tarball via
+- **v0.1.11 — Linux + macOS** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; both from
   [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
@@ -284,9 +284,9 @@ not a product TODO. License is **GPL-3.0-only** — see
 - **macOS:** no Apple Developer ID (see [architecture.md](architecture.md) for
   the signing / Gatekeeper trade-offs); signed with the self-signed cert from
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
-  and the x86_64 cross-build were first exercised by the v0.1.10 run — if that
-  run's `macos` job failed, fix it before relying on macOS assets.
-- Notes: [docs/releases/v0.1.10.md](releases/v0.1.10.md). Human install:
+  and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
+  real Mac; the Intel half has not been run on an Intel Mac).
+- Notes: [docs/releases/v0.1.11.md](releases/v0.1.11.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1

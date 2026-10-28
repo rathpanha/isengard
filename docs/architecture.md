@@ -49,6 +49,18 @@ There is **no Apple Developer ID / notarization** (costs $99/yr), so:
   run without any prompt. `install-macos.sh` embeds the minisign public key —
   keep it equal to `update::PUBLIC_KEY`.
 
+A Finder / Dock launch on macOS gets a bare `PATH`, so the agent adapter
+(`env: node: No such file or directory`) and terminal tools (`oh-my-posh`) fail
+while `cargo run` works. `shell_env::import_login_path` (first thing in `main`)
+reads the login shell's `PATH` (`$SHELL -ilc`, markers around `$PATH`), merges
+it in front of the current `PATH` and `set_var`s it — skipped when stdin is a
+tty (started from a terminal). The shell start-up (~1 s) is paid once: the
+result is cached in `<cache dir>/isengard/login-path`, later launches apply the
+cache instantly and refresh it from a background thread for the next launch.
+The interactive terminal also starts its shell with `-l` on macOS
+(`terminal/pty.rs`) so `~/.zprofile` runs, like Terminal.app. Linux needs
+neither: desktop sessions already pass the login environment to launched apps.
+
 Agents: see `.cursor/rules/cargo-warning-free.mdc`. Finish no `src/` task while
 `cargo check` still prints `isengard` warnings — fix the code; do not disable
 or filter warning output. `block v0.1.6` is upstream, not this package.

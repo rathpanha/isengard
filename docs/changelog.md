@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Release prep v0.1.11 (macOS launch + PATH fixes): version
+  bump, `docs/releases/v0.1.11.md`, README / status release lines.
+- **2026-10-28** — macOS apps launched from Finder/Dock now adopt the login
+  shell's `PATH` (`src/shell_env.rs`), fixing "Claude Agent stopped … env: node:
+  No such file" and `oh-my-posh: command not found` in the terminal. The
+  login-shell PATH is cached (instant later launches, background refresh) and
+  the macOS terminal shell now starts with `-l`. Tests: marker extraction, PATH
+  merge, cache round-trip, real login-shell read.
 - **2026-10-28** — Fix macOS crash at launch ("Library not loaded:
   liblzma.5.dylib"): CI's Homebrew `xz` was linked dynamically into the arm64
   slice. `xz2` now uses the `static` feature on macOS, and

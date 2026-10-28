@@ -50,7 +50,15 @@ impl PtySession {
                 }
                 cmd
             }
-            None => CommandBuilder::new(default_shell()),
+            None => {
+                let mut cmd = CommandBuilder::new(default_shell());
+                // Like Terminal.app: a login shell reads ~/.zprofile (Homebrew
+                // `shellenv`, …), which a Finder-launched app does not inherit.
+                if cfg!(target_os = "macos") {
+                    cmd.arg("-l");
+                }
+                cmd
+            }
         };
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
