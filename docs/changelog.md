@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-28** — Release prep v0.1.10 (first macOS release): version bump,
+  `docs/releases/v0.1.10.md`, README / status release lines.
 - **2026-10-28** — macOS release pipeline without an Apple Developer ID:
   `scripts/package-macos.sh` (universal `Isengard.app`, `.dmg`, `.tar.gz`,
   signed with a self-signed cert or ad-hoc), `scripts/create-macos-cert.sh`,

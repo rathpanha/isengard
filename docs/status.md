@@ -275,19 +275,18 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.9 — Linux first** (`.deb` / `.rpm` / tarball via `scripts/package-linux.sh`
-  + [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
+- **v0.1.10 — Linux + macOS** (Linux `.deb` / `.rpm` / tarball via
+  `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
+  `scripts/package-macos.sh`; both from
+  [`.github/workflows/release-linux.yml`](../.github/workflows/release-linux.yml)).
   Tag must match `Cargo.toml`; notes at `docs/releases/<tag>.md`. App id
   `app.isengard.edtir`. Windows installer not shipping yet.
-- **macOS (unreleased, pipeline ready):** `scripts/package-macos.sh` +
-  `macos` CI job + `scripts/install-macos.sh`; no Apple Developer ID (see
-  [architecture.md](architecture.md) for the signing / Gatekeeper trade-offs).
-  **Before the first macOS release:** run `scripts/create-macos-cert.sh` and add
-  secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`; the CI keychain-trust step
-  and the x86_64 cross-build have not run on a real runner yet, so tag a
-  throwaway version (or use "Run workflow") first and open the resulting `.dmg`
-  on a clean Mac.
-- Notes: [docs/releases/v0.1.9.md](releases/v0.1.9.md). Human install:
+- **macOS:** no Apple Developer ID (see [architecture.md](architecture.md) for
+  the signing / Gatekeeper trade-offs); signed with the self-signed cert from
+  secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
+  and the x86_64 cross-build were first exercised by the v0.1.10 run — if that
+  run's `macos` job failed, fix it before relying on macOS assets.
+- Notes: [docs/releases/v0.1.10.md](releases/v0.1.10.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1

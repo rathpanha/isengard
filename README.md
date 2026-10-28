@@ -3,8 +3,8 @@
 **The already configured editor.**
 
 Cross-platform desktop code editor built in Rust on [GPUI Kit](https://gpui-kit.com).
-**v0.1.9 ships Linux only** (`.deb`, `.rpm`, and a binary tarball). macOS and
-Windows builds are not released yet.
+**v0.1.10 ships Linux** (`.deb`, `.rpm`, and a binary tarball) **and macOS**
+(universal `.dmg` / tarball, not notarized). Windows builds are not released yet.
 
 ## Install (Linux)
 
