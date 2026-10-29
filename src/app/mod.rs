@@ -24,6 +24,7 @@
 
 mod actions;
 mod agent;
+mod bun;
 mod chrome;
 mod files;
 mod git;
@@ -518,6 +519,7 @@ impl IsengardApp {
 
         app.refresh_menus(cx);
         app.check_for_updates_on_start(window, cx);
+        app.check_bun_on_start(window, cx);
         app
     }
 

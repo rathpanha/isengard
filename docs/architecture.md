@@ -51,8 +51,8 @@ There is **no Apple Developer ID / notarization** (costs $99/yr), so:
   run without any prompt. `install-macos.sh` embeds the minisign public key —
   keep it equal to `update::PUBLIC_KEY`.
 
-A Finder / Dock launch on macOS gets a bare `PATH`, so the agent adapter
-(`env: node: No such file or directory`) and terminal tools (`oh-my-posh`) fail
+A Finder / Dock launch on macOS gets a bare `PATH`, so terminal tools
+(`oh-my-posh`; formerly the Node-based agent adapter) fail
 while `cargo run` works. `shell_env::import_login_path` (first thing in `main`)
 reads the login shell's `PATH` (`$SHELL -ilc`, markers around `$PATH`), merges
 it in front of the current `PATH` and `set_var`s it — skipped when stdin is a
@@ -202,12 +202,17 @@ src/
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
 ├── config.rs            AppConfig (serde JSON) + recents + sessions + window geometry
+├── runtime.rs           Bun, the only JS runtime: `bun_path` (app-local → PATH →
+│                        `~/.bun/bin`), `run_on_bun` (rewrites a `#!…node` script,
+│                        or our `lsp/bin` sh wrapper around one, to `bun <script>`),
+│                        `bun_fmt` (`bun fmt --stdin-filepath`), `bun_cache_dir`
 ├── workspace.rs         Workspace (root folders + optional file): naming,
 │                        root_for/relative_label, load/save .isengard-workspace
 ├── editor/
 │   ├── document.rs      read_text / write_text / file_name / is_image
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
 │   ├── highlights.rs    patches weak GPUI Kit highlight queries (GraphQL, TSX)
+│   ├── indent.rs        `detect_indent`: per-file tabs / 2 / 4 / 8 (footer, LSP format)
 │   └── tabs.rs          TabList<T>: order/activate/reorder (unit-tested)
 ├── lsp/                 Language Server Protocol (IntelliSense)
 │   ├── host.rs          workspace servers, didOpen/Change/Close, diagnostics pump
@@ -221,7 +226,7 @@ src/
 │   ├── client.rs        `AgentConnection`: own thread, `block_on`, flume
 │   │                    commands in / `AgentEvent`s out (+ reply senders)
 │   ├── registry.rs      `config.agent` command, else built-in Claude Agent
-│   ├── install.rs       app-local `npm install --prefix …/agents/claude`
+│   ├── install.rs       app-local `bun add --cwd …/agents/claude`
 │   ├── files.rs         `slice_lines` for `fs/read_text_file` ranges
 │   └── testing.rs       (tests) in-memory `FakeAgent` + `install` hook
 ├── agent/
@@ -297,7 +302,7 @@ src/
   recipes) or toast. Status bar: one icon → short Popover
   (`catalog_servers(focus)` = known/live + active-tab language only — not the
   full registry). Install writes under `…/isengard/lsp/` (ureq + archive
-  extract, or `go install`/`npm install --prefix` scoped to that tree — never
+  extract, or `go install`/`bun add --cwd` scoped to that tree — never
   global `-g`/brew/pip/rustup). Remove → `remove_server` / `run_uninstall`
   (delete app-local bin + pkg only). Server map is hand-maintained in
   `lsp/registry.rs` + `lsp/install.rs`. Edit `config.json` by hand (no in-app open action;

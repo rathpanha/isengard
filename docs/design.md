@@ -116,6 +116,13 @@ Add a row here whenever a new shared component is created.
   (no ×, overlay, or Esc) with a Kit `Progress` bar and Cancel. The install
   command is shown in a `muted` block; it is typed into a terminal, never run.
 
+- **Required-setup dialog** (`app/bun.rs`, first launch without Bun): same
+  non-dismissable rules as the download dialog (no ×, overlay or Esc), body text
+  says what is installed and that it stays in Isengard's data folder; footer
+  Quit (`.outline()`) · Install (`.primary()`, `loading` while downloading, label
+  becomes Retry with a `danger` error line on failure). Use it only for a
+  dependency the app cannot work without.
+
 - **Dirty tabs:** unsaved buffer shows a 6px square in `theme.blue` before
   the close × (block style — no round “dot”).
 - **Panel header row height:** sidebar chrome (Explorer / Git / Search),
@@ -149,6 +156,11 @@ Add a row here whenever a new shared component is created.
   Edit → **Rename Symbol** (`F2` while the editor Input is focused — Tree
   keeps `F2` for path rename). Format-on-save defaults on
   (`config.json` `lsp.format_on_save`); disable there if unwanted.
+  Formatters receive the tab's own indent (see **Indentation** below), not a fixed size.
+- **Indentation:** each text tab detects its indent when opened (majority tabs,
+  else the most common 2/4/8 space step), falling back to the effective
+  `tab_size` (workspace `editor.tabSize`, default 2). The status bar right side
+  shows `Spaces: N` / `Tab Size: N` between Ln/Col and the language; display only.
 - **Terminal context menu:** right-click → Copy, Paste, **Add Selection to
   Agent** (`⌘L` / `Ctrl+L` with terminal focus attaches the selection as a
   `Terminal` snippet chip). Right-click does not clear the selection.
@@ -406,7 +418,7 @@ Add a row here whenever a new shared component is created.
   row so longer sessions can sit mid-pane (not glued to the composer).
   Non-ready
   states are one centred column: Spinner + "Starting…"; not installed →
-  primary Install (`Download`, loading while npm runs) + danger error line;
+  primary Install (`Download`, loading while Bun installs the adapter) + danger error line;
   login → one button per agent login method (first primary, others outline)
   + outline Retry; failed → danger message + primary Retry.
 - **Tool-run card (agent chat):** 2+ consecutive tool calls, with any thoughts

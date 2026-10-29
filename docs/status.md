@@ -62,13 +62,25 @@ tabs, highlighted editor, status bar):
   pip / rustup into the user toolchain. Resolve: app-local first, then system
   `PATH`. Recipes: native release assets (rust-analyzer, taplo, marksman, zls,
   lua-language-server), `GOBIN=…/lsp/bin go install` (gopls), and
-  `npm install --prefix …/lsp/pkg/…` for Node servers (needs system `node`/`npm`
-  as runtime only). `pylsp` / `clangd` / etc. stay PATH-only (no Install).
+  `bun add --cwd …/lsp/pkg/…` for npm-packaged servers, which then run as
+  `bun <script>` (Node is no longer used; the Bun package cache stays under
+  `…/isengard/runtime/bun-cache`). Existing npm-era installs keep working until
+  Remove + Install; they run on Bun too once it is present. Only the agent
+  adapter is verified on Bun so far — the language servers are untested.
+  `pylsp` / `clangd` / etc. stay PATH-only (no Install).
+  **Bun** (pinned 1.4.4, `lsp/bin/bun`): first launch without it (not app-local,
+  not on `PATH`, not `~/.bun/bin`) shows a non-dismissable **Set up Bun** dialog
+  (Install / Quit). Windows `.cmd` shims are not moved to Bun yet.
   Status bar: one LSP icon → short list with Install / Remove (Remove deletes
   app-local files only; ready/PATH probes are cached — never re-run every
   paint). Go-to-definition defers cross-file opens (avoids GPUI nested-update
   panic). Code Actions (editor context menu / Kit), Format Document
-  (`⇧⌘I` / `Ctrl+Shift+I`; format-on-save default on via `lsp.format_on_save`),
+  (`⇧⌘I` / `Ctrl+Shift+I`; format-on-save default on via `lsp.format_on_save`;
+  sends the tab's detected indent, footer shows `Spaces: N` / `Tab Size: N`).
+  **`bun fmt`** formats js/ts/jsx/tsx/json/css/html/yaml/md first (Prettier-
+  compatible; project `.prettierrc` / `.editorconfig` win, else the configured
+  `tab_size`); other files use the language server. No formatter → plain save,
+  `bun fmt` error → warning + plain save. Runs synchronously (no timeout yet),
   Rename Symbol (F2 in editor, dialog), `textDocument/didSave` after write.
   Saving `config.json` with `lsp` changes restarts servers and re-attaches
   open tabs. `config.json` → `lsp`. Untitled buffers skip
@@ -137,8 +149,8 @@ tabs, highlighted editor, status bar):
   Isengard in System Settings > Notifications, asks permission on first use — with
   `osascript` only for unbundled `cargo run` builds, plus `afplay`; no Windows yet). Default is
   Claude Agent (`@agentclientprotocol/claude-agent-acp`, pinned 0.94.0):
-  **Install** runs `npm install --prefix …/isengard/agents/claude` (needs
-  Node.js; never global), else `claude-agent-acp` on `PATH`. Uses the user's
+  **Install** runs `bun add --cwd …/isengard/agents/claude` (never global) and
+  the adapter launches as `bun <script>`, else `claude-agent-acp` on `PATH`. Uses the user's
   Claude Code login — no API key in Isengard. Not signed in → login buttons
   run the agent's own `--cli auth login …` in a terminal tab; when that
   program exits the panel reconnects by itself (Retry stays as a fallback).

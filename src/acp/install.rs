@@ -1,7 +1,7 @@
 //! App-local install of the built-in Claude Agent adapter.
 //!
-//! `npm install --prefix …/isengard/agents/claude` — never `npm -g`. Needs
-//! system `node` / `npm` as the runtime only (same rule as Node-based LSPs).
+//! `bun add --cwd …/isengard/agents/claude` — never global. Installed and run
+//! on Bun (see `runtime`), same rule as the npm-packaged LSPs.
 
 use std::path::{Path, PathBuf};
 
@@ -40,7 +40,7 @@ pub fn install_claude() -> Result<(), String> {
 }
 
 pub fn install_claude_in(root: &Path) -> Result<(), String> {
-    crate::lsp::npm_install(
+    crate::lsp::bun_install(
         &claude_dir(root),
         &[format!("{CLAUDE_PACKAGE}@{CLAUDE_VERSION}")],
     )?;
@@ -49,7 +49,7 @@ pub fn install_claude_in(root: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "npm install succeeded but `{CLAUDE_BIN}` is missing under node_modules/.bin"
+            "bun add succeeded but `{CLAUDE_BIN}` is missing under node_modules/.bin"
         ))
     }
 }

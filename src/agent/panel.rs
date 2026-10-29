@@ -7163,7 +7163,7 @@ impl AgentPanel {
                 col.child(title(format!("{name} is not installed").into()))
                     .child(hint(
                         "Install downloads the Claude Agent adapter into Isengard's data \
-                         folder (needs Node.js). It signs in with your Claude Code login."
+                         folder (runs on Bun). It signs in with your Claude Code login."
                             .into(),
                     ))
                     .child(

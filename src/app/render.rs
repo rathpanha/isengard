@@ -732,6 +732,13 @@ impl IsengardApp {
                         cursor.line + 1,
                         cursor.character + 1
                     ))
+                    .when_some(tab.indent(), |this, indent| {
+                        this.child(if indent.hard_tabs {
+                            format!("Tab Size: {}", indent.tab_size)
+                        } else {
+                            format!("Spaces: {}", indent.tab_size)
+                        })
+                    })
                     .child(tab.language().unwrap().display_name())
                 } else {
                     this.child("Image")

@@ -608,7 +608,41 @@ impl IsengardApp {
         })
         .detach();
     }
-    /// Format buffer via LSP then write. Format errors fall back to plain save.
+    /// Format-on-save applies when a formatter exists for `path`: `bun fmt` for
+    /// the file types it handles, else an attached language server.
+    pub(super) fn wants_format_on_save(&self, path: &Path) -> bool {
+        self.effective_config().lsp.format_on_save
+            && (crate::runtime::fmt_supported(path) || self.lsp.is_attached(path))
+    }
+
+    /// Edits that format `text` for `path`: `bun fmt` first (Prettier-compatible,
+    /// reads the project config), then the language server. `Ok(None)` = no
+    /// formatter available.
+    fn format_edits(
+        &self,
+        path: &Path,
+        text: &str,
+        indent: Option<TabSize>,
+    ) -> Result<Option<Vec<lsp_types::TextEdit>>, String> {
+        let (tab_size, hard_tabs) = indent.map_or((2, false), |i| (i.tab_size, i.hard_tabs));
+        // `bun fmt` normalizes indentation, so it gets the configured size — the
+        // detected one comes from the very file being fixed.
+        let configured = self.effective_config().tab_size.max(1) as usize;
+        if crate::runtime::fmt_supported(path)
+            && let Some(out) = crate::runtime::bun_fmt(path, text, configured)?
+        {
+            return Ok(Some(crate::lsp::replace_edit(text, &out).into_iter().collect()));
+        }
+        if !self.lsp.is_attached(path) {
+            return Ok(None);
+        }
+        self.lsp
+            .format_document(path, text, tab_size as u32, !hard_tabs)
+            .map(Some)
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    /// Format buffer (`bun fmt` / LSP) then write. Format errors fall back to plain save.
     pub(super) fn format_then_save(
         &mut self,
         path: PathBuf,
@@ -628,26 +662,18 @@ impl IsengardApp {
             return;
         };
         let text = state.read(cx).value().to_string();
-        if !self.lsp.is_attached(&path) {
-            match self.save_tab(&path, window, cx) {
-                Ok(()) => after(self, path, window, cx),
-                Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
-            }
-            return;
-        }
-        // Snapshot host methods need &self — clone client path work onto background.
-        let format_path = path.clone();
-        let edits = {
-            match self.lsp.format_document(&format_path, &text) {
-                Ok(edits) => edits,
-                Err(err) => {
-                    notify_warning(format!("Format on save skipped: {err:#}"), window, cx);
-                    match self.save_tab(&path, window, cx) {
-                        Ok(()) => after(self, path, window, cx),
-                        Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
-                    }
-                    return;
+        let indent = self.tabs.iter().find(|t| t.path == path).and_then(|t| t.indent());
+        let edits = match self.format_edits(&path, &text, indent) {
+            Ok(Some(edits)) => edits,
+            // No formatter for this file: plain save.
+            Ok(None) => Vec::new(),
+            Err(err) => {
+                notify_warning(format!("Format on save skipped: {err}"), window, cx);
+                match self.save_tab(&path, window, cx) {
+                    Ok(()) => after(self, path, window, cx),
+                    Err(err) => notify_error(format!("Save failed: {err:#}"), window, cx),
                 }
+                return;
             }
         };
         if !edits.is_empty() {
@@ -813,13 +839,12 @@ impl IsengardApp {
         let Some(state) = tab.editor_state().cloned() else {
             return;
         };
-        if !self.lsp.is_attached(&path) {
-            return notify_warning("No language server for this file", window, cx);
-        }
+        let indent = tab.indent();
         let text = state.read(cx).value().to_string();
-        match self.lsp.format_document(&path, &text) {
-            Ok(edits) if edits.is_empty() => {}
-            Ok(edits) => {
+        match self.format_edits(&path, &text, indent) {
+            Ok(None) => notify_warning("No formatter for this file", window, cx),
+            Ok(Some(edits)) if edits.is_empty() => {}
+            Ok(Some(edits)) => {
                 state.update(cx, |state, cx| {
                     state.apply_lsp_edits(&edits, window, cx);
                 });
@@ -827,7 +852,7 @@ impl IsengardApp {
                 self.lsp.did_change(&path, &new_text);
                 cx.notify();
             }
-            Err(err) => notify_error(format!("Format failed: {err:#}"), window, cx),
+            Err(err) => notify_error(format!("Format failed: {err}"), window, cx),
         }
     }
 

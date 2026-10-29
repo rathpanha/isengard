@@ -16,11 +16,12 @@ mod uri;
 
 pub use bridge::install_tab_accepts_completion;
 pub use client::LspClient;
-pub use edits::{apply_text_edits, workspace_edit_file_edits};
+pub use edits::{apply_text_edits, replace_edit, workspace_edit_file_edits};
 pub use host::{
     AttachOutcome, CatalogServer, LspEvent, LspHost, MissingServerOffer, ServerDisplayStatus,
     apply_diagnostics, path_for_diagnostics,
 };
 pub use install::{
-    InstallRecipe, is_app_local, npm_install, recipe_for_command, run_install, run_uninstall,
+    InstallRecipe, bun_install, is_app_local, recipe_for_command, resolve_command, run_install,
+    run_uninstall,
 };

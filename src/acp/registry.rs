@@ -63,11 +63,9 @@ pub fn resolve_in(
                 env.insert("CLAUDE_CODE_SUBAGENT_MODEL".into(), model.to_owned());
                 env.insert("CLAUDE_CODE_SUBAGENT_MODEL_FORCE".into(), "1".into());
             }
-            Resolved::Launch(AgentLaunch {
-                command,
-                args: Vec::new(),
-                env,
-            })
+            // The adapter is a `#!/usr/bin/env node` script: run it on Bun.
+            let (command, args) = crate::runtime::run_on_bun(command, Vec::new());
+            Resolved::Launch(AgentLaunch { command, args, env })
         }
         None => Resolved::ClaudeNotInstalled,
     }

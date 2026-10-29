@@ -54,8 +54,11 @@ impl LspClient {
         // Catch rustup shims / missing components before we block on initialize.
         preflight(&command)?;
 
-        let mut child = Command::new(&command)
-            .args(&spec.args)
+        // npm-packaged servers are `#!/usr/bin/env node` scripts: run them on Bun.
+        let (program, args) =
+            crate::runtime::run_on_bun(command.clone().into(), spec.args.clone());
+        let mut child = Command::new(&program)
+            .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

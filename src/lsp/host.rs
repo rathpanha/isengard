@@ -656,7 +656,13 @@ impl LspHost {
     }
 
     /// `textDocument/formatting` for an attached document (blocking RPC).
-    pub fn format_document(&self, path: &Path, text: &str) -> anyhow::Result<Vec<TextEdit>> {
+    pub fn format_document(
+        &self,
+        path: &Path,
+        text: &str,
+        tab_size: u32,
+        insert_spaces: bool,
+    ) -> anyhow::Result<Vec<TextEdit>> {
         let client = self
             .client_for_path(path)
             .context("no language server for document")?;
@@ -682,8 +688,8 @@ impl LspHost {
         let edits = client.request::<lsp_types::request::Formatting>(DocumentFormattingParams {
             text_document: TextDocumentIdentifier { uri },
             options: FormattingOptions {
-                tab_size: 4,
-                insert_spaces: true,
+                tab_size,
+                insert_spaces,
                 ..Default::default()
             },
             work_done_progress_params: Default::default(),

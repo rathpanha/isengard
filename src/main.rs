@@ -12,6 +12,7 @@ mod git;
 mod lsp;
 mod menus;
 mod notify;
+mod runtime;
 mod search;
 mod shell_env;
 #[allow(dead_code, clippy::type_complexity, clippy::manual_range_contains)]

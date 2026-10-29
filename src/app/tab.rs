@@ -18,6 +18,8 @@ pub(super) enum TabBody {
         /// Buffer as last loaded / saved (O(1) rope clone). `is_modified` is
         /// derived from it, so undoing back to the saved text clears the mark.
         saved: Rope,
+        /// Indent detected at open (else config); shown in the footer, sent to formatters.
+        indent: TabSize,
         /// Rendered view (Markdown → TextView, SVG → img) instead of the source editor.
         rendered_preview: bool,
         _subscriptions: Vec<Subscription>,
@@ -97,6 +99,14 @@ impl EditorTab {
             TabBody::Text { state, .. } => Some(state),
             TabBody::Diff { new, .. } => Some(new),
             TabBody::Image => None,
+        }
+    }
+
+    /// Indent of a text tab (`None` for diff / image tabs).
+    pub(super) fn indent(&self) -> Option<TabSize> {
+        match &self.body {
+            TabBody::Text { indent, .. } => Some(*indent),
+            TabBody::Diff { .. } | TabBody::Image => None,
         }
     }
 

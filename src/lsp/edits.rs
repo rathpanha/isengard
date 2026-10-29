@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail};
 use gpui_kit::component::input::{Rope, RopeExt as _};
 use lsp_types::{
-    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit,
-    Uri, WorkspaceEdit,
+    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
+    TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
 };
 
 use super::uri::uri_to_path;
@@ -33,6 +33,35 @@ pub fn apply_text_edits(text: &str, edits: &[TextEdit]) -> String {
         rope.replace(start..end, &edit.new_text);
     }
     rope.to_string()
+}
+
+/// One edit turning `old` into `new`, trimmed to the differing lines so the
+/// cursor and scroll outside them stay put. `None` when they are equal.
+pub fn replace_edit(old: &str, new: &str) -> Option<TextEdit> {
+    if old == new {
+        return None;
+    }
+    let o: Vec<&str> = old.split_inclusive('\n').collect();
+    let n: Vec<&str> = new.split_inclusive('\n').collect();
+    let pre = o.iter().zip(&n).take_while(|(a, b)| a == b).count();
+    let suf = o[pre..]
+        .iter()
+        .rev()
+        .zip(n[pre..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let end_line = o.len() - suf;
+    let end = if end_line < o.len() || old.ends_with('\n') || o.is_empty() {
+        Position::new(end_line as u32, 0)
+    } else {
+        // Replacing through an unterminated last line: end at its last character.
+        let last = o[o.len() - 1];
+        Position::new(o.len() as u32 - 1, last.encode_utf16().count() as u32)
+    };
+    Some(TextEdit {
+        range: Range::new(Position::new(pre as u32, 0), end),
+        new_text: n[pre..n.len() - suf].concat(),
+    })
 }
 
 /// Paths + text edits from a [`WorkspaceEdit`] (documentChanges preferred).
@@ -94,7 +123,26 @@ fn path_from_uri(uri: &Uri) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lsp_types::{Position, Range};
+
+    #[test]
+    fn replace_edit_round_trips_and_stays_minimal() {
+        for (old, new) in [
+            ("a\n  b\nc\n", "a\nb\nc\n"),
+            ("a\nb", "a\nb\n"),
+            ("a\nb\n", "a\nb"),
+            ("x\n", "y\n"),
+            ("same\n", "same\n"),
+            ("", "new\n"),
+            ("é\n  é", "é\né\n"),
+        ] {
+            match replace_edit(old, new) {
+                Some(e) => assert_eq!(apply_text_edits(old, &[e]), new, "{old:?} -> {new:?}"),
+                None => assert_eq!(old, new),
+            }
+        }
+        let e = replace_edit("a\n  b\nc\n", "a\nb\nc\n").unwrap();
+        assert_eq!((e.range.start.line, e.range.end.line), (1, 2), "only line 2 touched");
+    }
 
     fn edit(sl: u32, sc: u32, el: u32, ec: u32, new: &str) -> TextEdit {
         TextEdit {

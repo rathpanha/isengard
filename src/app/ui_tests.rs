@@ -2652,6 +2652,47 @@ fn workspace_settings_overlay_font_tab_and_format(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn tab_indent_is_detected_per_file_else_config(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let four = h.file("four.py", "def f():\n    if x:\n        y\n");
+    let tabs = h.file("tabs.go", "func f() {\n\tif x {\n\t\ty\n\t}\n}\n");
+    let flat = h.file("flat.txt", "a\nb\n");
+    for p in [&four, &tabs, &flat] {
+        h.open(p, cx);
+    }
+    h.with_app(cx, |app, _, _| {
+        let indent = |p: &Path| app.tabs.iter().find(|t| t.path == p).unwrap().indent().unwrap();
+        assert_eq!((indent(&four).tab_size, indent(&four).hard_tabs), (4, false));
+        assert!(indent(&tabs).hard_tabs);
+        assert_eq!((indent(&flat).tab_size, indent(&flat).hard_tabs), (2, false));
+    });
+}
+
+#[gpui_kit::test]
+fn save_formats_supported_files_with_bun_fmt(cx: &mut TestAppContext) {
+    if crate::runtime::bun_path().is_none() {
+        return;
+    }
+    let h = Harness::new(cx);
+    let path = h.file("a.ts", "function f(){\n      return 1\n}\n");
+    h.open(&path, cx);
+    h.press("secondary-s", cx);
+    let formatted = "function f() {\n  return 1;\n}\n";
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), formatted);
+    assert_eq!(h.tab(&path, cx), Some((false, formatted.into())));
+}
+
+#[gpui_kit::test]
+fn bun_setup_dialog_cannot_be_dismissed(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.with_app(cx, |app, window, cx| app.show_bun_setup(window, cx));
+    assert!(h.has("bun-install", cx), "setup dialog is open");
+    assert!(h.has("bun-quit", cx));
+    h.press("escape", cx);
+    assert!(h.has("bun-install", cx), "Esc must not close it");
+}
+
+#[gpui_kit::test]
 fn commit_suggest_runs_in_parallel_across_repos(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

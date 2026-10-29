@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Bun replaces Node: app-local Bun (pinned 1.4.4) installed from
+  a non-dismissable first-run dialog; agent adapter and npm-packaged language
+  servers install with `bun add` and run as `bun <script>`; format-on-save and
+  Format Document use `bun fmt` for js/ts/json/css/html/yaml/md (project config
+  wins), language server for the rest. Indent detection now ignores odd steps.
+- **2026-10-29** — Per-file indent detection (tabs / 2 / 4 / 8, else config
+  `tab_size`); footer shows `Spaces: N` / `Tab Size: N`; LSP format-on-save and
+  Format Document use the tab's indent instead of a hardcoded 4 spaces.
 - **2026-10-29** — Release prep v0.1.14 (tool-run cards): version bump,
   `docs/releases/v0.1.14.md`, status release lines.
 - **2026-10-29** — Agent chat: 2+ consecutive tool calls (thoughts between them

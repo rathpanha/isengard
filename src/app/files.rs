@@ -56,13 +56,14 @@ impl IsengardApp {
         };
 
         let language = Language::from_path(path);
+        let indent = self.editor_tab_size(&text);
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language(language.highlighter_name())
                 .line_number(true)
                 .indent_guides(true)
                 .soft_wrap(false)
-                .tab_size(self.editor_tab_size())
+                .tab_size(indent)
                 .default_value(text)
         });
         let subscriptions = vec![
@@ -111,6 +112,7 @@ impl IsengardApp {
                 language,
                 state: state.clone(),
                 saved,
+                indent,
                 rendered_preview: false,
                 _subscriptions: subscriptions,
             },
@@ -327,7 +329,7 @@ impl IsengardApp {
             self.prompt_save_untitled(path, Rc::new(after), None, abort_message, window, cx);
             return;
         }
-        if self.effective_config().lsp.format_on_save && self.lsp.is_attached(&path) {
+        if self.wants_format_on_save(&path) {
             self.format_then_save(path, Rc::new(after), window, cx);
             return;
         }
@@ -603,7 +605,7 @@ impl IsengardApp {
                 );
                 return;
             }
-            if self.effective_config().lsp.format_on_save && self.lsp.is_attached(&path) {
+            if self.wants_format_on_save(&path) {
                 let rest = paths[1..].to_vec();
                 let after = after.clone();
                 self.format_then_save(
@@ -960,13 +962,14 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         let language = Language::from_path(Path::new("untitled.txt"));
+        let indent = self.editor_tab_size(initial);
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language(language.highlighter_name())
                 .line_number(true)
                 .indent_guides(true)
                 .soft_wrap(false)
-                .tab_size(self.editor_tab_size())
+                .tab_size(indent)
                 .default_value(initial.to_owned())
         });
         let subscriptions = vec![
@@ -1001,6 +1004,7 @@ impl IsengardApp {
                 language,
                 state,
                 saved,
+                indent,
                 rendered_preview: false,
                 _subscriptions: subscriptions,
             },
@@ -1267,11 +1271,12 @@ impl IsengardApp {
         config
     }
 
-    pub(super) fn editor_tab_size(&self) -> TabSize {
-        TabSize {
+    /// Indent for a buffer: detected from `text`, else the configured tab size.
+    pub(super) fn editor_tab_size(&self, text: &str) -> TabSize {
+        crate::editor::indent::detect_indent(text).unwrap_or(TabSize {
             tab_size: self.effective_config().tab_size.max(1) as usize,
             hard_tabs: false,
-        }
+        })
     }
 }
 

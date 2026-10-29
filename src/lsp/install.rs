@@ -24,7 +24,7 @@ pub enum FetchKind {
         module: &'static str,
         version: &'static str,
     },
-    /// `npm install --prefix <lsp/pkg/…>` (needs system `npm`; no `-g`).
+    /// `bun add --cwd <lsp/pkg/…>` (needs Bun, see `runtime`; never global).
     Npm {
         packages: &'static [NpmSpec],
     },
@@ -91,7 +91,7 @@ impl InstallRecipe {
                     .map(|p| format!("{}@{}", p.name, p.version))
                     .collect();
                 format!(
-                    "Run `npm install --prefix …/isengard/lsp/pkg/{}` ({}) — not global.",
+                    "Run `bun add --cwd …/isengard/lsp/pkg/{}` ({}) — not global.",
                     self.pkg_id,
                     list.join(", ")
                 )
@@ -192,6 +192,13 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
     let name = command_basename(command);
 
     Some(match name {
+        "bun" => InstallRecipe {
+            name: "Bun",
+            summary: "JavaScript runtime for the agent, formatter and Node-based servers.",
+            pkg_id: "bun",
+            bin_names: &["bun"],
+            fetch: FetchKind::Binary { select: bun_asset },
+        },
         "rust-analyzer" => InstallRecipe {
             name: "rust-analyzer",
             summary: "Rust IntelliSense (completion, hover, go-to-definition).",
@@ -372,6 +379,21 @@ fn host_os_arch() -> Option<(&'static str, &'static str)> {
         _ => return None,
     };
     Some((os, arch))
+}
+
+fn bun_asset() -> Option<BinaryAsset> {
+    // Pinned release: https://github.com/oven-sh/bun/releases/tag/bun-v1.4.4
+    const TAG: &str = "bun-v1.4.4";
+    let (os, arch) = host_os_arch()?;
+    let arch = if arch == "x86_64" { "x64" } else { arch };
+    Some(BinaryAsset {
+        url: leak_url(format!(
+            "https://github.com/oven-sh/bun/releases/download/{TAG}/bun-{os}-{arch}.zip"
+        )),
+        format: AssetFormat::Zip,
+        member: if os == "windows" { "bun.exe" } else { "bun" },
+        keep_tree: false,
+    })
 }
 
 fn rust_analyzer_asset() -> Option<BinaryAsset> {
@@ -749,7 +771,7 @@ fn install_npm(
         .iter()
         .map(|p| format!("{}@{}", p.name, p.version))
         .collect();
-    npm_install(&pkg, &specs)?;
+    bun_install(&pkg, &specs)?;
 
     for bin_name in recipe.bin_names {
         let nm_bin = pkg.join("node_modules").join(".bin").join(bin_name);
@@ -767,7 +789,7 @@ fn install_npm(
         };
         if !nm_bin.is_file() {
             return Err(format!(
-                "npm install succeeded but `{}` is missing under node_modules/.bin",
+                "bun add succeeded but `{}` is missing under node_modules/.bin",
                 bin_name
             ));
         }
@@ -776,22 +798,24 @@ fn install_npm(
     Ok(())
 }
 
-/// Fresh `npm install --prefix <pkg> <specs…>` (wipes `pkg` first; never `-g`).
-/// Shared with the agent installer (`acp::install`).
-pub fn npm_install(pkg: &Path, specs: &[String]) -> Result<(), String> {
+/// Fresh `bun add --cwd <pkg> <specs…>` (wipes `pkg` first; never global, and the
+/// package cache stays in the app data dir). Shared with the agent installer
+/// (`acp::install`).
+pub fn bun_install(pkg: &Path, specs: &[String]) -> Result<(), String> {
+    let bun = crate::runtime::bun_path()
+        .ok_or("Bun is not installed — restart Isengard to set it up")?;
     let _ = fs::remove_dir_all(pkg);
     fs::create_dir_all(pkg).map_err(|e| e.to_string())?;
 
-    let mut args = vec!["install".to_string(), "--prefix".to_string()];
-    args.push(pkg.to_string_lossy().into_owned());
-    args.extend(specs.iter().cloned());
-
-    let output = Command::new("npm")
-        .args(&args)
+    let output = Command::new(bun)
+        .args(["add", "--cwd"])
+        .arg(pkg)
+        .args(specs)
+        .env("BUN_INSTALL_CACHE_DIR", crate::runtime::bun_cache_dir())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()
-        .map_err(|e| format!("Could not run `npm` (Node.js is required): {e}"))?;
+        .map_err(|e| format!("Could not run `bun`: {e}"))?;
     if output.status.success() {
         return Ok(());
     }
@@ -803,7 +827,7 @@ pub fn npm_install(pkg: &Path, specs: &[String]) -> Result<(), String> {
         err.trim()
     };
     Err(if detail.is_empty() {
-        format!("`npm install` failed ({})", output.status)
+        format!("`bun add` failed ({})", output.status)
     } else {
         detail.chars().take(400).collect()
     })
@@ -962,6 +986,18 @@ pub fn run_uninstall_in(recipe: &InstallRecipe, root: &Path) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Network: `cargo test -- --ignored bun_recipe_installs_a_working_bun`.
+    #[test]
+    #[ignore]
+    fn bun_recipe_installs_a_working_bun() {
+        let tmp = tempfile::tempdir().unwrap();
+        run_install_in(&recipe_for_command("bun").unwrap(), tmp.path()).unwrap();
+        let bun = resolve_command_in("bun", tmp.path()).unwrap();
+        assert!(bun.starts_with(tmp.path()), "app-local, not PATH: {bun:?}");
+        let out = Command::new(bun).arg("--version").output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1.4.4");
+    }
 
     #[test]
     fn rust_analyzer_has_binary_recipe() {
