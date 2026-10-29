@@ -129,7 +129,7 @@ impl IsengardApp {
 
     /// Claude ↔ Cursor: remember the choice on this workspace session (not
     /// global `agent.command`), remount under that slot, Install / connect.
-    fn switch_builtin_agent(
+    pub(super) fn switch_builtin_agent(
         &mut self,
         agent: BuiltinAgent,
         window: &mut Window,

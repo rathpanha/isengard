@@ -534,7 +534,10 @@ src/
   Paste image/paths also become chips. `session/prompt`
   sends `Vec<ContentBlock>` (`resource` when `embeddedContext`, else
   `<context>` text, else `resource_link`; images when `image`). Caps from
-  `AgentInfo` after `initialize`. `apply_switch` calls
+  `AgentInfo` after `initialize`. Client `initialize` also sets
+  `_meta.parameterizedModelPicker: true` so Cursor ACP advertises separate
+  Model / Fast / Context / Effort `configOptions` (without it, Cursor
+  collapses those into flat model-variant strings). `apply_switch` calls
   `reset_agent_for_workspace` (drops the agent: the SDK kills its process
   group). Tests: `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
   `acp::testing::FakeAgent` serves `Channel::duplex` connections with shared

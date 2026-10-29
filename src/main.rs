@@ -77,8 +77,8 @@ gpui_kit::assets::icon_assets!(
         Shield,
         ShieldQuestionMark,
         Sparkles,
-        PencilSparkles, // Improve prompt (distinct from Mode Auto's Sparkles)
-        WandSparkles,   // Git heuristic Suggest
+        PencilSparkles, // Improve + Git Suggest trigger (distinct from Mode Auto's Sparkles)
+        WandSparkles,   // Git Suggest → Generate (heuristic) menu row
         ListTodo,
         Cpu,
         Tag,
@@ -86,6 +86,8 @@ gpui_kit::assets::icon_assets!(
         Zap,
         Users,
         SlidersHorizontal,
+        Bug,    // Mode Debug (when an agent advertises it)
+        Layers, // Mode Multitask (when an agent advertises it)
     ]
 );
 

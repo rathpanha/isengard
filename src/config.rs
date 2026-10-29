@@ -908,7 +908,7 @@ mod tests {
             },
         );
         assert_eq!(session.agent_chats[0].id, "c1");
-        assert!(session.agent_slots.get("claude").is_none());
+        assert!(!session.agent_slots.contains_key("claude"));
         assert_eq!(
             session.agent_slot("cursor-agent").chats[0].title,
             "Cursor chat"

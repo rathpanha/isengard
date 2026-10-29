@@ -3,6 +3,20 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Composer Mode/Model/… menus: 240px viewport +
+  `overflow_y_scroll` when the catalog is long (wheel was hitting the
+  config row’s horizontal scroller instead of the list).
+- **2026-10-29** — Cursor model switch: cache Fast/Context/Effort per model so
+  the composer does not wait on Cursor’s catalog re-fetch; Utility settings
+  also show Context + Fast. Debug/Multitask stay IDE-only — ACP agent only
+  advertises Agent/Plan/Ask.
+- **2026-10-29** — Cursor ACP: advertise `_meta.parameterizedModelPicker` so
+  sessions expose separate Model / Fast / Context / Effort config options
+  (same composer chrome as Claude) instead of flat variant strings.
+- **2026-10-29** — Source Control Suggest is one `PencilSparkles` menu:
+  Generate (heuristic) + Claude + Cursor (compact popover).
+- **2026-10-29** — OpusPlan Switch is Claude-only; Cursor keeps the composer
+  Model picker (sticky `opusplan` prefs no longer hide it or pin the alias).
 - **2026-10-29** — Agent Switch control is the header logo + `ChevronsUpDown`
   (not a separate Bot / ArrowLeftRight buried in the trailing icons).
 - **2026-10-29** — Agent choice is per workspace session (`sessions.*.agent`),

@@ -2,52 +2,79 @@
 use super::*;
 use super::tab::{DiffKind, TabBody};
 use super::tab::conflict_side_to_hunk;
+use crate::acp::{BuiltinAgent, builtin_agent};
 use crate::git::build_commit_suggest_prompt;
 
 impl IsengardApp {
-    /// AI Suggest via the Ready ACP agent (throwaway session). No heuristic fallback.
+    /// AI Suggest via Claude or Cursor (throwaway session). No heuristic fallback.
+    ///
+    /// If that agent is not Ready yet, switch the Agent panel to it and queue
+    /// until [`Self::sync_git_agent_ready`] sees `can_suggest_commit`.
     pub(super) fn suggest_git_commit_ai(
         &mut self,
         root: PathBuf,
         paths: Vec<String>,
-        _window: &mut Window,
+        agent: BuiltinAgent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent = self.agent.clone();
-        let can_ai = agent
-            .as_ref()
-            .is_some_and(|a| a.read(cx).can_suggest_commit());
-        if !can_ai {
-            // Button should already be disabled; resync and bail quietly.
-            self.sync_git_agent_ready(cx);
+        if self.try_run_commit_suggest(&root, &paths, agent, cx) {
             return;
         }
-        let prompt = build_commit_suggest_prompt(&root, &paths);
-        let started = agent
-            .as_ref()
-            .map(|a| {
-                a.update(cx, |agent, cx| {
-                    agent.request_commit_message(root.clone(), prompt, cx)
-                })
-            })
-            .unwrap_or(false);
-        if started {
-            self.git.update(cx, |git, cx| {
-                git.set_suggest_busy(&root, true, cx);
-            });
+        self.pending_commit_suggest = Some((root, paths, agent));
+        if !self.agent_visible {
+            self.agent_visible = true;
+            self.persist_session(cx);
         }
+        self.switch_builtin_agent(agent, window, cx);
+        notify_warning(
+            format!(
+                "Starting {} — Suggest will run when Ready",
+                agent.display_name()
+            ),
+            window,
+            cx,
+        );
         self.sync_git_agent_ready(cx);
+        cx.notify();
     }
 
-    /// Keep the Claude Suggest icon enabled when a silent ACP job can run.
-    pub(super) fn sync_git_agent_ready(&mut self, cx: &mut Context<Self>) {
-        let ready = self
-            .agent
-            .as_ref()
-            .is_some_and(|a| a.read(cx).can_suggest_commit());
-        self.git.update(cx, |git, cx| {
-            git.set_agent_ready(ready, cx);
+    fn try_run_commit_suggest(
+        &mut self,
+        root: &Path,
+        paths: &[String],
+        agent: BuiltinAgent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self.agent.clone() else {
+            return false;
+        };
+        let ok = panel.read_with(cx, |p, _| {
+            builtin_agent(p.settings()) == Some(agent) && p.can_suggest_commit()
         });
+        if !ok {
+            return false;
+        }
+        let prompt = build_commit_suggest_prompt(root, paths);
+        let started = panel.update(cx, |panel, cx| {
+            panel.request_commit_message(root.to_path_buf(), prompt, cx)
+        });
+        if started {
+            self.git.update(cx, |git, cx| {
+                git.set_suggest_busy(root, true, cx);
+            });
+        }
+        true
+    }
+
+    /// Drain a queued Git Suggest once the chosen agent is Ready.
+    pub(super) fn sync_git_agent_ready(&mut self, cx: &mut Context<Self>) {
+        let Some((root, paths, agent)) = self.pending_commit_suggest.clone() else {
+            return;
+        };
+        if self.try_run_commit_suggest(&root, &paths, agent, cx) {
+            self.pending_commit_suggest = None;
+        }
     }
 
     pub(super) fn on_show_git(

@@ -255,6 +255,9 @@ pub struct IsengardApp {
     agents: HashMap<String, (Entity<AgentPanel>, Subscription)>,
     agent_visible: bool,
     agent_width: f32,
+    /// Git Suggest picked Claude/Cursor while that agent was not Ready — run
+    /// once [`sync_git_agent_ready`] sees `can_suggest_commit` on the match.
+    pending_commit_suggest: Option<(PathBuf, Vec<String>, crate::acp::BuiltinAgent)>,
     /// Set once the user chose to quit despite unsaved changes.
     allow_quit: bool,
     /// An update check or download is running (one at a time).
@@ -379,8 +382,14 @@ impl IsengardApp {
                     GitPanelEvent::ConfirmDiscardAll { repo, count } => {
                         this.confirm_git_discard_all(repo.clone(), *count, window, cx);
                     }
-                    GitPanelEvent::SuggestCommitAi { root, paths } => {
-                        this.suggest_git_commit_ai(root.clone(), paths.clone(), window, cx);
+                    GitPanelEvent::SuggestCommitAi { root, paths, agent } => {
+                        this.suggest_git_commit_ai(
+                            root.clone(),
+                            paths.clone(),
+                            *agent,
+                            window,
+                            cx,
+                        );
                     }
                     GitPanelEvent::ToastError(msg) => {
                         notify_error(msg.clone(), window, cx);
@@ -473,6 +482,7 @@ impl IsengardApp {
             agents: HashMap::new(),
             agent_visible: false,
             agent_width: DEFAULT_AGENT_WIDTH,
+            pending_commit_suggest: None,
             allow_quit: false,
             update_busy: false,
             relaunch_exe: None,

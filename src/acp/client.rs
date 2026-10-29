@@ -551,6 +551,31 @@ async fn run(
 /// without touching the user's settings: the adapter still reports and selects
 /// the model from their files, so nothing switches until the Switch is turned
 /// on.
+/// Client caps for `initialize`.
+///
+/// Cursor only advertises separate Model / Fast / Context / Effort
+/// `configOptions` when `_meta.parameterizedModelPicker` is true — otherwise
+/// it collapses everything into flat model-variant strings (Cursor IDE's
+/// nested picker shape never appears). Claude ignores the unknown key.
+fn client_capabilities() -> ClientCapabilities {
+    let mut meta = serde_json::Map::new();
+    meta.insert("parameterizedModelPicker".into(), serde_json::json!(true));
+    ClientCapabilities::new()
+        .fs(FileSystemCapabilities::new()
+            .read_text_file(true)
+            .write_text_file(true))
+        .auth(AuthCapabilities::new().terminal(true))
+        // So agents can send CompactionUpdate / SummaryChunk when
+        // they auto-compact near the context limit.
+        .session(
+            ClientSessionCapabilities::new().compaction(CompactionCapabilities::new()),
+        )
+        // Nested Agent/Explore progress as `subagent_update` +
+        // child-session tool traffic (Claude Agent ACP).
+        .subagents(SubagentCapabilities::new())
+        .meta(meta)
+}
+
 fn claude_session_meta() -> serde_json::Map<String, serde_json::Value> {
     let serde_json::Value::Object(meta) =
         serde_json::json!({ "claudeCode": { "options": { "settings": { "model": "opusplan" } } } })
@@ -575,22 +600,7 @@ async fn session(
     let init = cx
         .send_request(
             InitializeRequest::new(ProtocolVersion::V1)
-                .client_capabilities(
-                    ClientCapabilities::new()
-                        .fs(FileSystemCapabilities::new()
-                            .read_text_file(true)
-                            .write_text_file(true))
-                        .auth(AuthCapabilities::new().terminal(true))
-                        // So agents can send CompactionUpdate / SummaryChunk when
-                        // they auto-compact near the context limit.
-                        .session(
-                            ClientSessionCapabilities::new()
-                                .compaction(CompactionCapabilities::new()),
-                        )
-                        // Nested Agent/Explore progress as `subagent_update` +
-                        // child-session tool traffic (Claude Agent ACP).
-                        .subagents(SubagentCapabilities::new()),
-                )
+                .client_capabilities(client_capabilities())
                 .client_info(
                     Implementation::new("isengard", env!("CARGO_PKG_VERSION")).title("Isengard"),
                 ),
@@ -1088,6 +1098,17 @@ mod tests {
         conn.open(SessionOpen::Load(id));
         opened(&conn);
         assert_eq!(agent.extra_roots(), [PathBuf::from("/w/system")], "load passes them too");
+    }
+
+    #[test]
+    fn initialize_advertises_parameterized_model_picker_for_cursor() {
+        let caps = client_capabilities();
+        let wire = serde_json::to_value(&caps).expect("caps serialize");
+        assert_eq!(
+            wire["_meta"]["parameterizedModelPicker"],
+            serde_json::json!(true),
+            "Cursor gates Fast/Context/Effort on this client _meta flag"
+        );
     }
 
     #[test]

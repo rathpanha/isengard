@@ -114,10 +114,10 @@ What works today:
 - **Source Control:** CLI `git`; stacked multi-root repos (flush sections,
   border only between repos); checkboxes for commit selection (select-all
   + per-file); commit box height auto 1→6 rows + drag floor to 20; Suggest
-  icons — heuristic (`WandSparkles`) and Claude (Material icon; enabled
-  only while Agent `can_silent_prompt`, throwaway session, no heuristic
-  fallback; disabled = no click; scrub drops Co-Authored-By /
-  Generated-with / Claude-Session trailers) / Commit from selection;
+  is one `PencilSparkles` menu (Generate heuristic / Claude / Cursor;
+  AI throwaway session, no heuristic fallback on AI failure; scrub drops
+  Co-Authored-By / Generated-with / Claude-Session trailers) / Commit from
+  selection;
   Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
@@ -247,14 +247,16 @@ What works today:
   config row (icon+label taps:
   Mode icon tracks Ask/Auto/Plan/ accept-edits — Auto omitted for Claude
   models older than 4.6; Model `Cpu` / Version/Context; Fast Switch;
-  Effort/agent/… on the left; OpusPlan Switch pinned right when
-  advertised (built-in Claude always advertises it — session `_meta` sets
-  flag-tier `model: opusplan`, no terminal `/model opusplan` needed; off by
-  default — session open pins the concrete Model unless prefs say on;
-  Opus in Plan Mode, Sonnet otherwise; Mode change re-pins
-  alias when on / concrete Model when off — blocks Claude settings
-  `opusplan` bleed; not in Model picker; hides Model/Version/Context
-  while on)) sits in a fixed-height band above Attach / Improve
+  Effort/agent/… on the left; OpusPlan Switch pinned right on **Claude**
+  when advertised (built-in Claude always advertises it — session `_meta`
+  sets flag-tier `model: opusplan`, no terminal `/model opusplan` needed;
+  off by default — session open pins the concrete Model unless prefs say
+  on; Opus in Plan Mode, Sonnet otherwise; Mode change re-pins alias when
+  on / concrete Model when off — blocks Claude settings `opusplan` bleed;
+  not in Model picker; hides Model/Version/Context while on). **Cursor**
+  (and other non-Claude agents) never show OpusPlan; sticky Claude
+  `opusplan` prefs do not hide their composer Model row (Utility already
+  lists every advertised model)) sits in a fixed-height band above Attach / Improve
   (`PencilSparkles` silent rewrite on a throwaway session — open chat
   context untouched, chat not marked `turn_running`; Suggest/title leave
   Send alone; Improve swaps to `CircleX` cancel — silent-only, no chat
@@ -361,16 +363,22 @@ stdio; panel UX stays capability-gated because much of it is Claude-shaped
 | **0** | App-local Cursor CLI: pin a `downloads.cursor.com` build, Install into `…/agents/cursor/`, launch `cursor-agent acp`, smoke `initialize` (+ `session/new` if logged in). Record caps vs Claude. Claude path unchanged. | **done (auth gate)** — Install + `agent.command = "cursor-agent"` resolve + Install empty-state wired. Pin `2026.10.22-27dcf5f`. Caps: `loadSession` yes; `image` yes; `embeddedContext` **no**; `resume`/`delete`/`close`/`additionalDirectories` **no** (only `sessionCapabilities.list`); auth `cursor_login` only (no `auth.terminal`). `session/new` → `-32000 Authentication required` until Phase 1 login. Claude path unchanged |
 | **1** | Auth empty state for Cursor (`cursor_login` → CLI `login` + ACP `authenticate` on Retry); Claude/Cursor chat indexes isolated per workspace | **done (auth UX)** — login button + slot isolation; full Cursor turn still needs a real login on the machine |
 | **2** | Process-level agent switch in the panel (Claude vs Cursor vs custom), persist, reconnect. Install follows the selected agent. | **done (Claude ↔ Cursor)** — per-workspace `sessions.*.agent` + picker once, header logo+chevron Switch, remount/Install; custom global `agent.command` only (no picker). Remove affordance still deferred |
-| **3** | Capability-gated UI: Opus Plan / plan-limits / subagent-model / Claude-only chrome only when that agent advertises them; silent jobs (Improve / titles / Git Suggest) only if multi-session works | after 2 |
+| **3** | Capability-gated UI: Opus Plan / plan-limits / subagent-model / Claude-only chrome only when that agent advertises them; silent jobs (Improve / titles / Git Suggest) only if multi-session works | **partial** — Git Suggest menu: Generate + Claude|Cursor (may switch panel); client `_meta.parameterizedModelPicker` so Cursor advertises Model/Fast/Context/Effort like the IDE; OpusPlan still Claude-only |
 | **4** | Optional Cursor extensions: `cursor/ask_question` (blocking, highest priority), then `create_plan` / `update_todos`, then `task` / `generate_image` | after 0–2 proven |
 | **5** | README / release notes: Cursor Install is app-local like Claude; Cursor.app optional; subscription still required | with 2 |
 
 **Claude vs Cursor gaps (living):** Cursor binary from Cursor’s lab download
 (app-local), not `@agentclientprotocol/*`; needs Cursor subscription / login;
-no Isengard plan-usage accordion; modes ask/plan/agent (not Opus Plan); auth
-`cursor_login` (not Claude Keychain); MCP from `.cursor/mcp.json` (agent-side);
-proprietary `cursor/*` methods for rich UX. Core chat/tools/permissions should
-work on stock ACP once Phase 0 passes.
+no Isengard plan-usage accordion; ACP modes are **agent / plan / ask only** —
+Cursor IDE Debug / Multitask are **not** missing Isengard UI; the stock
+`cursor-agent acp` binary hardcodes those three in `buildModesStateFromCliMode`
+(IDE uses Cursor’s own non-ACP session path). We list whatever
+`availableModes` / mode `configOptions` the agent sends; auth `cursor_login`
+(not Claude Keychain); MCP from `.cursor/mcp.json` (agent-side); proprietary
+`cursor/*` methods for rich UX. Model switch caches Fast/Context/Effort per
+model so the UI does not wait on Cursor’s catalog re-fetch. Composer Model
+menus use a fixed ~240px scroll viewport when long. Core chat/tools/permissions should work on
+stock ACP once Phase 0 passes.
 
 ### Other deferred
 
