@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Status roadmap: Cursor (and other) external ACP agents in
+  phases 0–5 (smoke via `config.json`, auth, panel switch, capability-gated
+  UI, optional `cursor/*` extensions); Claude remains default.
 - **2026-10-29** — Docs audit vs codebase: architecture `src/` tree (bun,
   notify, shell_env, workspace/, slash, edits, selection_matches, ui_tests);
   README After-install paths + Bun; design update-dialog sudo + tree Reveal;

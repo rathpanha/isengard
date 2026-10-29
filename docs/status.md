@@ -327,7 +327,30 @@ not a product TODO. License is **GPL-3.0-only** — see
 ## Roadmap
 
 Agent panel v1 is done (Claude via ACP, settings, Opus Plan, silent utility
-jobs, multi-root, session restore). Left:
+jobs, multi-root, session restore). Claude stays the default “already
+configured” path. Extra agents (Cursor via ACP, like Zed) are optional.
 
-- Process-level agent switch in the panel — **deferred** (one agent today;
-  change via `config.json`).
+### External agents (Cursor ACP) — phased
+
+Do **not** treat this as a second Install-button clone of Claude. Zed’s model
+is spawn `agent acp` + ACP. Isengard already hosts ACP; much of the panel UX
+is Claude-shaped (plan usage, Opus Plan, `bun add` adapter, terminal auth).
+
+| Phase | Goal | Status |
+| --- | --- | --- |
+| **0** | Smoke: point `config.json` `agent.command` / `args` at Cursor CLI (`agent` + `["acp"]`, or full path). One real turn (read/edit/permission/cancel). Record `initialize` caps vs Claude. Keep Claude subscription path working unchanged. | **in progress** — Claude baseline OK (app-local 0.94.0 `initialize`: load/resume/delete/close, images, embeddedContext, additionalDirectories, auth `terminal` / `claude-ai-login`). Cursor CLI `agent` **not installed** (Cursor.app alone is not enough) |
+| **1** | Auth that isn’t Claude: handle `cursor_login` / “run `agent login`” empty state; keep `auth.terminal` for Claude | blocked on 0 |
+| **2** | Process-level agent switch in the panel (Claude vs Cursor vs custom), persist per workspace, reconnect. Replaces today’s config-only switch. | deferred (was the only roadmap item) |
+| **3** | Capability-gated UI: Opus Plan / plan-limits / subagent-model / Claude Install only when that agent advertises them; silent jobs (Improve / titles / Git Suggest) only if multi-session works | after 2 |
+| **4** | Optional Cursor extensions: `cursor/ask_question` (blocking, highest priority), then `create_plan` / `update_todos`, then `task` / `generate_image` | after 0–2 proven |
+| **5** | Docs only for Cursor install — do **not** app-local `bun add` Cursor; CLI comes from Cursor | with 2 |
+
+**Claude vs Cursor gaps (living):** Cursor = user-installed CLI + Cursor
+subscription; no Isengard plan-usage accordion; modes ask/plan/agent (not
+Opus Plan); auth `cursor_login` not Claude Keychain; MCP from `.cursor/mcp.json`
+(agent-side); proprietary `cursor/*` methods for rich UX. Core chat/tools/
+permissions should work on stock ACP once Phase 0 passes.
+
+### Other deferred
+
+- (none beyond the table above)
