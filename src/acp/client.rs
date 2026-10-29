@@ -307,6 +307,7 @@ mod cursor_smoke {
             command: bin,
             args: vec!["acp".into()],
             env: BTreeMap::new(),
+            claude: false,
         };
         let conn = AgentConnection::spawn(&launch, vec![tmp.path().to_path_buf()]);
         let deadline = Instant::now() + Duration::from_secs(45);
