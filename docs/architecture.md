@@ -488,6 +488,9 @@ src/
   `opens_in_flight` ignores answers to superseded opens. Roots: the
   connection gets every workspace folder (`roots[0]` = session cwd, rest =
   `additional_directories` when the agent advertises the capability);
+  built-in Claude sessions also send `_meta.claudeCode.options.settings`
+  (`claude_session_meta`, `AgentLaunch::claude`) so Claude Code lists the
+  `opusplan` alias for the OpusPlan Switch;
   `add_folders` / remove folder call `sync_agent_roots` → `set_roots`
   (reconnect + resume, deferred past a running turn). A new chat joins
   the index on its first prompt; a chat that fails to load is dropped from

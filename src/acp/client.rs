@@ -163,11 +163,16 @@ impl AgentConnection {
         let config = AcpAgentConfig::new(launch.command.clone())
             .args(launch.args.iter().cloned())
             .envs(launch.env.iter().map(|(k, v)| (k.clone(), v.clone())));
-        Self::spawn_with(AcpAgent::new(config), roots)
+        Self::spawn_with(AcpAgent::new(config), roots, launch.claude)
     }
 
     /// Run against any transport (tests use an in-memory fake agent).
-    pub fn spawn_with(transport: impl ConnectTo<Client> + 'static, roots: Vec<PathBuf>) -> Self {
+    /// `claude` marks the built-in Claude adapter (see [`claude_session_meta`]).
+    pub fn spawn_with(
+        transport: impl ConnectTo<Client> + 'static,
+        roots: Vec<PathBuf>,
+        claude: bool,
+    ) -> Self {
         let (commands, command_rx) = flume::unbounded();
         let (event_tx, events) = flume::unbounded();
         let spawned = std::thread::Builder::new()
@@ -176,7 +181,7 @@ impl AgentConnection {
                 let event_tx = event_tx.clone();
                 move || {
                     let result =
-                        futures::executor::block_on(run(transport, roots, command_rx, event_tx.clone()));
+                        futures::executor::block_on(run(transport, roots, claude, command_rx, event_tx.clone()));
                     let _ = event_tx.send(AgentEvent::Closed(result.err().map(describe_error)));
                 }
             });
@@ -282,6 +287,7 @@ fn login_methods(methods: &[AuthMethod]) -> Vec<LoginMethod> {
 async fn run(
     transport: impl ConnectTo<Client> + 'static,
     roots: Vec<PathBuf>,
+    claude: bool,
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
 ) -> Result<(), Error> {
@@ -403,14 +409,31 @@ async fn run(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async move |cx: ConnectionTo<Agent>| {
-            session(cx, roots, commands, events, silent).await
+            session(cx, roots, claude, commands, events, silent).await
         })
         .await
+}
+
+/// Session `_meta` for the built-in Claude adapter. Claude Code lists the
+/// `opusplan` Model alias only when its configured model already is
+/// `opusplan` (what terminal `/model opusplan` writes to settings.json), so the
+/// OpusPlan Switch would stay hidden. This flag-tier setting makes it listed
+/// without touching the user's settings: the adapter still reports and selects
+/// the model from their files, so nothing switches until the Switch is turned
+/// on.
+fn claude_session_meta() -> serde_json::Map<String, serde_json::Value> {
+    let serde_json::Value::Object(meta) =
+        serde_json::json!({ "claudeCode": { "options": { "settings": { "model": "opusplan" } } } })
+    else {
+        unreachable!("object literal")
+    };
+    meta
 }
 
 async fn session(
     cx: ConnectionTo<Agent>,
     roots: Vec<PathBuf>,
+    claude: bool,
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
     silent: SilentSlot,
@@ -467,6 +490,7 @@ async fn session(
     };
     let _ = events.send(AgentEvent::Connected(info.clone()));
 
+    let session_meta = claude.then(claude_session_meta);
     let mut current: Option<SessionId> = None;
     while let Ok(command) = commands.recv_async().await {
         match command {
@@ -481,7 +505,8 @@ async fn session(
                     SessionOpen::New => cx
                         .send_request(
                             NewSessionRequest::new(cwd.clone())
-                                .additional_directories(extra_roots.clone()),
+                                .additional_directories(extra_roots.clone())
+                                .meta(session_meta.clone()),
                         )
                         .block_task()
                         .await
@@ -489,7 +514,8 @@ async fn session(
                     SessionOpen::Load(id) => cx
                         .send_request(
                             LoadSessionRequest::new(id.clone(), cwd.clone())
-                                .additional_directories(extra_roots.clone()),
+                                .additional_directories(extra_roots.clone())
+                                .meta(session_meta.clone()),
                         )
                         .block_task()
                         .await
@@ -497,7 +523,8 @@ async fn session(
                     SessionOpen::Resume(id) => cx
                         .send_request(
                             ResumeSessionRequest::new(id.clone(), cwd.clone())
-                                .additional_directories(extra_roots.clone()),
+                                .additional_directories(extra_roots.clone())
+                                .meta(session_meta.clone()),
                         )
                         .block_task()
                         .await
@@ -557,7 +584,8 @@ async fn session(
                 let opened = cx
                     .send_request(
                         NewSessionRequest::new(cwd.clone())
-                            .additional_directories(extra_roots.clone()),
+                            .additional_directories(extra_roots.clone())
+                            .meta(session_meta.clone()),
                     )
                     .block_task()
                     .await;
@@ -763,7 +791,7 @@ mod tests {
     }
 
     fn connected(agent: &FakeAgent) -> AgentConnection {
-        let conn = AgentConnection::spawn_with(agent.connect(), vec![PathBuf::from("/w")]);
+        let conn = AgentConnection::spawn_with(agent.connect(), vec![PathBuf::from("/w")], false);
         match next(&conn) {
             AgentEvent::Connected(info) => {
                 assert_eq!(info.name, "Fake Agent");
@@ -905,7 +933,7 @@ mod tests {
     fn other_workspace_roots_go_to_the_agent_as_additional_directories() {
         let agent = FakeAgent::new();
         let roots = vec![PathBuf::from("/w/graph"), PathBuf::from("/w/system")];
-        let conn = AgentConnection::spawn_with(agent.connect(), roots);
+        let conn = AgentConnection::spawn_with(agent.connect(), roots, false);
         assert!(matches!(next(&conn), AgentEvent::Connected(_)));
         conn.open(SessionOpen::New);
         let id = opened(&conn);
@@ -916,11 +944,31 @@ mod tests {
     }
 
     #[test]
+    fn claude_sessions_carry_the_opusplan_setting_and_others_do_not() {
+        let want = serde_json::json!({
+            "claudeCode": { "options": { "settings": { "model": "opusplan" } } }
+        });
+        for (claude, expected) in [(true, Some(want)), (false, None)] {
+            let agent = FakeAgent::new();
+            let conn = AgentConnection::spawn_with(agent.connect(), vec![PathBuf::from("/w")], claude);
+            assert!(matches!(next(&conn), AgentEvent::Connected(_)));
+            conn.open(SessionOpen::New);
+            let id = opened(&conn);
+            conn.open(SessionOpen::Load(id.clone()));
+            opened(&conn);
+            conn.open(SessionOpen::Resume(id));
+            opened(&conn);
+            assert_eq!(agent.session_metas(), vec![expected; 3], "new, load and resume (claude={claude})");
+        }
+    }
+
+    #[test]
     fn missing_executable_reports_closed_with_error() {
         let launch = AgentLaunch {
             command: PathBuf::from("/definitely/not/an/agent"),
             args: Vec::new(),
             env: Default::default(),
+            claude: false,
         };
         let conn = AgentConnection::spawn(&launch, vec![std::env::temp_dir()]);
         match next(&conn) {

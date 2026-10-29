@@ -3,6 +3,15 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — OpusPlan Switch starts off: opening a Claude chat now pins
+  the concrete Model (or `opusplan` only if the saved pref says so), so the
+  flag setting or a terminal `"model":"opusplan"` no longer turns it on.
+- **2026-10-29** — OpusPlan Switch no longer needs terminal `/model opusplan`:
+  Claude Code only lists the `opusplan` alias when it is already the
+  configured model, so the built-in Claude adapter's new/load/resume/silent
+  sessions now carry `_meta.claudeCode.options.settings.model = "opusplan"`
+  (flag tier — the user's own model is still what the session reports/runs).
+  Also fixes a clippy `?` lint in `preferred_opusplan_id`.
 - **2026-10-29** — Release prep v0.1.16 (Open Folder hang fix): version bump,
   `docs/releases/v0.1.16.md`, status release lines.
 - **2026-10-29** — Open Folder no longer beachballs on large trees: `FsWatcher`

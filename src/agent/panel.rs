@@ -3004,7 +3004,7 @@ impl AgentPanel {
         cx.notify();
     }
 
-    /// After Mode changes: OpusPlan on → pin `opusplan`; off → pin the concrete
+    /// After Mode changes (and on session open): OpusPlan on → pin `opusplan`; off → pin the concrete
     /// Model from prefs so `~/.claude/settings.json` `"model":"opusplan"` cannot
     /// take over when the Switch is off.
     fn sync_model_after_mode_change(&mut self, cx: &mut Context<Self>) {
@@ -3021,9 +3021,7 @@ impl AgentPanel {
             Some(SessionConfigOptionCategory::Model),
             "model",
         )?;
-        if find_opusplan_choice(&self.config_options).is_none() {
-            return None;
-        }
+        find_opusplan_choice(&self.config_options)?;
         let prefer_1m = match self.prefs.config.get("model") {
             Some(AgentPrefValue::Value(id)) => id.to_ascii_lowercase().contains("[1m]"),
             _ => false,
@@ -3999,6 +3997,12 @@ impl AgentPanel {
                     self.config_options = Some(opts);
                 }
                 self.apply_prefs(cx);
+                if find_opusplan_choice(&self.config_options).is_some() {
+                    // The opusplan flag setting (`claude_session_meta`) or a
+                    // terminal `"model":"opusplan"` would otherwise run the
+                    // alias with the Switch off.
+                    self.sync_model_after_mode_change(cx);
+                }
                 self.usage = self.usage_by_chat.get(&id).copied();
                 // Claude only sends usage_update mid-turn — seed size so the
                 // header is not blank on open / switch.

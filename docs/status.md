@@ -239,7 +239,10 @@ What works today:
   Mode icon tracks Ask/Auto/Plan/ accept-edits — Auto omitted for Claude
   models older than 4.6; Model `Cpu` / Version/Context; Fast Switch;
   Effort/agent/… on the left; OpusPlan Switch pinned right when
-  advertised (Opus in Plan Mode, Sonnet otherwise; Mode change re-pins
+  advertised (built-in Claude always advertises it — session `_meta` sets
+  flag-tier `model: opusplan`, no terminal `/model opusplan` needed; off by
+  default — session open pins the concrete Model unless prefs say on;
+  Opus in Plan Mode, Sonnet otherwise; Mode change re-pins
   alias when on / concrete Model when off — blocks Claude settings
   `opusplan` bleed; not in Model picker; hides Model/Version/Context
   while on)) sits in a fixed-height band above Attach / Improve
