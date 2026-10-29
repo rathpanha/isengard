@@ -346,6 +346,9 @@ Add a row here whenever a new shared component is created.
   updates keep streaming): options stacked full-width in a `v_flex`
   (never side-by-side wrap), `.small()` + `.w_full()`, allow-once
   `.primary()`, allow-always `.outline()`, reject `.danger().outline()`.
+  **Cursor** never shows them — Mode is not an approval policy on ACP,
+  so the panel auto-selects AllowAlways (else AllowOnce) and Cursor
+  launches with `--force`. Claude still prompts (Auto mode is agent-side).
   Composer: optional wrap-row of attachment chips
   (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
   `@` on chip text) with ghost `CircleX` remove — chips are from the Attach

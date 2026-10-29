@@ -3,7 +3,9 @@
 //! `config.json` `agent.command` (tests / gemini / …).
 //!
 //! Built-in Cursor uses slot `"cursor-agent"` (app-local `…/agents/cursor/`
-//! first, then `PATH`; args default to `["acp"]`).
+//! first, then `PATH`; args default to `["--force", "acp"]` — Cursor ACP
+//! still emits `request_permission` for every tool otherwise; `--force` is
+//! CLI "Run Everything", and the panel auto-answers Allow).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,7 +81,7 @@ pub fn with_agent_slot(settings: &AgentSettings, slot: &str) -> AgentSettings {
     match slot.trim() {
         "" | "claude" => {
             next.command = None;
-            if next.args == ["acp".to_owned()] {
+            if is_cursor_default_args(&next.args) {
                 next.args.clear();
             }
         }
@@ -111,10 +113,24 @@ pub fn launch_for_workspace(
     // Ignore leftover Claude/Cursor `agent.command` in config; ask once per folder.
     let mut placeholder = global.clone();
     placeholder.command = None;
-    if placeholder.args == ["acp".to_owned()] {
+    if is_cursor_default_args(&placeholder.args) {
         placeholder.args.clear();
     }
     (placeholder, true)
+}
+
+/// Default Cursor launch args (`--force` = CLI Run Everything so ACP hosts
+/// are not stuck confirming every tool; panel still auto-answers as backup).
+pub fn cursor_default_args() -> Vec<String> {
+    vec!["--force".into(), "acp".into()]
+}
+
+fn is_cursor_default_args(args: &[String]) -> bool {
+    match args {
+        [a] if a == "acp" => true,
+        [a, b] if (a == "--force" || a == "--yolo") && b == "acp" => true,
+        _ => false,
+    }
 }
 
 /// Slot id for chat isolation / panel cache (`claude`, `cursor-agent`, …).
@@ -237,7 +253,7 @@ fn resolve_cursor(
     match command {
         Some(command) => {
             let args = if settings.args.is_empty() {
-                vec!["acp".into()]
+                cursor_default_args()
             } else {
                 settings.args.clone()
             };
@@ -388,7 +404,7 @@ mod tests {
             panic!("expected a launch");
         };
         assert_eq!(launch.command, local);
-        assert_eq!(launch.args, ["acp"]);
+        assert_eq!(launch.args, ["--force", "acp"]);
     }
 
     #[test]
@@ -412,10 +428,17 @@ mod tests {
         assert_eq!(builtin_agent(&cursor), Some(BuiltinAgent::Cursor));
         assert_eq!(agent_slot_id(&cursor), CURSOR_COMMAND);
         let mut leftover = cursor.clone();
-        leftover.args = vec!["acp".into()];
+        leftover.args = cursor_default_args();
         let back = with_builtin(&leftover, BuiltinAgent::Claude);
         assert!(back.command.is_none());
         assert!(back.args.is_empty(), "drop Cursor default args for Claude");
+        leftover.args = vec!["acp".into()];
+        assert!(
+            with_builtin(&leftover, BuiltinAgent::Claude)
+                .args
+                .is_empty(),
+            "also drop legacy acp-only default"
+        );
         let custom = AgentSettings {
             command: Some("gemini".into()),
             ..AgentSettings::default()

@@ -2628,6 +2628,40 @@ fn agent_answers_pending_permission(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn cursor_agent_auto_allows_tool_permissions(cx: &mut TestAppContext) {
+    // Cursor ACP Mode ≠ approval policy — every tool still
+    // `request_permission`. Isengard auto-picks Allow (Always > Once)
+    // so Agent/Plan/Ask are not a click-for-every-tool tax.
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("cursor-auto-perm");
+    remember_workspace_agent(&h, &folder, "cursor-agent", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let reply = cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.inject_pending_permission_for_test(cx))
+    });
+    assert!(
+        !panel_get(&h, cx, |p, _| p.has_pending_permission_for_test()),
+        "Cursor should not leave a pending Allow/Reject row"
+    );
+    assert!(
+        !h.has("agent-perm-t-perm-allow", cx),
+        "no Allow button — auto-answered"
+    );
+    let answered = reply.try_recv().expect("auto permission reply");
+    assert_eq!(
+        answered.map(|id| id.to_string()),
+        Some("allow".into()),
+        "auto-selected AllowOnce (no AllowAlways in the fixture)"
+    );
+}
+
+#[gpui_kit::test]
 fn agent_deletes_chat(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);

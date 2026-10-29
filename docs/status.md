@@ -256,7 +256,9 @@ What works today:
   not in Model picker; hides Model/Version/Context while on). **Cursor**
   (and other non-Claude agents) never show OpusPlan; sticky Claude
   `opusplan` prefs do not hide their composer Model row (Utility already
-  lists every advertised model)) sits in a fixed-height band above Attach / Improve
+  lists every advertised model); Cursor tool permissions auto-allow
+  (`--force acp` + client AllowAlways/AllowOnce — Mode does not reduce
+  ACP prompts)) sits in a fixed-height band above Attach / Improve
   (`PencilSparkles` silent rewrite on a throwaway session — open chat
   context untouched, chat not marked `turn_running`; Suggest/title leave
   Send alone; Improve swaps to `CircleX` cancel — silent-only, no chat
@@ -360,7 +362,7 @@ stdio; panel UX stays capability-gated because much of it is Claude-shaped
 
 | Phase | Goal | Status |
 | --- | --- | --- |
-| **0** | App-local Cursor CLI: pin a `downloads.cursor.com` build, Install into `…/agents/cursor/`, launch `cursor-agent acp`, smoke `initialize` (+ `session/new` if logged in). Record caps vs Claude. Claude path unchanged. | **done (auth gate)** — Install + `agent.command = "cursor-agent"` resolve + Install empty-state wired. Pin `2026.10.22-27dcf5f`. Caps: `loadSession` yes; `image` yes; `embeddedContext` **no**; `resume`/`delete`/`close`/`additionalDirectories` **no** (only `sessionCapabilities.list`); auth `cursor_login` only (no `auth.terminal`). `session/new` → `-32000 Authentication required` until Phase 1 login. Claude path unchanged |
+| **0** | App-local Cursor CLI: pin a `downloads.cursor.com` build, Install into `…/agents/cursor/`, launch `cursor-agent acp`, smoke `initialize` (+ `session/new` if logged in). Record caps vs Claude. Claude path unchanged. | **done (auth gate)** — Install + `agent.command = "cursor-agent"` resolve + Install empty-state wired. Pin `2026.10.22-27dcf5f`. Default args `--force acp` + panel auto-allow permissions. Caps: `loadSession` yes; `image` yes; `embeddedContext` **no**; `resume`/`delete`/`close`/`additionalDirectories` **no** (only `sessionCapabilities.list`); auth `cursor_login` only (no `auth.terminal`). `session/new` → `-32000 Authentication required` until Phase 1 login. Claude path unchanged |
 | **1** | Auth empty state for Cursor (`cursor_login` → CLI `login` + ACP `authenticate` on Retry); Claude/Cursor chat indexes isolated per workspace | **done (auth UX)** — login button + slot isolation; full Cursor turn still needs a real login on the machine |
 | **2** | Process-level agent switch in the panel (Claude vs Cursor vs custom), persist, reconnect. Install follows the selected agent. | **done (Claude ↔ Cursor)** — per-workspace `sessions.*.agent` + picker once, header logo+chevron Switch, remount/Install; custom global `agent.command` only (no picker). Remove affordance still deferred |
 | **3** | Capability-gated UI: Opus Plan / plan-limits / subagent-model / Claude-only chrome only when that agent advertises them; silent jobs (Improve / titles / Git Suggest) only if multi-session works | **partial** — Git Suggest menu: Generate + Claude|Cursor (may switch panel); client `_meta.parameterizedModelPicker` so Cursor advertises Model/Fast/Context/Effort like the IDE; OpusPlan still Claude-only |
@@ -377,8 +379,9 @@ Cursor IDE Debug / Multitask are **not** missing Isengard UI; the stock
 (not Claude Keychain); MCP from `.cursor/mcp.json` (agent-side); proprietary
 `cursor/*` methods for rich UX. Model switch caches Fast/Context/Effort per
 model so the UI does not wait on Cursor’s catalog re-fetch. Composer Model
-menus use a fixed ~240px scroll viewport when long. Core chat/tools/permissions should work on
-stock ACP once Phase 0 passes.
+menus use a fixed ~240px scroll viewport when long. Tool permissions
+auto-allow on Cursor (`--force` + client AllowAlways); Claude still
+prompts. Core chat/tools should work on stock ACP once Phase 0 passes.
 
 ### Other deferred
 

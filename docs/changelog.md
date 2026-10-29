@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Cursor Agent: auto-allow tool permissions (AllowAlways
+  preferred) and default launch `--force acp` — Mode does not gate
+  approval on ACP, so every tool was prompting.
 - **2026-10-29** — Composer Mode/Model/… menus: 240px viewport +
   `overflow_y_scroll` when the catalog is long (wheel was hitting the
   config row’s horizontal scroller instead of the list).

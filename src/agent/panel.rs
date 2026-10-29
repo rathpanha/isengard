@@ -1144,6 +1144,12 @@ impl AgentPanel {
         }
     }
 
+    /// Built-in Cursor Agent — Mode ≠ approval; ACP always asks, so we
+    /// auto-allow (and launch with `--force`).
+    fn is_cursor_agent(&self) -> bool {
+        matches!(builtin_agent(&self.settings), Some(BuiltinAgent::Cursor))
+    }
+
     /// Whether the OpusPlan Switch is available (Claude + agent advertises the alias).
     #[cfg(test)]
     pub fn opusplan_available(&self) -> bool {
@@ -4321,8 +4327,9 @@ impl AgentPanel {
             AgentEvent::Permission(ask) => {
                 // Silent-session tool asks are cancelled in the ACP client by
                 // session id; anything that reaches here is for the open chat.
-                self.ask_permission(ask, cx);
-                cx.emit(AgentPanelEvent::PermissionRequested);
+                if self.ask_permission(ask, cx) {
+                    cx.emit(AgentPanelEvent::PermissionRequested);
+                }
             }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
@@ -4574,7 +4581,9 @@ impl AgentPanel {
         self.touched(ix, cx);
     }
 
-    fn ask_permission(&mut self, ask: PermissionAsk, cx: &mut Context<Self>) {
+    /// Attach Allow/Reject buttons, or auto-allow for Cursor. Returns whether
+    /// the UI still has a pending prompt (`PermissionRequested`).
+    fn ask_permission(&mut self, ask: PermissionAsk, cx: &mut Context<Self>) -> bool {
         let PermissionAsk {
             tool_call,
             options,
@@ -4582,6 +4591,16 @@ impl AgentPanel {
         } = ask;
         let id = tool_call.tool_call_id.clone();
         self.update_tool_call(tool_call, cx);
+        // Cursor Mode (Agent/Plan/Ask) does not gate approval — every tool
+        // hits `session/request_permission`. Without a client policy the UI
+        // asks forever; match CLI `--force` and prefer AllowAlways.
+        if self.is_cursor_agent()
+            && let Some(option_id) = prefer_allow_permission(&options)
+        {
+            let _ = reply.send(Some(option_id));
+            self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+            return false;
+        }
         if let Some(ix) = self.tool_index(&id)
             && let Entry::Tool(tool) = &mut self.entries[ix]
         {
@@ -4589,8 +4608,12 @@ impl AgentPanel {
                 let _ = old.reply.send(None);
             }
             self.touched(ix, cx);
+            self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+            return true;
         }
-        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        // Tool row missing — cancel so the agent is not stuck.
+        let _ = reply.send(None);
+        false
     }
 
     fn push_notice(&mut self, text: impl Into<SharedString>, error: bool, cx: &mut Context<Self>) {
@@ -4848,6 +4871,19 @@ fn pick_silent_model_id(
         .find(|c| display_context_label(choices, c).as_deref() == prefer_ctx)
         .or_else(|| in_family.first().copied())
         .map(|c| c.id.clone())
+}
+
+/// Prefer AllowAlways, then AllowOnce — Cursor ACP option ids vary; match by kind.
+fn prefer_allow_permission(options: &[PermissionOption]) -> Option<PermissionOptionId> {
+    options
+        .iter()
+        .find(|o| matches!(o.kind, PermissionOptionKind::AllowAlways))
+        .or_else(|| {
+            options
+                .iter()
+                .find(|o| matches!(o.kind, PermissionOptionKind::AllowOnce))
+        })
+        .map(|o| o.option_id.clone())
 }
 
 fn find_select(
