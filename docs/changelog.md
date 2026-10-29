@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — README: “Why Isengard” feature blurb (defaults, workspaces,
+  Claude Agent, model/utility/Opus Plan, app-local tools, platforms).
 - **2026-10-29** — Docs: architecture overview (stack, process map, binary vs
   on-disk, data dirs) at the top of `architecture.md`; README Architecture
   blurb + docs index; credits row for Bun.

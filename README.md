@@ -6,6 +6,26 @@ Cross-platform desktop code editor built in Rust on [GPUI Kit](https://gpui-kit.
 Ships for **Linux** (`.deb`, `.rpm`, and a binary tarball), **macOS** (universal
 `.dmg` / tarball, not notarized) and **Windows** (x86_64 zip, not code-signed).
 
+## Why Isengard
+
+- **Already configured** — format on save, per-file indent detection, dark Ayu
+  theme, Material file icons. Open a folder and work; edit `config.json` only
+  when you want to change a default.
+- **Workspaces that remember** — multi-root folders; tabs, sidebar, terminal
+  layout, and agent chats restore per workspace.
+- **Claude Agent built in** — Agent panel over ACP. Install from the panel,
+  sign in with your Claude Code login (no API key stored in Isengard). `@`
+  files, permissions, plan usage, and tool runs live in the UI.
+- **Model controls that matter** — pick the chat model, a separate utility
+  model for quiet jobs (titles, Improve, Git Suggest), and a Fast / Opus Plan
+  switch without digging through Claude’s own settings.
+- **Tools stay in the app** — Bun, language servers, and the agent adapter
+  install under Isengard’s data folder — not `npm -g` / brew into your
+  toolchain. Bun also formats JS/TS/JSON/CSS/HTML/YAML/Markdown on save.
+- **Linux, macOS, and Windows** — Check for Updates… where the install allows.
+
+What works and what is still rough: [docs/status.md](docs/status.md).
+
 ## Install (Linux)
 
 Grab the asset for your CPU from the
