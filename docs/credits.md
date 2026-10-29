@@ -98,7 +98,10 @@ many to list; `cargo tree` is the full graph).
 | `cc` | Build pin for tree-sitter/SQL + Windows resource embed |
 | `embed-resource` | Windows `.exe` icon (build) |
 | `objc2` / `objc2-app-kit` / `objc2-foundation` | macOS Dock icon at runtime |
+| `objc2-user-notifications` / `block2` | macOS native agent-done notifications (app bundle) |
 | `image` | Decode PNG for `WindowOptions::icon` (X11); re-encode ICO/BMP/TIFF → PNG for ACP agent image blocks |
+| `ureq` / `flate2` / `tar` / `zip` / `xz2` | App-local LSP / Bun / update downloads and archive extract (`xz2` static on macOS) |
+| `chrono` | Local timezone for Claude plan-usage reset tooltips |
 | `tempfile` | Tests only |
 
 Packaging metadata targets [cargo-bundle](https://github.com/burtonageo/cargo-bundle)

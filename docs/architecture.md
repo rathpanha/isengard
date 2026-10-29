@@ -86,8 +86,10 @@ the user toolchain.
 - **Agent** — Agent Client Protocol; default adapter installed with Bun;
   OAuth / plan usage talk to Claude’s APIs using the user’s Claude Code login
   (no API key stored in Isengard).
-- **Vendoring** — `vendor/gpui-component` patches Kit (completion popover
-  width, instant dialogs). Do not depend on crates.io `gpui-terminal`.
+- **Vendoring** — `vendor/gpui-component` patches Kit (completion popover,
+  macOS native menu fallback, instant dialogs, Input context-menu append).
+  See [vendor/README.md](../vendor/README.md). Do not depend on crates.io
+  `gpui-terminal`.
 
 Details, source map, conventions, and pins follow below. Feature truth and
 gaps live in [status.md](status.md); UI rules in [design.md](design.md);
@@ -145,7 +147,7 @@ There is **no Apple Developer ID / notarization** (costs $99/yr), so:
   keep it equal to `update::PUBLIC_KEY`.
 
 A Finder / Dock launch on macOS gets a bare `PATH`, so terminal tools
-(`oh-my-posh`; formerly the Node-based agent adapter) fail
+(`oh-my-posh`, Homebrew, …) and any leftover `#!/usr/bin/env node` shim fail
 while `cargo run` works. `shell_env::import_login_path` (first thing in `main`)
 reads the login shell's `PATH` (`$SHELL -ilc`, markers around `$PATH`), merges
 it in front of the current `PATH` and `set_var`s it — skipped when stdin is a
@@ -155,6 +157,8 @@ cache instantly and refresh it from a background thread for the next launch.
 The interactive terminal also starts its shell with `-l` on macOS
 (`terminal/pty.rs`) so `~/.zprofile` runs, like Terminal.app. Linux needs
 neither: desktop sessions already pass the login environment to launched apps.
+(The agent adapter and npm-packaged LSPs now run on Bun via `runtime::run_on_bun`;
+PATH import still matters for other CLI tools.)
 
 Agents: see `.cursor/rules/cargo-warning-free.mdc`. Finish no `src/` task while
 `cargo check` still prints `isengard` warnings — fix the code; do not disable
@@ -261,36 +265,39 @@ prints that nothing is needed (macOS / Git Bash on Windows).
 
 ```
 src/
-├── main.rs              app bootstrap: `AppAssets` (default Kit icons +
-│                        FilePlus/FolderPlus/FolderTree/Search/CaseSensitive/
-│                        WholeWord/Regex/Replace/ReplaceAll), gpui_kit::init,
-│                        fonts, theme, key bindings, menus, window
-│                        (QuitMode::LastWindowClosed)
+├── main.rs              app bootstrap: ExtraIcons + gpui_kit::init, fonts,
+│                        theme, key bindings, menus, window
+│                        (QuitMode::LastWindowClosed); calls shell_env first
 ├── app/                 IsengardApp entity (one GPUI view; split by concern)
-│   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`), module map
+│   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`)
 │   ├── actions.rs       `actions!`, tab path actions, key bindings, menu bridge
 │   ├── agent.rs         Agent panel toggle, OS attach picker, file I/O, login → terminal
+│   ├── bun.rs           first-run Bun setup dialog (Install / Quit)
 │   ├── tab.rs           `EditorTab` / `TabBody` / `DiffKind`
 │   ├── workspace.rs     open/switch/persist workspace, recents, titles
 │   ├── session.rs       session + window geometry restore/persist
 │   ├── files.rs         open/save/close tabs, untitled, font/preview
 │   ├── tree.rs          inline create/rename/delete in the file tree
-│   ├── lsp.rs           LSP attach, install/remove UI, event pump
+│   ├── lsp.rs           LSP attach, install/remove UI, event pump, format-on-save
 │   ├── search.rs        project search/replace + selection soft-highlight
 │   ├── git.rs           Source Control diff/conflict tabs
 │   ├── watch.rs         watcher pump: reload clean tabs, refresh tree + Git
 │   ├── terminal.rs      bottom PTY panel show/create/cwd
 │   ├── terminal_cwd.rs  multi-root “Open Terminal in…” picker
 │   ├── chrome.rs        sidebar toggle, About, config, quit
-│   ├── update.rs        update-available / download / restart / install-command dialogs
+│   ├── update.rs        update / download / password-install / restart dialogs
 │   ├── render.rs        title/sidebar/editor/status-bar paint + `Render`
-│   └── welcome.rs       welcome screen (start actions + recent folders)
+│   ├── welcome.rs       welcome screen (start actions + recent folders)
+│   └── ui_tests.rs      headless `#[gpui_kit::test]` coverage (Harness)
 ├── update.rs            release lookup (GitHub API), install-kind detection,
 │                        asset pick, download + minisign/SHA-256 verify,
-│                        in-place tarball install (no UI; unit-tested)
+│                        in-place / MacApp / WinExe / package install (no UI)
 ├── watch.rs             `FsWatcher`: non-recursive watches per dir (skips
 │                        `node_modules`/… so Linux inotify does not blow up)
 │                        → flume of `FsChange`
+├── notify.rs            agent-done OS notification + sound (Linux / macOS;
+│                        Windows not implemented)
+├── shell_env.rs         macOS: merge login-shell PATH for Finder launches
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
@@ -299,20 +306,23 @@ src/
 │                        `~/.bun/bin`), `run_on_bun` (rewrites a `#!…node` script,
 │                        or our `lsp/bin` sh wrapper around one, to `bun <script>`),
 │                        `bun_fmt` (`bun fmt --stdin-filepath`), `bun_cache_dir`
-├── workspace.rs         Workspace (root folders + optional file): naming,
-│                        root_for/relative_label, load/save .isengard-workspace
+├── workspace/           Workspace model (roots + optional `.isengard-workspace`)
+│   ├── mod.rs           naming, root_for/relative_label, load/save
+│   └── settings.rs      overlay workspace `settings` onto AppConfig
 ├── editor/
 │   ├── document.rs      read_text / write_text / file_name / is_image
 │   ├── language.rs      Language enum: from_path, highlighter_name, display_name
 │   ├── highlights.rs    patches weak GPUI Kit highlight queries (GraphQL, TSX)
 │   ├── indent.rs        `detect_indent`: per-file tabs / 2 / 4 / 8 (footer, LSP format)
+│   ├── selection_matches.rs  soft-highlight other occurrences of the selection
 │   └── tabs.rs          TabList<T>: order/activate/reorder (unit-tested)
 ├── lsp/                 Language Server Protocol (IntelliSense)
 │   ├── host.rs          workspace servers, didOpen/Change/Close, diagnostics pump
 │   ├── client.rs        stdio JSON-RPC client (flume + background thread)
 │   ├── bridge.rs        Kit Completion/Hover/DefinitionProvider + showDocument
 │   ├── registry.rs      Language → default ServerSpec + config overrides
-│   ├── install.rs       app-local download / resolve (bin then PATH)
+│   ├── install.rs       app-local download / resolve (bin then PATH); Bun recipe
+│   ├── edits.rs         apply TextEdit / WorkspaceEdit to buffers
 │   ├── protocol.rs      Content-Length framing
 │   └── uri.rs           file:// path ↔ Uri
 ├── acp/                 Agent Client Protocol host (no UI)
@@ -323,14 +333,12 @@ src/
 │   ├── files.rs         `slice_lines` for `fs/read_text_file` ranges
 │   └── testing.rs       (tests) in-memory `FakeAgent` + `install` hook
 ├── agent/
-│   ├── panel.rs         `AgentPanel`: transcript (`MessageScroller` + half-pane bottom space),
-│   │                    tool rows, permission buttons, composer + `@` menu
-│   ├── limits.rs        Claude plan usage (5h/week + optional Opus/Sonnet +
-│   │                    product breakdown + subscription label) via OAuth;
-│   │                    refreshes/persists Claude Code tokens; merge keeps last good
+│   ├── panel.rs         `AgentPanel`: transcript, tool cards, permissions,
+│   │                    composer (`@` / `/`), settings, Opus Plan / Improve
+│   ├── limits.rs        Claude plan usage via OAuth; token refresh + cache
 │   ├── mention.rs       `@` query parse + workspace file/folder listing
-│   └── prompt.rs        `Attachment` → ACP `ContentBlock`s (`resource` /
-│                        `resource_link` / `image`) from agent prompt caps
+│   ├── slash.rs         `/` slash-command parse + filter (ACP catalog)
+│   └── prompt.rs        `Attachment` → ACP `ContentBlock`s from prompt caps
 ├── file_tree/
 │   ├── node.rs          FsNode (File/Dir), lazy load_one_level, set_expanded, find_mut
 │   ├── ignore.rs        GitIgnoreIndex — dim gitignored paths (show, don't hide)

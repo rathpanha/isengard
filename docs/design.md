@@ -113,8 +113,13 @@ Add a row here whenever a new shared component is created.
   "View release notes" link button; footer Skip this version · Later (both
   `.outline()`) · one `.primary()` whose label says what happens (Update now /
   Download update / Open release page). Download dialog is non-dismissable
-  (no ×, overlay, or Esc) with a Kit `Progress` bar and Cancel. The install
-  command is shown in a `muted` block; it is typed into a terminal, never run.
+  (no ×, overlay, or Esc) with a Kit `Progress` bar and Cancel. Package
+  installs (RPM/DEB): **Install now** opens a masked sudo-password dialog and
+  runs `sudo -S …` with live output (wrong password re-asks); Copy command /
+  Open in terminal remain as fallbacks (command typed into a tab, not
+  executed, so the user presses Enter and enters their own password).
+  Self-installed / MacApp / WinExe paths swap in place and offer Restart —
+  no sudo.
 
 - **Required-setup dialog** (`app/bun.rs`, first launch without Bun): same
   non-dismissable rules as the download dialog (no ×, overlay or Esc), body text
@@ -563,8 +568,9 @@ Add a row here whenever a new shared component is created.
     `danger` for delete/conflict; folders use a roll-up (conflict >
     modify family > untracked). Updated whenever Git status reloads.
   - Actions on a tree item live in its right-click menu (`Tree::context_menu`):
-    files — Rename, Delete; folders — New File…, New Folder…, Rename,
-    Delete; multi-root roots also get "Remove Folder from Workspace".
+    files — Reveal in File Manager, Rename, Delete; folders — New File…,
+    New Folder…, Reveal, Rename, Delete; multi-root roots also get
+    "Remove Folder from Workspace".
     Right-click empty space in the tree panel (not on a row) → New File /
     New Folder under the workspace root (single-root folder, or first
     root when multi). Mini toolbar at the top of the tree (`justify_between`,

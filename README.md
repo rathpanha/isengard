@@ -93,9 +93,13 @@ built.
 
 ### After install
 
+- **Bun** may need a one-time Install from the first-run dialog (or use a Bun
+  already on `PATH` / `~/.bun/bin`).
 - **Language servers** are not inside the package. Use the status-bar LSP menu
-  → **Install** (downloads into `~/.local/share/isengard/lsp/` — never into
-  your system toolchain).
+  → **Install** (downloads under the app data dir — e.g. Linux
+  `~/.local/share/isengard/lsp/`, macOS
+  `~/Library/Application Support/isengard/lsp/` — never into your system
+  toolchain).
 - **Claude Agent** is optional: Install / Login from the Agent panel. No API
   key is stored in Isengard; you sign in with the agent’s own flow.
 

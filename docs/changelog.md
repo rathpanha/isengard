@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Docs audit vs codebase: architecture `src/` tree (bun,
+  notify, shell_env, workspace/, slash, edits, selection_matches, ui_tests);
+  README After-install paths + Bun; design update-dialog sudo + tree Reveal;
+  credits download/notify crates; vendor README lists all Kit patches; status
+  Windows smoke wording.
+- **2026-10-29** — Status: drop stale “Phase 5” framing (Agent panel v1 is
+  shipped); lead with current product; gather real gaps (Bun LSP verify,
+  Windows notify/smoke, terminal scrollback); Updates line includes Windows.
 - **2026-10-29** — README: “Why Isengard” feature blurb (defaults, workspaces,
   Claude Agent, model/utility/Opus Plan, app-local tools, platforms).
 - **2026-10-29** — Docs: architecture overview (stack, process map, binary vs

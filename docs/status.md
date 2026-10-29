@@ -1,11 +1,13 @@
 # Current status
 
-Phases 1–4 of the original plan are done and the UI has been ported from egui
-to GPUI Kit. Phase 5 is the Agent panel v1 (external ACP agents, Claude Agent
-by default) — see **Agent panel** below.
+Shipping editor (v0.1.15): welcome, multi-root workspaces, file tree, tabs,
+tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
+Control, Claude Agent panel (ACP), and in-app updates on Linux / macOS /
+Windows. Early phased plan (egui → Kit → Agent v1) is finished — do not treat
+“Phase 5” as open work. Gaps and deferred items are only under **Known
+issues** and **Roadmap** below.
 
-Working features (verified by screenshots on macOS: welcome screen, file tree,
-tabs, highlighted editor, status bar):
+What works today:
 
 - **Welcome:** Start is two columns (workspace | folder/file) with a vertical
   rule; New File (`⌘N` / `Ctrl+N`) opens an untitled buffer (save dialog only
@@ -140,7 +142,7 @@ tabs, highlighted editor, status bar):
   Linux in-window close × confirms unsaved changes. Save All
   keeps going past a failed file, lists every failure in one toast, and then
   cancels the pending close / quit / switch.
-- **Agent panel (v1):** right-hand panel (View > Toggle Agent Panel /
+- **Agent panel:** right-hand panel (View > Toggle Agent Panel /
   `⌘⇧B` / `Ctrl+Shift+B` / status-bar `Bot`) chatting with an external agent.
   over the Agent Client Protocol, like Zed's external agents. A finished or failed
   run raises an OS notification + sound when the app is in the background
@@ -258,20 +260,21 @@ tabs, highlighted editor, status bar):
   reopens via `session/load` (history replays). Verified end to end against
   the real adapter on Linux (read + shell tool turn; load replays and the
   model keeps context; resume does not replay).
-- **Updates (Linux, macOS):** checks GitHub releases at startup (≤ once a day; opt out
-  with `updates.check: false`) and via Isengard > Check for Updates…. Dialog:
-  Skip this version / Later / Update now. Self-installed copies (writable dir)
-  download, verify (minisign signature + SHA-256) and swap the binary, then
-  offer Restart now (unsaved-changes prompt first; workspace reopens). On macOS
-  an `Isengard.app` in a writable folder (e.g. `/Applications`) swaps itself the
-  same way (no password, no Gatekeeper prompt). RPM/DEB
-  installs download + verify, then **Install now** asks for the sudo password in a
-  masked dialog, runs `sudo -S <manager> install -y <file>` with live output
-  (wrong password re-asks) and restarts into the new binary; Copy command /
-  Open in terminal remain as fallbacks. Dev builds
-  and `/usr/local` installs only link to the release page. **Needs one-time
-  release setup:** `minisign -G`, secrets `MINISIGN_KEY` / `MINISIGN_PASSWORD`,
-  public key into `update::PUBLIC_KEY` — until then the updater never installs.
+- **Updates (Linux, macOS, Windows):** checks GitHub releases at startup (≤ once
+  a day; opt out with `updates.check: false`) and via Isengard > Check for
+  Updates…. Dialog: Skip this version / Later / Update now. Self-installed
+  copies (writable dir) download, verify (minisign signature + SHA-256) and
+  swap in place, then offer Restart now (unsaved-changes prompt first;
+  workspace reopens). On macOS an `Isengard.app` in a writable folder (e.g.
+  `/Applications`) swaps the whole bundle (no password, no Gatekeeper prompt).
+  Windows portable install renames the running `.exe` aside and replaces it.
+  RPM/DEB installs download + verify, then **Install now** asks for the sudo
+  password in a masked dialog, runs `sudo -S <manager> install -y <file>` with
+  live output (wrong password re-asks) and restarts into the new binary; Copy
+  command / Open in terminal remain as fallbacks. Dev builds and `/usr/local`
+  installs only link to the release page. **Needs one-time release setup:**
+  `minisign -G`, secrets `MINISIGN_KEY` / `MINISIGN_PASSWORD`, public key into
+  `update::PUBLIC_KEY` — until then the updater never installs.
 - **Chrome:** native macOS menu bar; in-window `AppMenuBar` on Windows/Linux
   (Isengard = About + Check for Updates only; File only with a folder/workspace open; no Edit / View menus — other actions are
   shortcut-only) — see design. Status bar while a workspace is
@@ -284,8 +287,17 @@ tabs, highlighted editor, status bar):
 
 ## Known issues / TODO
 
-None open for the editor shell. Agent switch is the only deferred item
-(below). UI test coverage is an agent rule
+- Agent process switch in the panel — still deferred (one agent today; change
+  via `config.json`). See Roadmap.
+- Bun: only the Claude adapter is verified on Bun; npm-packaged language
+  servers are untested there. Windows `.cmd` shims are not rewritten to Bun
+  yet. `bun fmt` has no timeout.
+- Agent OS notification + sound: no Windows yet.
+- Terminal scrollback UI is still minimal.
+- Windows installer / updater: not yet smoke-tested on a clean PC (needs a
+  second release to exercise update-to).
+
+UI test coverage is an agent rule
 ([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
 not a product TODO. License is **GPL-3.0-only** — see
 [CONTRIBUTING.md](../CONTRIBUTING.md).
@@ -302,9 +314,8 @@ not a product TODO. License is **GPL-3.0-only** — see
 - **Windows (first release v0.1.12):** `scripts/package-windows.ps1` +
   `windows` CI job + `scripts/install-windows.ps1` + in-app updater
   (`InstallKind::WinExe`); unsigned (see [architecture.md](architecture.md)).
-  Never run on a real Windows machine before v0.1.12 — the installer and
-  updater still need a test on a clean PC (the updater needs a second release
-  to update to). Only x86_64.
+  Still needs a smoke test on a clean PC (updater needs a second release to
+  update to). Only x86_64.
 - **macOS:** no Apple Developer ID (see [architecture.md](architecture.md) for
   the signing / Gatekeeper trade-offs); signed with the self-signed cert from
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
@@ -313,8 +324,10 @@ not a product TODO. License is **GPL-3.0-only** — see
 - Notes: [docs/releases/v0.1.15.md](releases/v0.1.15.md). Human install:
   root [README.md](../README.md).
 
-## Roadmap — Agent panel after v1
+## Roadmap
+
+Agent panel v1 is done (Claude via ACP, settings, Opus Plan, silent utility
+jobs, multi-root, session restore). Left:
 
 - Process-level agent switch in the panel — **deferred** (one agent today;
-  change via `config.json`). Mode/model pickers + chat
-  rename + auto titles shipped.
+  change via `config.json`).
