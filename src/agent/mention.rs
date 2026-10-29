@@ -20,6 +20,7 @@ const SKIP_DIRS: &[&str] = &[
     ".next",
     "__pycache__",
     "vendor",
+    "graphify-out",
     ".venv",
     "venv",
 ];
