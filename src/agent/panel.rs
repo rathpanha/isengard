@@ -48,8 +48,9 @@ use crate::acp::schema::{
 use crate::acp::schema::ToolCallUpdateFields;
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, BuiltinAgent, CLAUDE_AGENT_NAME,
-    CURSOR_AGENT_NAME, CURSOR_COMMAND, FileRead, FileWrite, LoginMethod, PermissionAsk, Resolved,
-    SessionOpen, SilentConfigValue, builtin_agent,
+    CURSOR_AGENT_NAME, CURSOR_COMMAND, CreatePlanAsk, CursorCreatePlanOutcome,
+    CursorPlanTodoStatus, FileRead, FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
+    SilentConfigValue, builtin_agent,
 };
 use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
 use crate::agent::slash::{self, SlashQuery, MAX_SLASH_HITS};
@@ -225,12 +226,24 @@ enum Entry {
     /// Nested Agent / Explore / Task child — progress while the main turn waits.
     Subagent(SubagentEntry),
     Plan(Vec<PlanEntry>),
+    /// Cursor `cursor/create_plan` — markdown plan + Build it / Reject.
+    CursorPlan(CursorPlanEntry),
     /// Collapsible end-of-turn summary of files the agent wrote/deleted.
     FileChanges {
         files: Vec<FileChangeRow>,
         expanded: bool,
     },
     Notice { text: SharedString, error: bool },
+}
+
+struct CursorPlanEntry {
+    tool_call_id: String,
+    name: Option<SharedString>,
+    overview: Option<SharedString>,
+    plan: Entity<TextViewState>,
+    todos: Vec<(SharedString, CursorPlanTodoStatus)>,
+    /// `None` after Build / Reject / cancel.
+    reply: Option<flume::Sender<CursorCreatePlanOutcome>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2196,6 +2209,44 @@ impl AgentPanel {
         rx
     }
 
+    /// Seed a Cursor `create_plan` card awaiting Build / Reject (tests).
+    #[cfg(test)]
+    pub fn inject_create_plan_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> flume::Receiver<CursorCreatePlanOutcome> {
+        let (tx, rx) = flume::bounded(1);
+        self.push_create_plan(
+            CreatePlanAsk {
+                tool_call_id: "plan-1".into(),
+                name: Some("Refactor tabs".into()),
+                overview: Some("Tighten layout".into()),
+                plan: "1. Inspect sizing.\n2. Update calculations.".into(),
+                todos: Vec::new(),
+                reply: tx,
+            },
+            cx,
+        );
+        rx
+    }
+
+    /// True when the create_plan card for `plan-1` still awaits Build (tests).
+    #[cfg(test)]
+    pub fn has_pending_create_plan_for_test(&self) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(
+                e,
+                Entry::CursorPlan(p) if p.tool_call_id == "plan-1" && p.reply.is_some()
+            )
+        })
+    }
+
+    /// Pretend a user turn is open (tests — create_plan is mid-turn when Build fires).
+    #[cfg(test)]
+    pub fn set_turn_running_for_test(&mut self, running: bool) {
+        self.turn_running = running;
+    }
+
     /// Answer the pending permission on tool `t-perm` (tests).
     #[cfg(test)]
     pub fn answer_permission_for_test(&mut self, option_id: &str, cx: &mut Context<Self>) {
@@ -3564,33 +3615,10 @@ impl AgentPanel {
 
     /// Send the next queued prompt, if any and idle.
     fn drain_outbound_queue(&mut self, cx: &mut Context<Self>) {
-        if !self.can_prompt() {
-            return;
-        }
         let Some(item) = self.outbound.pop_front() else {
             return;
         };
-        let Some(connection) = &self.connection else {
-            self.outbound.push_front(item);
-            return;
-        };
-        let Some(session) = self.session.clone() else {
-            self.outbound.push_front(item);
-            return;
-        };
-        connection.prompt(item.blocks);
-        self.turn_running = true;
-        self.begin_turn_file_tracking();
-        self.touch_chat(&session, Some(&item.title));
-        cx.emit(AgentPanelEvent::ChatsChanged);
-        self.push_entry(
-            Entry::User {
-                text: item.text.into(),
-                refs: item.refs,
-            },
-            cx,
-        );
-        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        self.send_queued_prompt(item, cx);
         cx.notify();
     }
 
@@ -3670,6 +3698,7 @@ impl AgentPanel {
         }
         // ACP: the client answers open permission prompts with Cancelled.
         self.cancel_pending_permissions(cx);
+        self.cancel_pending_create_plans(cx);
         cx.notify();
     }
 
@@ -3682,6 +3711,165 @@ impl AgentPanel {
                 self.touched(ix, cx);
             }
         }
+    }
+
+    fn cancel_pending_create_plans(&mut self, cx: &mut Context<Self>) {
+        for ix in 0..self.entries.len() {
+            if let Entry::CursorPlan(plan) = &mut self.entries[ix]
+                && let Some(reply) = plan.reply.take()
+            {
+                let _ = reply.send(CursorCreatePlanOutcome::cancelled());
+                self.touched(ix, cx);
+            }
+        }
+    }
+
+    fn push_create_plan(&mut self, ask: CreatePlanAsk, cx: &mut Context<Self>) {
+        let CreatePlanAsk {
+            tool_call_id,
+            name,
+            overview,
+            plan,
+            todos,
+            reply,
+        } = ask;
+        let plan_view = cx.new(|cx| TextViewState::markdown(&plan, cx).selectable(true));
+        self.push_entry(
+            Entry::CursorPlan(CursorPlanEntry {
+                tool_call_id,
+                name: name.map(Into::into),
+                overview: overview.map(Into::into),
+                plan: plan_view,
+                todos: todos
+                    .into_iter()
+                    .map(|t| (SharedString::from(t.content), t.status))
+                    .collect(),
+                reply: Some(reply),
+            }),
+            cx,
+        );
+        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+    }
+
+    /// Build it — accept plan, switch to Agent mode, then continue executing.
+    ///
+    /// Cursor ends the prompt turn after `create_plan` accept — it does not
+    /// keep building in the same turn. Always queue/send a continue prompt
+    /// (HAPI plan→execute handoff); if the create_plan turn is still open,
+    /// wait for `TurnEnded` via the outbound queue.
+    fn build_create_plan(&mut self, tool_call_id: &str, cx: &mut Context<Self>) {
+        let Some(ix) = self.entries.iter().rposition(|e| match e {
+            Entry::CursorPlan(p) => p.tool_call_id == tool_call_id && p.reply.is_some(),
+            _ => false,
+        }) else {
+            return;
+        };
+        let Some(reply) = (if let Entry::CursorPlan(p) = &mut self.entries[ix] {
+            p.reply.take()
+        } else {
+            None
+        }) else {
+            return;
+        };
+        // Mode first so the continue turn is already Agent when it starts.
+        self.switch_to_agent_mode(cx);
+        let _ = reply.send(CursorCreatePlanOutcome::accepted());
+        self.touched(ix, cx);
+        self.queue_or_send_plan_continue(cx);
+        cx.notify();
+    }
+
+    fn reject_create_plan(&mut self, tool_call_id: &str, cx: &mut Context<Self>) {
+        let Some(ix) = self.entries.iter().rposition(|e| match e {
+            Entry::CursorPlan(p) => p.tool_call_id == tool_call_id && p.reply.is_some(),
+            _ => false,
+        }) else {
+            return;
+        };
+        if let Entry::CursorPlan(p) = &mut self.entries[ix]
+            && let Some(reply) = p.reply.take()
+        {
+            let _ = reply.send(CursorCreatePlanOutcome::rejected("Rejected"));
+        }
+        self.touched(ix, cx);
+        cx.notify();
+    }
+
+    /// Prefer Mode config / legacy modes named `agent`.
+    fn switch_to_agent_mode(&mut self, cx: &mut Context<Self>) {
+        if let Some(sel) =
+            find_select(&self.config_options, Some(SessionConfigOptionCategory::Mode), "mode")
+        {
+            if let Some((id, _)) = sel.choices.iter().find(|(id, name)| {
+                id.eq_ignore_ascii_case("agent") || name.eq_ignore_ascii_case("Agent")
+            }) {
+                // Keep legacy mode state in sync (same as the Mode picker).
+                if let Some(modes) = &mut self.modes {
+                    modes.current_mode_id = id.clone().into();
+                }
+                self.set_config_value(sel.config_id.clone(), id.clone(), cx);
+                return;
+            }
+        }
+        if let Some(modes) = &self.modes
+            && let Some(m) = modes.available_modes.iter().find(|m| {
+                m.id.0.as_ref().eq_ignore_ascii_case("agent")
+                    || m.name.eq_ignore_ascii_case("Agent")
+            })
+        {
+            self.set_mode(m.id.to_string(), cx);
+        }
+    }
+
+    fn plan_continue_prompt() -> QueuedPrompt {
+        let text =
+            "Plan approved. Continue executing the plan toward the original request.".to_owned();
+        QueuedPrompt {
+            title: "Build it".into(),
+            text: text.clone(),
+            refs: Vec::new(),
+            blocks: vec![ContentBlock::Text(TextContent::new(text))],
+        }
+    }
+
+    /// After Build: queue if the create_plan turn is still open, else send now.
+    fn queue_or_send_plan_continue(&mut self, cx: &mut Context<Self>) {
+        let item = Self::plan_continue_prompt();
+        if self.turn_running {
+            // Front of the queue — Build beats any typed follow-ups.
+            self.outbound.push_front(item);
+            cx.notify();
+            return;
+        }
+        self.send_queued_prompt(item, cx);
+    }
+
+    fn send_queued_prompt(&mut self, item: QueuedPrompt, cx: &mut Context<Self>) {
+        if !self.can_prompt() {
+            self.outbound.push_front(item);
+            return;
+        }
+        let Some(connection) = &self.connection else {
+            self.outbound.push_front(item);
+            return;
+        };
+        let Some(session) = self.session.clone() else {
+            self.outbound.push_front(item);
+            return;
+        };
+        connection.prompt(item.blocks);
+        self.turn_running = true;
+        self.begin_turn_file_tracking();
+        self.touch_chat(&session, Some(&item.title));
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        self.push_entry(
+            Entry::User {
+                text: item.text.into(),
+                refs: item.refs,
+            },
+            cx,
+        );
+        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
     }
 
     fn answer_permission(
@@ -4330,6 +4518,10 @@ impl AgentPanel {
                 if self.ask_permission(ask, cx) {
                     cx.emit(AgentPanelEvent::PermissionRequested);
                 }
+            }
+            AgentEvent::CreatePlan(ask) => {
+                self.push_create_plan(ask, cx);
+                cx.emit(AgentPanelEvent::PermissionRequested);
             }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
             AgentEvent::WriteFile(write) => cx.emit(AgentPanelEvent::WriteFile(write)),
@@ -5654,6 +5846,7 @@ fn render_entry(
                     )
             }))
             .into_any_element(),
+        Entry::CursorPlan(plan) => render_cursor_plan(panel, plan, cx),
         // Sticky strip above the composer owns this UI — keep a zero-height
         // placeholder so MessageScroller indices stay aligned with `entries`.
         Entry::FileChanges { .. } => div().into_any_element(),
@@ -6080,6 +6273,121 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
         .into_any_element()
 }
 
+fn render_cursor_plan(
+    panel: &WeakEntity<AgentPanel>,
+    plan: &CursorPlanEntry,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let pending = plan.reply.is_some();
+    let tool_call_id = plan.tool_call_id.clone();
+    v_flex()
+        .w_full()
+        .gap_2()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.popover)
+        .p_3()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(if pending { "Plan ready" } else { "Plan" }),
+        )
+        .when_some(plan.name.as_ref(), |col, name| {
+            col.child(div().text_sm().child(name.clone()))
+        })
+        .when_some(plan.overview.as_ref(), |col, overview| {
+            col.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(overview.clone()),
+            )
+        })
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .text_sm()
+                .child(TextView::new(&plan.plan).style(crate::theme::text_view_style(cx))),
+        )
+        .when(!plan.todos.is_empty(), |col| {
+            col.child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .children(plan.todos.iter().map(|(content, status)| {
+                        let (color, done) = match status {
+                            CursorPlanTodoStatus::Completed => (theme.success, true),
+                            CursorPlanTodoStatus::InProgress => (theme.warning, false),
+                            CursorPlanTodoStatus::Cancelled => (theme.muted_foreground, true),
+                            CursorPlanTodoStatus::Pending => (theme.muted_foreground, false),
+                        };
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(status_mark(color))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .text_sm()
+                                    .when(done, |d| {
+                                        d.text_color(theme.muted_foreground).line_through()
+                                    })
+                                    .child(content.clone()),
+                            )
+                    })),
+            )
+        })
+        .when(pending, |col| {
+            let build_id = tool_call_id.clone();
+            let reject_id = tool_call_id.clone();
+            let build_panel = panel.clone();
+            let reject_panel = panel.clone();
+            col.child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "agent-plan-build-{tool_call_id}"
+                        )))
+                        .w_full()
+                        .small()
+                        .primary()
+                        .cursor_pointer()
+                        .label("Build it")
+                        .on_click(move |_, _, cx| {
+                            let id = build_id.clone();
+                            let _ = build_panel.update(cx, |panel, cx| {
+                                panel.build_create_plan(&id, cx);
+                            });
+                        }),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "agent-plan-reject-{tool_call_id}"
+                        )))
+                        .w_full()
+                        .small()
+                        .danger()
+                        .outline()
+                        .cursor_pointer()
+                        .label("Reject")
+                        .on_click(move |_, _, cx| {
+                            let id = reject_id.clone();
+                            let _ = reject_panel.update(cx, |panel, cx| {
+                                panel.reject_create_plan(&id, cx);
+                            });
+                        }),
+                    ),
+            )
+        })
+        .into_any_element()
+}
+
 impl AgentPanel {
     /// Live status line: what the agent is doing right now (real tool title when possible).
     fn activity_label(&self) -> Option<SharedString> {
@@ -6131,7 +6439,9 @@ impl AgentPanel {
                 match self.entries.last() {
                     Some(Entry::Thought(_)) => Some("Thinking…".into()),
                     Some(Entry::Agent(_)) => Some("Writing…".into()),
-                    Some(Entry::Plan(_)) => Some("Planning…".into()),
+                    Some(Entry::Plan(_)) | Some(Entry::CursorPlan(_)) => {
+                        Some("Planning…".into())
+                    }
                     Some(Entry::Subagent(sub)) => Some(format!("{}…", sub.title).into()),
                     _ => Some("Working…".into()),
                 }

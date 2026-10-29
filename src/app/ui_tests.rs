@@ -2628,6 +2628,101 @@ fn agent_answers_pending_permission(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn cursor_create_plan_build_switches_to_agent(cx: &mut TestAppContext) {
+    // Cursor Plan mode ends with blocking `cursor/create_plan`. Build it
+    // accepts (nested outcome), switches Mode → Agent, and continues.
+    use agent_client_protocol::schema::v1::{
+        ConfigOptionUpdate, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigSelectOption, SessionUpdate,
+    };
+
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("cursor-plan-build");
+    remember_workspace_agent(&h, &folder, "cursor-agent", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    panel_do(&h, cx, |p, cx| {
+        p.apply_update_for_test(
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(vec![
+                SessionConfigOption::select(
+                    "mode",
+                    "Mode",
+                    "plan",
+                    vec![
+                        SessionConfigSelectOption::new("ask", "Ask"),
+                        SessionConfigSelectOption::new("plan", "Plan"),
+                        SessionConfigSelectOption::new("agent", "Agent"),
+                    ],
+                )
+                .category(SessionConfigOptionCategory::Mode),
+            ])),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let reply = cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            // Real Cursor: create_plan blocks mid-turn — Build must queue
+            // continue, not assume the same turn keeps going.
+            panel.set_turn_running_for_test(true);
+            panel.inject_create_plan_for_test(cx)
+        })
+    });
+    assert!(
+        panel_get(&h, cx, |p, _| p.has_pending_create_plan_for_test()),
+        "plan card waits for Build"
+    );
+    assert!(h.has("agent-plan-build-plan-1", cx), "Build it button");
+
+    h.click("agent-plan-build-plan-1", cx);
+    cx.run_until_parked();
+
+    assert!(
+        !panel_get(&h, cx, |p, _| p.has_pending_create_plan_for_test()),
+        "Build clears the pending reply"
+    );
+    assert!(
+        !h.has("agent-plan-build-plan-1", cx),
+        "Build button gone after accept"
+    );
+    let answered = reply.try_recv().expect("create_plan reply");
+    assert_eq!(
+        answered,
+        crate::acp::CursorCreatePlanOutcome::accepted(),
+        "nested accepted outcome for Cursor"
+    );
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.mode_config_current_for_test()),
+        Some("agent".into()),
+        "Mode switches to Agent on Build"
+    );
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.outbound_queue_len()),
+        1,
+        "continue prompt queued until create_plan turn ends"
+    );
+    let previews = panel_get(&h, cx, |p, _| p.outbound_previews());
+    assert_eq!(previews.len(), 1, "one continue queued");
+    assert!(
+        previews[0].starts_with("Plan approved"),
+        "queued continue is the Build handoff, got {:?}",
+        previews[0]
+    );
+    h.wait_for(cx, "set_config mode=agent", |_| {
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config mode=agent")
+    });
+}
+
+#[gpui_kit::test]
 fn cursor_agent_auto_allows_tool_permissions(cx: &mut TestAppContext) {
     // Cursor ACP Mode ≠ approval policy — every tool still
     // `request_permission`. Isengard auto-picks Allow (Always > Once)

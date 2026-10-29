@@ -540,7 +540,9 @@ src/
   collapses those into flat model-variant strings). Built-in Cursor
   defaults to `cursor-agent --force acp` (CLI Run Everything); the panel
   also auto-answers `request_permission` with AllowAlways/AllowOnce —
-  Cursor Mode does not suppress those prompts. `apply_switch` calls
+  Cursor Mode does not suppress those prompts. Blocking
+  `cursor/create_plan` is typed in `acp/cursor_ext.rs` and surfaced as a
+  plan card (**Build it** → nested accepted + Mode Agent). `apply_switch` calls
   `reset_agent_for_workspace` (drops the agent: the SDK kills its process
   group). Tests: `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
   `acp::testing::FakeAgent` serves `Channel::duplex` connections with shared

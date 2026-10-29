@@ -28,6 +28,9 @@ use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, Error, ErrorCode,
 };
 
+use crate::acp::cursor_ext::{
+    CursorCreatePlanOutcome, CursorCreatePlanRequest, CursorCreatePlanResponse, CursorPlanTodo,
+};
 use crate::acp::registry::AgentLaunch;
 
 /// Select or boolean config to apply on a throwaway silent session.
@@ -113,6 +116,16 @@ pub struct PermissionAsk {
     pub reply: flume::Sender<Option<PermissionOptionId>>,
 }
 
+/// Cursor `cursor/create_plan` — blocking plan approval (Build / reject).
+pub struct CreatePlanAsk {
+    pub tool_call_id: String,
+    pub name: Option<String>,
+    pub overview: Option<String>,
+    pub plan: String,
+    pub todos: Vec<CursorPlanTodo>,
+    pub reply: flume::Sender<CursorCreatePlanOutcome>,
+}
+
 /// `fs/read_text_file` — the editor answers from the open buffer or disk.
 pub struct FileRead {
     pub path: PathBuf,
@@ -150,6 +163,8 @@ pub enum AgentEvent {
     /// Not signed in. The connection is finished; restart it after login.
     AuthRequired(Vec<LoginMethod>),
     Permission(PermissionAsk),
+    /// Cursor Plan mode finished — show plan + Build it.
+    CreatePlan(CreatePlanAsk),
     ReadFile(FileRead),
     WriteFile(FileWrite),
     /// Connection ended (`Some` = error such as a spawn failure or crash).
@@ -426,6 +441,7 @@ async fn run(
     let on_update_silent = silent.clone();
     let on_permission = events.clone();
     let on_permission_silent = silent.clone();
+    let on_create_plan = events.clone();
     let on_read = events.clone();
     let on_write = events.clone();
     Client
@@ -494,6 +510,28 @@ async fn run(
                         _ => RequestPermissionOutcome::Cancelled,
                     };
                     responder.respond(RequestPermissionResponse::new(outcome))
+                })
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: CursorCreatePlanRequest, responder, cx: ConnectionTo<Agent>| {
+                // No session id on this extension — silent jobs never call it.
+                let (reply, answer) = flume::bounded(1);
+                let _ = on_create_plan.send(AgentEvent::CreatePlan(CreatePlanAsk {
+                    tool_call_id: req.tool_call_id,
+                    name: req.name,
+                    overview: req.overview,
+                    plan: req.plan,
+                    todos: req.todos,
+                    reply,
+                }));
+                cx.spawn(async move {
+                    let outcome = match answer.recv_async().await {
+                        Ok(outcome) => outcome,
+                        Err(_) => CursorCreatePlanOutcome::cancelled(),
+                    };
+                    responder.respond(CursorCreatePlanResponse { outcome })
                 })
             },
             agent_client_protocol::on_receive_request!(),

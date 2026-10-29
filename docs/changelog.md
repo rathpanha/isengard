@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Cursor **Build it**: after accept, always queue a continue
+  prompt (Cursor stops the plan turn — same-turn execute was a no-op).
+- **2026-10-30** — Cursor Plan mode: handle blocking `cursor/create_plan` —
+  show the plan card with **Build it** / Reject; Build accepts (nested
+  outcome), switches Mode → Agent, and continues the turn.
 - **2026-10-29** — Cursor Agent: auto-allow tool permissions (AllowAlways
   preferred) and default launch `--force acp` — Mode does not gate
   approval on ACP, so every tool was prompting.

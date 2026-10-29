@@ -341,7 +341,14 @@ Add a row here whenever a new shared component is created.
   `AgentChat.file_changes` and restored after ACP `session/load`); plan as
   7×7 status
   squares + text (done = muted + line-through);
-  notices `text_xs` muted or danger. **Permission prompts
+  notices `text_xs` muted or danger. **Cursor Plan ready** (`cursor/create_plan`):
+  bordered popover-surface card with optional name/overview, selectable
+  markdown plan, todo status marks, then full-width **Build it**
+  (`.primary()`) and **Reject** (`.danger().outline()`); Build answers
+  nested `{ outcome: { outcome: "accepted" } }`, sets Mode to Agent, then
+  always queues/sends a continue prompt (Cursor ends the plan turn on
+  accept — same-turn execute does not happen); Reject / Stop send
+  rejected/cancelled. **Permission prompts
   are inline** on the tool row (not a modal — several can be open while
   updates keep streaming): options stacked full-width in a `v_flex`
   (never side-by-side wrap), `.small()` + `.w_full()`, allow-once
