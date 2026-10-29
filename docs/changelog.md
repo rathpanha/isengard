@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Release prep v0.1.17 (terminal scrollback, OpusPlan
+  fix): version bump, `docs/releases/v0.1.17.md`, status release lines.
 - **2026-10-29** — Terminal scrollback: mouse wheel / trackpad and
   Shift+PageUp/PageDown scroll history (10,000 lines); selection, links and
   cursor follow the scrolled viewport; typing or pasting snaps to the bottom.
