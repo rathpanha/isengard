@@ -201,10 +201,11 @@ jobs:
           path: dist/windows/*.zip
 
   publish:
+    # Publishes only when every platform built: a release that lacks one
+    # platform's files makes that platform's updater fall back to "Open release
+    # page". If a job fails or is cancelled (e.g. no macOS runner), use "Re-run
+    # failed jobs" on the run; the finished jobs' artifacts are kept.
     needs: [linux, macos, windows]
-    # A broken macOS build must not block the Linux release (the run still
-    # shows red so the missing macOS assets are noticed).
-    if: ${{ !cancelled() && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

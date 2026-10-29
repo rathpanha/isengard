@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Release workflow: `publish` now requires the Linux, macOS and
+  Windows jobs to all succeed (it used to publish whenever Linux passed, which
+  shipped v0.1.13 without macOS files after the macOS job was cancelled while
+  queued, so the macOS updater only offered "Open release page"). A failed job
+  is fixed with "Re-run failed jobs".
 - **2026-10-28** — Release prep v0.1.13 (macOS notification icon): version
   bump, `docs/releases/v0.1.13.md`, status release lines.
 - **2026-10-28** — macOS "Agent finished" notifications now come from Isengard
