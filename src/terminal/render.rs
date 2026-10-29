@@ -302,6 +302,8 @@ impl TerminalRenderer {
         cells: impl Iterator<Item = (usize, Cell)>,
         colors: &Colors,
         selection: Option<&SelectionRange>,
+        // Scrollback offset: viewport row `r` is grid line `r - display_offset`.
+        display_offset: i32,
     ) -> (Vec<BackgroundRect>, Vec<BatchedTextRun>) {
         let mut backgrounds = Vec::new();
         let mut text_runs = Vec::new();
@@ -318,7 +320,7 @@ impl TerminalRenderer {
             // Extract cell styling
             let mut fg_color = self.palette.resolve(cell.fg, colors);
             let mut bg_color = self.palette.resolve(cell.bg, colors);
-            let point = AlacPoint::new(Line(row as i32), Column(col));
+            let point = AlacPoint::new(Line(row as i32 - display_offset), Column(col));
             if selection.is_some_and(|range| range.contains(point)) {
                 std::mem::swap(&mut fg_color, &mut bg_color);
             }
@@ -499,9 +501,12 @@ impl TerminalRenderer {
             .as_ref()
             .and_then(|selection| selection.to_range(term));
 
+        // Scrolled back into history: viewport row i is grid line i - offset.
+        let display_offset = grid.display_offset() as i32;
+
         // Iterate over visible lines
         for line_idx in 0..num_lines {
-            let line = Line(line_idx as i32);
+            let line = Line(line_idx as i32 - display_offset);
 
             // Collect cells for this line
             let cells: Vec<(usize, Cell)> = (0..num_cols)
@@ -519,6 +524,7 @@ impl TerminalRenderer {
                 cells.iter().cloned(),
                 colors,
                 selection_range.as_ref(),
+                display_offset,
             );
 
             // Paint backgrounds
@@ -756,6 +762,7 @@ impl TerminalRenderer {
         // Continuous hover underline under the URL span (clear air below glyphs).
         if let Some((hl, start, end)) = hovered_link
             && end > start
+            && (0..num_lines as i32).contains(&(hl + display_offset))
         {
             let thickness = px(1.0);
             let gap_below_text = px(5.0);
@@ -763,7 +770,7 @@ impl TerminalRenderer {
             let vertical_offset = (self.cell_height - base_height) / 2.0;
             // Sit just under the em box, not against the glyph bottoms.
             let y = origin.y
-                + self.cell_height * (hl as f32)
+                + self.cell_height * ((hl + display_offset) as f32)
                 + vertical_offset
                 + self.font_size
                 + gap_below_text;
@@ -791,10 +798,13 @@ impl TerminalRenderer {
             ));
         }
 
-        // Paint cursor
+        // Paint cursor (hidden once scrolled out of the viewport)
         let cursor_point = grid.cursor.point;
+        if !(0..num_lines as i32).contains(&(cursor_point.line.0 + display_offset)) {
+            return;
+        }
         let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
-        let cursor_y = origin.y + self.cell_height * (cursor_point.line.0 as f32);
+        let cursor_y = origin.y + self.cell_height * ((cursor_point.line.0 + display_offset) as f32);
 
         let cursor_color = self.palette.resolve(
             Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),

@@ -51,11 +51,11 @@ use crate::terminal::colors::ColorPalette;
 use crate::terminal::event::{GpuiEventProxy, TerminalEvent};
 use crate::terminal::input::keystroke_to_bytes;
 use crate::terminal::links::{self, find_url_span_at};
-use crate::terminal::mouse::pixel_to_cell_and_side;
+use crate::terminal::mouse::{pixel_to_cell_and_side, scroll_report};
 use crate::terminal::render::TerminalRenderer;
 use crate::terminal::state::TerminalState;
-use alacritty_terminal::grid::Dimensions as _;
-use alacritty_terminal::index::{Column, Point as AlacPoint};
+use alacritty_terminal::grid::{Dimensions as _, Scroll};
+use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
 use alacritty_terminal::selection::{Selection as AlacSelection, SelectionType as AlacSelectionType};
 use alacritty_terminal::term::TermMode;
 use gpui_kit::component::input::{Copy as EditCopy, Paste as EditPaste};
@@ -454,6 +454,9 @@ pub struct TerminalView {
 
     /// URL under the mouse (underline + pointing-hand cursor).
     hovered_link: Option<HoveredLink>,
+
+    /// Sub-line wheel/trackpad remainder, in pixels.
+    scroll_px: f32,
 }
 
 impl TerminalView {
@@ -578,6 +581,7 @@ impl TerminalView {
             hit_layout: Arc::new(Mutex::new(None)),
             selecting: false,
             hovered_link: None,
+            scroll_px: 0.0,
         }
     }
 
@@ -789,6 +793,16 @@ impl TerminalView {
             return;
         }
 
+        if mods.shift
+            && matches!(key, "pageup" | "pagedown")
+            && !self.state.mode().contains(TermMode::ALT_SCREEN)
+        {
+            let scroll = if key == "pageup" { Scroll::PageUp } else { Scroll::PageDown };
+            self.state.with_term_mut(|term| term.scroll_display(scroll));
+            cx.notify();
+            return;
+        }
+
         if let Some(bytes) = keystroke_to_bytes(&event.keystroke, self.state.mode()) {
             self.send_bytes(&bytes, cx);
         }
@@ -796,6 +810,7 @@ impl TerminalView {
 
     fn send_bytes(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         self.clear_selection(cx);
+        self.scroll_to_bottom(cx);
         let mut writer = self.stdin_writer.lock();
         let _ = writer.write_all(bytes);
         let _ = writer.flush();
@@ -905,14 +920,18 @@ impl TerminalView {
         position: Point<Pixels>,
     ) -> Option<(AlacPoint, alacritty_terminal::index::Side)> {
         let layout = (*self.hit_layout.lock())?;
-        pixel_to_cell_and_side(
+        let (mut point, side) = pixel_to_cell_and_side(
             position,
             layout.origin,
             layout.cell_width,
             layout.cell_height,
             layout.cols,
             layout.rows,
-        )
+        )?;
+        // Viewport row -> grid line (negative lines are scrollback).
+        let offset = self.state.with_term(|term| term.grid().display_offset()) as i32;
+        point.line = Line(point.line.0 - offset);
+        Some((point, side))
     }
 
     fn link_at(&self, point: AlacPoint) -> Option<HoveredLink> {
@@ -995,6 +1014,7 @@ impl TerminalView {
 
     fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.clear_selection(cx);
+        self.scroll_to_bottom(cx);
         // Terminals expect CR; keep bracketed-paste wrapper when the app asked for it.
         let normalized = text.replace("\r\n", "\n").replace('\n', "\r");
         let bracketed = self.state.mode().contains(TermMode::BRACKETED_PASTE);
@@ -1009,6 +1029,17 @@ impl TerminalView {
         let _ = writer.flush();
     }
 
+    fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
+        let moved = self.state.with_term_mut(|term| {
+            let was = term.grid().display_offset();
+            term.scroll_display(Scroll::Bottom);
+            was != 0
+        });
+        if moved {
+            cx.notify();
+        }
+    }
+
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
         let cleared = self
             .state
@@ -1020,16 +1051,44 @@ impl TerminalView {
 
     /// Handle scroll events.
     ///
-    /// Currently a placeholder for future scrollback support.
-    fn on_scroll(
-        &mut self,
-        _event: &ScrollWheelEvent,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        // TODO: Implement scrollback
-        // - Scroll the terminal display up/down
-        // - Send scroll reports if alternate screen is not active
+    /// Apps that grab the mouse or use the alternate screen (vim, less, htop)
+    /// get wheel reports / arrow keys; otherwise the view scrolls the
+    /// scrollback history.
+    fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(layout) = *self.hit_layout.lock() else {
+            return;
+        };
+        let cell_h: f32 = layout.cell_height.into();
+        if cell_h <= 0.0 {
+            return;
+        }
+        let dy: f32 = event.delta.pixel_delta(layout.cell_height).y.into();
+        self.scroll_px += dy;
+        let lines = (self.scroll_px / cell_h).trunc() as i32;
+        if lines == 0 {
+            return;
+        }
+        self.scroll_px -= lines as f32 * cell_h;
+
+        let mode = self.state.mode();
+        if let Some(bytes) = self.wheel_bytes(lines, event.position, mode) {
+            let mut writer = self.stdin_writer.lock();
+            let _ = writer.write_all(&bytes);
+            let _ = writer.flush();
+            return;
+        }
+
+        self.state
+            .with_term_mut(|term| term.scroll_display(Scroll::Delta(lines)));
+        cx.notify();
+    }
+
+    fn wheel_bytes(&self, lines: i32, position: Point<Pixels>, mode: TermMode) -> Option<Vec<u8>> {
+        let point = self
+            .hit_test(position)
+            .map(|(p, _)| p)
+            .unwrap_or_else(|| AlacPoint::new(Line(0), Column(0)));
+        scroll_report(lines, point, 0, mode)
     }
 
     /// Process pending terminal events.

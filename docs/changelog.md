@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Terminal scrollback: mouse wheel / trackpad and
+  Shift+PageUp/PageDown scroll history (10,000 lines); selection, links and
+  cursor follow the scrolled viewport; typing or pasting snaps to the bottom.
+  Apps using the alternate screen or mouse reporting still get the wheel.
 - **2026-10-29** — OpusPlan Switch starts off: opening a Claude chat now pins
   the concrete Model (or `opusplan` only if the saved pref says so), so the
   flag setting or a terminal `"model":"opusplan"` no longer turns it on.

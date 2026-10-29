@@ -98,7 +98,8 @@ What works today:
   (double = word, triple = line); copy/paste via OS terminal chords
   (`⌘C`/`⌘V` or `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when
   focused); Tab / Shift+Tab go to the shell (not focus traversal); URL hover continuous underline + pointer; Ctrl/Cmd+click opens.
-  Scrollback UI still minimal.
+  Scroll the wheel / trackpad or Shift+PageUp/PageDown to browse history
+  (not restored across restarts; no scrollbar yet).
 - **Sidebar:** hide/show without closing the workspace (View > Toggle
   Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist
   per workspace session. Explorer ↔ Search ↔ Source Control via top strip
