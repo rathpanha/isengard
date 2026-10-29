@@ -364,16 +364,17 @@ impl Harness {
 
     fn saved_chats(&self, folder: &Path, cx: &mut TestAppContext) -> (Vec<String>, Option<String>) {
         cx.read(|cx| {
-            let session = self
-                .app
-                .read(cx)
+            let app = self.app.read(cx);
+            let session = app
                 .config
                 .session(&folder.to_string_lossy())
                 .cloned()
                 .unwrap_or_default();
+            let slot = crate::acp::agent_slot_id(&app.config.agent);
+            let state = session.agent_slot(&slot);
             (
-                session.agent_chats.into_iter().map(|c| c.id).collect(),
-                session.agent_active,
+                state.chats.into_iter().map(|c| c.id).collect(),
+                state.active,
             )
         })
     }
@@ -1332,11 +1333,17 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
         });
     });
     let titles: Vec<String> = cx.read(|cx| {
-        h.app
-            .read(cx)
-            .config
+        let app = h.app.read(cx);
+        let slot = crate::acp::agent_slot_id(&app.config.agent);
+        app.config
             .session(&folder.to_string_lossy())
-            .map(|s| s.agent_chats.iter().map(|c| c.title.clone()).collect())
+            .map(|s| {
+                s.agent_slot(&slot)
+                    .chats
+                    .into_iter()
+                    .map(|c| c.title)
+                    .collect()
+            })
             .unwrap_or_default()
     });
     assert_eq!(titles, ["My notes"]);
@@ -1491,10 +1498,11 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     });
     let (saved, global, live) = cx.read(|cx| {
         let app = h.app.read(cx);
+        let slot = crate::acp::agent_slot_id(&app.config.agent);
         (
             app.config
                 .session(&folder.to_string_lossy())
-                .map(|s| s.agent_prefs.clone()),
+                .map(|s| s.agent_slot(&slot).prefs),
             app.config.agent_prefs.clone(),
             app.agent.as_ref().unwrap().read(cx).prefs().clone(),
         )
@@ -2350,6 +2358,116 @@ fn agent_deletes_chat(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_picker_shows_claude_and_cursor(cx: &mut TestAppContext) {
+    // No workspace agent yet → Claude | Cursor before Install / connect.
+    let mut config = AppConfig::default();
+    config.agent.command = None;
+    let h = Harness::with_config(config, cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    assert!(h.has("agent-pick-claude", cx), "Claude pick button");
+    assert!(
+        h.has("agent-pick-cursor-agent", cx),
+        "Cursor pick button (slot id cursor-agent)"
+    );
+    assert!(!h.has("agent-switch-button", cx), "no switch during picker");
+}
+
+#[gpui_kit::test]
+fn agent_pick_cursor_remembers_on_workspace_not_config(cx: &mut TestAppContext) {
+    let mut config = AppConfig::default();
+    config.agent.command = None;
+    let h = Harness::with_config(config, cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    assert!(h.has("agent-pick-cursor-agent", cx));
+    h.click("agent-pick-cursor-agent", cx);
+
+    let (global_command, remembered) = cx.read(|cx| {
+        let app = h.app.read(cx);
+        let key = folder.to_string_lossy().into_owned();
+        (
+            app.config.agent.command.clone(),
+            app.config
+                .session(&key)
+                .and_then(|s| s.agent.clone()),
+        )
+    });
+    assert!(
+        global_command.is_none(),
+        "built-in pick must not write config.json agent.command"
+    );
+    assert_eq!(
+        remembered.as_deref(),
+        Some(crate::acp::CURSOR_COMMAND),
+        "pick is stored on the workspace session"
+    );
+    // No app-local Cursor in the test env → Install empty-state.
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.force_not_installed_for_test(cx));
+    });
+    assert!(h.has("agent-install", cx), "Install after Cursor pick");
+    assert!(h.has("agent-switch-button", cx), "switch after pick");
+}
+
+#[gpui_kit::test]
+fn agent_restart_restores_workspace_agent_without_picker(cx: &mut TestAppContext) {
+    // Session already chose Cursor — reopen must not ask again (even with no chats).
+    let mut config = AppConfig::default();
+    config.agent.command = None;
+    let h = Harness::with_config(config, cx);
+    let folder = h.folder("proj");
+    let key = folder.to_string_lossy().into_owned();
+    cx.update(|cx| {
+        h.app.update(cx, |app, _| {
+            let mut session = crate::config::WorkspaceSession::default();
+            session.agent = Some(crate::acp::CURSOR_COMMAND.into());
+            app.config.put_session(key, session);
+            app.config.save();
+        });
+    });
+    let config = cx.read(|cx| h.app.read(cx).config.clone());
+    let h2 = Harness::with_config(config, cx);
+    h2.open_folder(&folder, cx);
+    h2.press("secondary-shift-b", cx);
+    assert!(
+        !h2.has("agent-pick-claude", cx),
+        "remembered workspace agent skips picker"
+    );
+    assert!(!h2.has("agent-pick-cursor-agent", cx));
+    cx.update(|cx| {
+        let panel = h2.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.force_not_installed_for_test(cx));
+    });
+    assert!(h2.has("agent-install", cx), "Cursor Install after restore");
+    assert!(h2.has("agent-switch-button", cx), "switch available");
+}
+
+#[gpui_kit::test]
+fn agent_header_shows_brand_and_switch_when_ready(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            // Custom Harness command is not a builtin — force Claude branding.
+            let mut settings = crate::config::AgentSettings::default();
+            settings.command = None;
+            panel.set_settings(settings, cx);
+            panel.force_ready_chrome_for_test(cx);
+        });
+    });
+    assert!(h.has("agent-switch-button", cx), "logo+chevron Switch Agent");
+}
+
+#[gpui_kit::test]
 fn agent_install_and_login_screens(cx: &mut TestAppContext) {
     // No FakeAgent: we only assert empty-state chrome, never npm / auth.
     let h = Harness::new(cx);
@@ -2369,6 +2487,46 @@ fn agent_install_and_login_screens(cx: &mut TestAppContext) {
     });
     assert!(h.has("agent-retry", cx), "Retry after login");
     assert!(h.has("agent-login-0", cx), "login method button");
+}
+
+#[gpui_kit::test]
+fn cursor_agent_install_screen_when_configured(cx: &mut TestAppContext) {
+    // Phase 0: `agent.command = "cursor-agent"` still shows Install (downloads
+    // Cursor CLI app-locally). No network — force empty state only.
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            let mut settings = crate::config::AgentSettings::default();
+            settings.command = Some(crate::acp::CURSOR_COMMAND.into());
+            panel.set_settings(settings, cx);
+            panel.force_not_installed_for_test(cx);
+        });
+    });
+    assert!(h.has("agent-install", cx), "Cursor Install button");
+}
+
+#[gpui_kit::test]
+fn cursor_agent_login_screen_shows_button(cx: &mut TestAppContext) {
+    // Cursor advertises Agent-typed `cursor_login` (not terminal) — must still
+    // show a login button, not only Retry.
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.force_login_required_for_test(cx);
+        });
+    });
+    assert!(h.has("agent-login-0", cx), "login method button");
+    assert!(h.has("agent-retry", cx), "Retry");
 }
 
 #[gpui_kit::test]

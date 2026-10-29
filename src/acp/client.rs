@@ -14,16 +14,15 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
-    AuthCapabilities, AuthMethod, CancelNotification, ClientCapabilities, ClientSessionCapabilities,
-    SubagentCapabilities,
-    CloseSessionRequest, CompactionCapabilities, ContentBlock, DeleteSessionRequest,
-    FileSystemCapabilities, Implementation, InitializeRequest, LoadSessionRequest, NewSessionRequest,
-    PermissionOption, PermissionOptionId, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    ResumeSessionRequest, SelectedPermissionOutcome, SessionConfigId, SessionConfigOption,
-    SessionConfigOptionValue, SessionId, SessionModeId, SessionModeState, SessionNotification,
-    SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, ToolCallUpdate,
-    WriteTextFileRequest, WriteTextFileResponse,
+    AuthCapabilities, AuthMethod, AuthMethodId, AuthenticateRequest, CancelNotification,
+    ClientCapabilities, ClientSessionCapabilities, CloseSessionRequest, CompactionCapabilities,
+    ContentBlock, DeleteSessionRequest, FileSystemCapabilities, Implementation, InitializeRequest,
+    LoadSessionRequest, NewSessionRequest, PermissionOption, PermissionOptionId, PromptRequest,
+    ReadTextFileRequest, ReadTextFileResponse, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome, SessionConfigId,
+    SessionConfigOption, SessionConfigOptionValue, SessionId, SessionModeId, SessionModeState,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
+    StopReason, SubagentCapabilities, ToolCallUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectTo, ConnectionTo, Error, ErrorCode,
@@ -89,14 +88,21 @@ pub struct AgentInfo {
     pub can_embedded_context: bool,
 }
 
-/// A terminal login the agent advertised (`authMethods[].type == "terminal"`):
-/// run the agent's own command with these args in a terminal.
+/// A login path from `initialize` `authMethods` (terminal CLI and/or ACP
+/// `authenticate`). Cursor's `cursor_login` is Agent-typed — we surface it as a
+/// CLI `login` run, then `authenticate` on the next connect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginMethod {
     pub name: String,
     pub description: Option<String>,
+    /// Args for a terminal login process (see [`Self::replace_args`]).
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// When true, `args` replace the agent launch args (Cursor: `login` instead
+    /// of `acp …`). When false, they append (Claude: `--cli auth login`).
+    pub replace_args: bool,
+    /// ACP `authenticate` method id to run after reconnect (e.g. `cursor_login`).
+    pub method_id: Option<String>,
 }
 
 /// The agent wants approval before running a tool.
@@ -160,14 +166,29 @@ impl AgentConnection {
     /// Spawn the agent process for `launch`. Sessions run in `roots[0]`; the
     /// other workspace roots are sent as additional directories.
     pub fn spawn(launch: &AgentLaunch, roots: Vec<PathBuf>) -> Self {
+        Self::spawn_auth(launch, roots, Vec::new())
+    }
+
+    /// Like [`Self::spawn`], then `authenticate` each id before the first
+    /// `session/new` (Cursor: after `agent login`, pass `["cursor_login"]`).
+    pub fn spawn_auth(launch: &AgentLaunch, roots: Vec<PathBuf>, auth_ids: Vec<String>) -> Self {
         let config = AcpAgentConfig::new(launch.command.clone())
             .args(launch.args.iter().cloned())
             .envs(launch.env.iter().map(|(k, v)| (k.clone(), v.clone())));
-        Self::spawn_with(AcpAgent::new(config), roots)
+        Self::spawn_with_auth(AcpAgent::new(config), roots, auth_ids)
     }
 
     /// Run against any transport (tests use an in-memory fake agent).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn spawn_with(transport: impl ConnectTo<Client> + 'static, roots: Vec<PathBuf>) -> Self {
+        Self::spawn_with_auth(transport, roots, Vec::new())
+    }
+
+    pub fn spawn_with_auth(
+        transport: impl ConnectTo<Client> + 'static,
+        roots: Vec<PathBuf>,
+        auth_ids: Vec<String>,
+    ) -> Self {
         let (commands, command_rx) = flume::unbounded();
         let (event_tx, events) = flume::unbounded();
         let spawned = std::thread::Builder::new()
@@ -175,8 +196,13 @@ impl AgentConnection {
             .spawn({
                 let event_tx = event_tx.clone();
                 move || {
-                    let result =
-                        futures::executor::block_on(run(transport, roots, command_rx, event_tx.clone()));
+                    let result = futures::executor::block_on(run(
+                        transport,
+                        roots,
+                        command_rx,
+                        event_tx.clone(),
+                        auth_ids,
+                    ));
                     let _ = event_tx.send(AgentEvent::Closed(result.err().map(describe_error)));
                 }
             });
@@ -252,6 +278,87 @@ impl AgentConnection {
     }
 }
 
+#[cfg(test)]
+mod cursor_smoke {
+    use super::*;
+    use crate::acp::install::{CURSOR_VERSION, cursor_bin_in, install_cursor_in};
+    use crate::acp::registry::AgentLaunch;
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+
+    /// Network + ~600 MB install:  
+    /// `cargo test cursor_acp_initialize_smoke -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn cursor_acp_initialize_smoke() {
+        let tmp = tempfile::tempdir().unwrap();
+        install_cursor_in(tmp.path()).expect("install Cursor CLI");
+        let bin = cursor_bin_in(tmp.path());
+        assert!(bin.is_file(), "missing {bin:?}");
+
+        let launch = AgentLaunch {
+            command: bin,
+            args: vec!["acp".into()],
+            env: BTreeMap::new(),
+        };
+        let conn = AgentConnection::spawn(&launch, vec![tmp.path().to_path_buf()]);
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let mut info = None;
+        while Instant::now() < deadline {
+            match conn.events.recv_timeout(Duration::from_secs(1)) {
+                Ok(AgentEvent::Connected(i)) => {
+                    eprintln!(
+                        "Cursor ACP initialize OK (pin {CURSOR_VERSION}): name={:?} load={} resume={} delete={} image={} embedded={}",
+                        i.name, i.can_load, i.can_resume, i.can_delete, i.can_image, i.can_embedded_context
+                    );
+                    info = Some(i);
+                    break;
+                }
+                Ok(AgentEvent::Closed(err)) => {
+                    panic!("agent closed before Connected: {err:?}");
+                }
+                Ok(_) => continue,
+                Err(flume::RecvTimeoutError::Timeout) => continue,
+                Err(flume::RecvTimeoutError::Disconnected) => {
+                    panic!("event channel disconnected")
+                }
+            }
+        }
+        let info = info.expect("timed out waiting for Connected");
+        assert!(info.can_load, "Cursor advertised loadSession");
+        assert!(info.can_image, "Cursor advertised image prompts");
+        assert!(
+            !info.can_embedded_context,
+            "Cursor 2026.10.22: embeddedContext false (record regressions)"
+        );
+
+        conn.open(SessionOpen::New);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match conn.events.recv_timeout(Duration::from_secs(1)) {
+                Ok(AgentEvent::SessionOpened { id, .. }) => {
+                    eprintln!("session/new OK id={id}");
+                    break;
+                }
+                Ok(AgentEvent::AuthRequired(methods)) => {
+                    eprintln!(
+                        "session/new needs auth (Phase 1): {:?}",
+                        methods.iter().map(|m| &m.name).collect::<Vec<_>>()
+                    );
+                    break;
+                }
+                Ok(AgentEvent::Closed(err)) => {
+                    panic!("closed during session/new: {err:?}");
+                }
+                Ok(_) => continue,
+                Err(flume::RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
+                Err(flume::RecvTimeoutError::Timeout) => panic!("timed out on session/new"),
+                Err(flume::RecvTimeoutError::Disconnected) => panic!("disconnected"),
+            }
+        }
+    }
+}
+
 fn describe_error(err: Error) -> String {
     let data = err
         .data
@@ -273,7 +380,26 @@ fn login_methods(methods: &[AuthMethod]) -> Vec<LoginMethod> {
                 description: t.description.clone(),
                 args: t.args.clone(),
                 env: t.env.clone(),
+                replace_args: false,
+                method_id: Some(t.id.0.to_string()),
             }),
+            AuthMethod::Agent(a) => {
+                // Cursor (and similar): Agent auth expects credentials already
+                // on disk — offer a CLI `login` run, then `authenticate` on Retry.
+                let cursor = a.id.0.as_ref() == "cursor_login";
+                Some(LoginMethod {
+                    name: a.name.clone(),
+                    description: a.description.clone(),
+                    args: if cursor {
+                        vec!["login".into()]
+                    } else {
+                        Vec::new()
+                    },
+                    env: HashMap::new(),
+                    replace_args: cursor,
+                    method_id: Some(a.id.0.to_string()),
+                })
+            }
             _ => None,
         })
         .collect()
@@ -284,6 +410,7 @@ async fn run(
     roots: Vec<PathBuf>,
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
+    auth_ids: Vec<String>,
 ) -> Result<(), Error> {
     let silent: SilentSlot = Arc::new(Mutex::new(HashMap::new()));
     let on_update = events.clone();
@@ -403,7 +530,7 @@ async fn run(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async move |cx: ConnectionTo<Agent>| {
-            session(cx, roots, commands, events, silent).await
+            session(cx, roots, commands, events, silent, auth_ids).await
         })
         .await
 }
@@ -414,6 +541,7 @@ async fn session(
     commands: flume::Receiver<AgentCommand>,
     events: flume::Sender<AgentEvent>,
     silent: SilentSlot,
+    auth_ids: Vec<String>,
 ) -> Result<(), Error> {
     let mut roots = roots.into_iter();
     let cwd = roots.next().unwrap_or_else(std::env::temp_dir);
@@ -466,6 +594,22 @@ async fn session(
         Vec::new()
     };
     let _ = events.send(AgentEvent::Connected(info.clone()));
+
+    // Cursor: after `agent login`, Retry passes `cursor_login` here before
+    // `session/new`. Skip when empty so a cold start does not hang on OAuth.
+    for id in &auth_ids {
+        match cx
+            .send_request(AuthenticateRequest::new(AuthMethodId::new(id.clone())))
+            .block_task()
+            .await
+        {
+            Ok(_) => {
+                log::info!("ACP authenticate ok ({id})");
+                break;
+            }
+            Err(err) => log::warn!("ACP authenticate {id}: {}", describe_error(err)),
+        }
+    }
 
     let mut current: Option<SessionId> = None;
     while let Ok(command) = commands.recv_async().await {

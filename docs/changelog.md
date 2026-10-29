@@ -3,6 +3,23 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Agent Switch control is the header logo + `ChevronsUpDown`
+  (not a separate Bot / ArrowLeftRight buried in the trailing icons).
+- **2026-10-29** — Agent choice is per workspace session (`sessions.*.agent`),
+  not `config.json` `agent.command`; restart restores the last agent (no
+  re-picker).
+- **2026-10-29** — Agent panel: empty built-in slot shows Claude | Cursor
+  picker (auto-Install on pick); header Material logo + Switch Agent popover
+  remounts the other slot; Cursor ACP Phase 2 (Claude ↔ Cursor) done.
+- **2026-10-29** — Cursor ACP Phase 1 start: Agent-typed `cursor_login` shows a
+  Login button (`cursor-agent login` in the terminal, then `authenticate` on
+  reconnect); Claude vs Cursor chat lists are stored in separate session slots.
+- **2026-10-29** — Cursor ACP Phase 0: app-local Install of pinned Cursor CLI
+  (`…/agents/cursor/`), `agent.command = "cursor-agent"` resolve + panel Install
+  copy; recorded `initialize` caps vs Claude (no embeddedContext / resume /
+  delete; auth `cursor_login` only).
+- **2026-10-29** — Cursor ACP roadmap: Install like Claude (pinned CLI into
+  `…/agents/cursor/`, not user PATH / Cursor.app); Phase 0 = app-local smoke.
 - **2026-10-29** — Release prep v0.1.16 (Open Folder hang fix): version bump,
   `docs/releases/v0.1.16.md`, status release lines.
 - **2026-10-29** — Open Folder no longer beachballs on large trees: `FsWatcher`

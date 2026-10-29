@@ -1,6 +1,7 @@
 //! Persist/restore workspace session and window geometry.
 use super::*;
 use super::tab::TabBody;
+use crate::acp;
 
 impl IsengardApp {
     pub(super) fn restart_terminal_for_workspace(
@@ -97,7 +98,7 @@ impl IsengardApp {
             .collect();
         let terminal = self.terminal.read(cx);
         let active = self.tabs.active().map(|t| t.path.clone());
-        let session = WorkspaceSession {
+        let mut session = WorkspaceSession {
             open_files,
             active,
             expanded: self.file_tree.expanded_paths(),
@@ -110,23 +111,38 @@ impl IsengardApp {
             terminal_height: self.terminal_height,
             agent_visible: self.agent_visible,
             agent_width: self.agent_width,
-            agent_chats: self
-                .agent
-                .as_ref()
-                .map(|a| a.read(cx).chats().to_vec())
-                .unwrap_or_default(),
-            agent_active: self
-                .agent
-                .as_ref()
-                .and_then(|a| a.read(cx).active_chat().map(str::to_owned)),
-            agent_prefs: self
-                .agent
-                .as_ref()
-                .map(|a| a.read(cx).prefs().clone())
-                .unwrap_or_default(),
+            agent: None,
+            agent_chats: Vec::new(),
+            agent_active: None,
+            agent_prefs: Default::default(),
+            agent_slots: Default::default(),
             search: self.search.read(cx).session_state(cx),
             git_repos: self.git.read(cx).snapshot_session_ui(cx),
         };
+        // Keep other agents' chat indexes + remembered agent; only refresh the
+        // active slot (and the remembered id when not on the picker).
+        if let Some(existing) = self.config.session(&key) {
+            session.agent = existing.agent.clone();
+            session.agent_chats = existing.agent_chats.clone();
+            session.agent_active = existing.agent_active.clone();
+            session.agent_prefs = existing.agent_prefs.clone();
+            session.agent_slots = existing.agent_slots.clone();
+        }
+        if let Some(agent) = &self.agent {
+            let agent = agent.read(cx);
+            if !agent.is_awaiting_pick() {
+                let slot = acp::agent_slot_id(agent.settings());
+                session.agent = Some(slot.clone());
+                session.set_agent_slot(
+                    &slot,
+                    crate::config::AgentSlotSession {
+                        chats: agent.chats().to_vec(),
+                        active: agent.active_chat().map(str::to_owned),
+                        prefs: agent.prefs().clone(),
+                    },
+                );
+            }
+        }
         self.config.put_session(key, session);
         self.config.save();
     }

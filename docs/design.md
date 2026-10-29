@@ -257,11 +257,17 @@ Add a row here whenever a new shared component is created.
   Status-bar Sidebar / Terminal / Agent tooltips include the shortcut.
   Header `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
   status square (success ready, warning starting/working, danger failed,
-  muted otherwise) + **session title** (active chat title, or `New chat`;
-  no activity suffix — busy line is transcript-footer only) +
-  muted/warning/danger `text_xs` context used/size (e.g. `53K / 200K`;
-  `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
-  `Plus` New Chat. When the agent advertises a Model option, ghost
+  muted otherwise) + **Switch Agent** control (built-in only): ghost button
+  with Material Claude/Cursor logo + muted `ChevronsUpDown` (Popover,
+  TopLeft; Claude / Cursor `ListItem`s with thumbs + "Current"; writes
+  `sessions.<workspace>.agent`, remounts that chat slot, auto-Installs if
+  needed — does **not** set global `agent.command`; hidden on the picker /
+  custom agents; disabled during a user turn) + **session title** (active
+  chat title, or `New chat`; on the picker `Choose agent`; no activity
+  suffix — busy line is transcript-footer only) + muted/warning/danger
+  `text_xs` context used/size (e.g. `53K / 200K`; `— / 200K` seeded on
+  open/switch until ACP `usage_update`) +
+  ghost `Plus` New Chat. When the agent advertises a Model option, ghost
   `SlidersHorizontal` **Agent settings** (Popover, TopRight,
   `overlay_closable(false)` + own outside-click dismiss that ignores clicks while a nested model menu is open): stacked
   rows `Label →` upward Popover selects. **Utility model** → Chat model /
@@ -272,6 +278,11 @@ Add a row here whenever a new shared component is created.
   reconnects. ACP `Default (recommended)` folds into inherit (Chat model /
   Default), not listed twice. Chat-list rows append last-known
   used/size beside the relative time when available (process memory only).
+  **First open** (no `sessions.*.agent` yet for this folder/workspace):
+  centered **Which agent?** with primary Claude + outline Cursor buttons
+  (Material thumbs); pick remembers the agent on the session, Installs if
+  missing, then connects. Restart restores that agent (no re-picker).
+  Custom global `agent.command` skips this screen.
   Under the header, an
   N Files-style accordion (not Kit Accordion — `size_full` steals transcript
   height): chevron + slim `5h` / `Week` `Progress` bars

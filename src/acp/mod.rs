@@ -16,5 +16,9 @@ pub use client::{
     SessionOpen, SilentConfigValue,
 };
 pub use files::slice_lines;
-pub use install::install_claude;
-pub use registry::{AgentLaunch, CLAUDE_AGENT_NAME, Resolved, resolve};
+pub use install::{install_claude, install_cursor};
+pub use registry::{
+    AgentLaunch, BuiltinAgent, CLAUDE_AGENT_NAME, CURSOR_AGENT_NAME, CURSOR_COMMAND, Resolved,
+    agent_slot_id, builtin_agent, launch_for_workspace, panel_key, resolve, split_panel_key,
+    with_builtin,
+};
