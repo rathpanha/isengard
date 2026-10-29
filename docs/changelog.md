@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Docs: architecture overview (stack, process map, binary vs
+  on-disk, data dirs) at the top of `architecture.md`; README Architecture
+  blurb + docs index; credits row for Bun.
 - **2026-10-29** — Release prep v0.1.15 (Bun runtime): version bump,
   `docs/releases/v0.1.15.md`, status release lines.
 - **2026-10-29** — Bun replaces Node: app-local Bun (pinned 1.4.4) installed from

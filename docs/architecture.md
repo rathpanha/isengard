@@ -1,5 +1,98 @@
 # Architecture
 
+## Overview
+
+Isengard is a **native desktop editor** written in Rust. One GPUI window hosts
+a single `IsengardApp` entity. UI comes from **GPUI Kit** (Longbridge) on
+**GPUI** (Zed). Language servers, the Claude Agent adapter, and Bun are
+**not** linked into the binary — they are installed on demand under the app
+data directory and talked to over stdio / ACP / subprocesses.
+
+The README is install and license only. This file is the stack map.
+
+### Stack
+
+| Layer | What | Role |
+| --- | --- | --- |
+| OS window / GPU | GPUI (`gpui-pre` via Kit) | Event loop, rendering, focus, text system |
+| Components | GPUI Kit 0.7.1 (`gpui-component`, vendored patch) | Editor, Tree, Dialog, menus, notifications, … |
+| App | `IsengardApp` (`src/app/`) | Workspace, tabs, chrome, wires every subsystem |
+| Syntax | Tree-sitter (Kit `tree-sitter-languages`) + Ayu Darker | Highlight scopes; not IntelliSense |
+| IntelliSense | External LSP servers over stdio (`src/lsp/`) | Completions, diagnostics, rename, format (non-JS) |
+| JS runtime | **Bun 1.4.4** (`src/runtime.rs`) | Package install, run npm-packaged CLIs, `bun fmt` |
+| Agent | ACP host (`src/acp/`) + panel (`src/agent/`) | External agent process; default = Claude adapter |
+| Terminal | `alacritty_terminal` + `portable-pty` (`src/terminal/`) | Bottom PTY panel (local adaptation, not crates.io gpui-terminal) |
+| Git | System `git` CLI (`src/git/`) | Status, commit, pull/push, conflict sides — no libgit2 |
+| Search | `ignore` + `regex` / `aho-corasick` (`src/search/`) | Project Find & Replace |
+| Watch | `notify` (`src/watch.rs`) | Reload clean tabs; refresh tree + Git |
+| Updates | GitHub Releases + minisign / SHA-256 (`src/update.rs`) | In-place / package / MacApp install kinds |
+
+No Tokio in the process model: LSP client, ACP connection, and terminal I/O
+use OS threads + `flume` (ACP runs `futures::executor::block_on` on its own
+thread). Blocking HTTP for downloads is `ureq`.
+
+### Process map
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  Isengard (one process, GPUI)                               │
+│  ┌─────────────┐  ┌──────────┐  ┌─────────┐  ┌───────────┐ │
+│  │ File tree   │  │ Editors  │  │Terminal │  │Agent panel│ │
+│  │ Search/Git  │  │ + LSP UI │  │  panel  │  │           │ │
+│  └──────┬──────┘  └────┬─────┘  └────┬────┘  └─────┬─────┘ │
+│         │              │             │              │       │
+│         │         LspHost       portable-pty   AgentConnection
+└─────────┼──────────────┼─────────────┼──────────────┼───────┘
+          │              │             │              │
+          ▼              ▼             ▼              ▼
+     disk / git     language       login shell    claude-agent-acp
+                    servers                       (Bun runs the
+                    (binaries or                  node shebang)
+                     Bun scripts)
+                          ▲
+                          │  bun add / bun fmt / bun <script>
+                     Bun (app-local → PATH → ~/.bun/bin)
+```
+
+### What ships in the binary vs on disk
+
+| In the app binary | Installed later under app data |
+| --- | --- |
+| GPUI Kit UI, fonts, Material file icons, theme | Bun (pinned recipe) |
+| Editor, tree, search, git UI, terminal UI | Language servers (`…/lsp/bin` + `…/lsp/pkg`) |
+| LSP / ACP *clients* | `@agentclientprotocol/claude-agent-acp` (`…/agents/claude`) |
+| Update verifier (minisign pubkey) | Bun package cache (`…/runtime/bun-cache`) |
+
+Resolve order for tools: **app-local first**, then system `PATH` (Bun also
+checks `~/.bun/bin`). Install never runs `npm -g` / brew / pip / rustup into
+the user toolchain.
+
+### On-disk layout
+
+| Path | Contents |
+| --- | --- |
+| `dirs::config_dir()/isengard/config.json` | Settings, recents, sessions, update check stamp (macOS: Application Support) |
+| `dirs::data_dir()/isengard/lsp/` | `bin/` wrappers + `pkg/` installs (servers + Bun) |
+| `dirs::data_dir()/isengard/agents/claude/` | Claude ACP adapter (`bun add --cwd`) |
+| `dirs::data_dir()/isengard/runtime/bun-cache/` | Bun install cache (not `~/.bun/install/cache`) |
+| `<folder>/.isengard-workspace` | Multi-root workspace JSON (optional) |
+
+### Subsystems at a glance
+
+- **Workspace / tabs** — multi-root folders, preview tabs, session restore in
+  `config.json`; one window, one `IsengardApp`.
+- **Format** — `bun fmt` for js/ts/json/css/html/yaml/md; other languages use
+  the attached language server; format-on-save defaults on.
+- **Agent** — Agent Client Protocol; default adapter installed with Bun;
+  OAuth / plan usage talk to Claude’s APIs using the user’s Claude Code login
+  (no API key stored in Isengard).
+- **Vendoring** — `vendor/gpui-component` patches Kit (completion popover
+  width, instant dialogs). Do not depend on crates.io `gpui-terminal`.
+
+Details, source map, conventions, and pins follow below. Feature truth and
+gaps live in [status.md](status.md); UI rules in [design.md](design.md);
+attribution in [credits.md](credits.md).
+
 ## Development setup
 
 Stable Rust via [rustup](https://rustup.rs/). First `cargo run` compiles GPUI

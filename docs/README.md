@@ -6,7 +6,7 @@ history lives only in the changelog.
 | File | What it is |
 | --- | --- |
 | [status.md](status.md) | What works, known gaps, roadmap |
-| [architecture.md](architecture.md) | Quick start, `src/` map, how pieces fit, conventions, pins |
+| [architecture.md](architecture.md) | Stack / process map, bootstrap, `src/` map, how pieces fit, pins |
 | [design.md](design.md) | UI rules (block style, Kit-only, patterns) — requirements |
 | [credits.md](credits.md) | Third-party projects and people we rely on (recognition) |
 | [changelog.md](changelog.md) | Chronological history (newest first) |

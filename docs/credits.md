@@ -53,6 +53,12 @@ License: [`assets/icons/material/LICENSE`](../assets/icons/material/LICENSE).
   [Mixkit](https://mixkit.co/free-sound-effects/), used under the
   [Mixkit Sound Effects Free License](https://mixkit.co/license/#sfxFree).
 
+## JS runtime (not linked into the binary)
+
+| Project | Who | License | How we use it |
+| --- | --- | --- | --- |
+| [Bun](https://bun.com) (pinned 1.4.4) | Oven | MIT (runtime; see bun.com) | App-local install; `bun add` for agent + npm-packaged LSPs; run those CLIs; `bun fmt` for web/markup format-on-save |
+
 ## AI agents
 
 | Project | Who | License | How we use it |

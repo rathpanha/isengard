@@ -111,11 +111,20 @@ Found a problem? [Open an issue](https://github.com/rathpanha/isengard/issues/ne
 and fill in the template. Isengard is maintained best-effort, so an issue
 **may not get picked up or fixed**.
 
+## Architecture
+
+Rust desktop app on **GPUI Kit** (Zed’s GPUI). The binary is the editor shell;
+**Bun**, language servers, and the Claude Agent adapter install on demand into
+the app data folder and run as separate processes (LSP / ACP / PTY). No Tokio
+— threads + `flume`. Full stack, process map, on-disk layout, and `src/` map:
+[docs/architecture.md](docs/architecture.md).
+
 ## Docs
 
 | Doc | What |
 | --- | --- |
+| [docs/architecture.md](docs/architecture.md) | Stack, process map, bootstrap, `src/` map |
 | [docs/status.md](docs/status.md) | What works / deferred |
-| [docs/architecture.md](docs/architecture.md) | Layout, bootstrap, conventions |
 | [docs/design.md](docs/design.md) | UI rules |
+| [docs/credits.md](docs/credits.md) | Third-party recognition |
 | [docs/changelog.md](docs/changelog.md) | History |
