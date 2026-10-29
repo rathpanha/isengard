@@ -1,0 +1,1 @@
+../../.cursor/rules/cargo-warning-free.mdc

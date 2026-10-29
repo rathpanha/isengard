@@ -1,0 +1,1 @@
+../../.cursor/rules/ui-test-coverage.mdc
