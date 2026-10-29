@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Added a GitHub bug-report issue template
+  (`.github/ISSUE_TEMPLATE/`, blank issues off) and a "Report a bug" section in
+  README / CONTRIBUTING, stating issues may not be picked up or fixed.
 - **2026-10-29** — Release workflow: `publish` now requires the Linux, macOS and
   Windows jobs to all succeed (it used to publish whenever Linux passed, which
   shipped v0.1.13 without macOS files after the macOS job was cancelled while

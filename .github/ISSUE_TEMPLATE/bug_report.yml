@@ -1,0 +1,45 @@
+name: Bug report
+description: Report something that is broken in Isengard
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Heads up:** Isengard is maintained on a best-effort basis,
+        so your issue may not be picked up or fixed. Pull requests are not accepted
+        (see CONTRIBUTING.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Isengard version
+      placeholder: v0.1.13
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: macOS 15.1 / Windows 11 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Logs or screenshots
+      description: Optional.

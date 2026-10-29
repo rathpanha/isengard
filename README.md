@@ -105,6 +105,12 @@ Package on macOS (`.app`, `.dmg`, `.tar.gz` → `dist/macos/`):
 Forks and private copies are fine. **Pull requests are not accepted** —
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Report a bug
+
+Found a problem? [Open an issue](https://github.com/rathpanha/isengard/issues/new/choose)
+and fill in the template. Isengard is maintained best-effort, so an issue
+**may not get picked up or fixed**.
+
 ## Docs
 
 | Doc | What |
