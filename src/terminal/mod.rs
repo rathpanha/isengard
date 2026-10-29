@@ -288,7 +288,7 @@
 //! | Function keys (F1-F12) | ✅ Full support |
 //! | Mouse click reporting | 🔄 Partial (framework ready) |
 //! | Mouse selection | 🔄 Planned |
-//! | Scrollback | 🔄 Planned |
+//! | Scrollback | ✅ Wheel / trackpad, Shift+PageUp/PageDown |
 //! | Clipboard (OSC 52) | ✅ Callback support |
 //! | Title changes (OSC 0/2) | ✅ Callback support |
 //! | Bell (BEL) | ✅ Callback support |

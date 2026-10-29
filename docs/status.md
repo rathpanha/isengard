@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.1.16): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.1.17): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude Agent panel (ACP), and in-app updates on Linux / macOS /
 Windows. Early phased plan (egui → Kit → Agent v1) is finished — do not treat
@@ -98,7 +98,8 @@ What works today:
   (double = word, triple = line); copy/paste via OS terminal chords
   (`⌘C`/`⌘V` or `Ctrl+Shift+C`/`V`, chord wins over Toggle Preview when
   focused); Tab / Shift+Tab go to the shell (not focus traversal); URL hover continuous underline + pointer; Ctrl/Cmd+click opens.
-  Scrollback UI still minimal.
+  Scroll the wheel / trackpad or Shift+PageUp/PageDown to browse history
+  (not restored across restarts; no scrollbar yet).
 - **Sidebar:** hide/show without closing the workspace (View > Toggle
   Sidebar / `⌘B` / `Ctrl+B` / status-bar icon); width + visibility persist
   per workspace session. Explorer ↔ Search ↔ Source Control via top strip
@@ -247,7 +248,10 @@ What works today:
   Mode icon tracks Ask/Auto/Plan/ accept-edits — Auto omitted for Claude
   models older than 4.6; Model `Cpu` / Version/Context; Fast Switch;
   Effort/agent/… on the left; OpusPlan Switch pinned right when
-  advertised (Opus in Plan Mode, Sonnet otherwise; Mode change re-pins
+  advertised (built-in Claude always advertises it — session `_meta` sets
+  flag-tier `model: opusplan`, no terminal `/model opusplan` needed; off by
+  default — session open pins the concrete Model unless prefs say on;
+  Opus in Plan Mode, Sonnet otherwise; Mode change re-pins
   alias when on / concrete Model when off — blocks Claude settings
   `opusplan` bleed; not in Model picker; hides Model/Version/Context
   while on)) sits in a fixed-height band above Attach / Improve
@@ -314,7 +318,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.16 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.1.17 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -331,7 +335,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.1.16.md](releases/v0.1.16.md). Human install:
+- Notes: [docs/releases/v0.1.17.md](releases/v0.1.17.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

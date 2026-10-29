@@ -147,6 +147,8 @@ pub struct AgentLaunch {
     pub command: PathBuf,
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
+    /// The built-in Claude adapter: its sessions list the `opusplan` Model alias.
+    pub claude: bool,
 }
 
 /// What to launch for these settings.
@@ -178,6 +180,7 @@ pub fn resolve_in(
             command,
             args: settings.args.clone(),
             env: settings.env.clone(),
+            claude: false,
         });
     }
     let local = claude_bin_in(agents_root);
@@ -201,7 +204,12 @@ pub fn resolve_in(
             }
             // The adapter is a `#!/usr/bin/env node` script: run it on Bun.
             let (command, args) = crate::runtime::run_on_bun(command, Vec::new());
-            Resolved::Launch(AgentLaunch { command, args, env })
+            Resolved::Launch(AgentLaunch {
+                command,
+                args,
+                env,
+                claude: true,
+            })
         }
         None => Resolved::ClaudeNotInstalled,
     }
@@ -237,6 +245,7 @@ fn resolve_cursor(
                 command,
                 args,
                 env: settings.env.clone(),
+                claude: false,
             })
         }
         None => Resolved::CursorNotInstalled,
@@ -330,6 +339,7 @@ mod tests {
         assert_eq!(launch.command, PathBuf::from("gemini"));
         assert_eq!(launch.args, ["--experimental-acp"]);
         assert_eq!(launch.env.get("A").map(String::as_str), Some("1"));
+        assert!(!launch.claude, "a custom agent is not the Claude adapter");
     }
 
     #[test]
@@ -357,6 +367,7 @@ mod tests {
                 .map(String::as_str),
             Some("1")
         );
+        assert!(launch.claude, "the built-in adapter gets the Claude session settings");
     }
 
     #[test]

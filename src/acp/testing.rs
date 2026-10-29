@@ -43,7 +43,7 @@ pub fn install(agent: &FakeAgent) {
 pub fn connection(roots: Vec<PathBuf>) -> Option<AgentConnection> {
     INSTALLED.with(|slot| {
         let agent = slot.borrow().clone()?;
-        Some(AgentConnection::spawn_with(agent.connect(), roots))
+        Some(AgentConnection::spawn_with(agent.connect(), roots, false))
     })
 }
 
@@ -56,6 +56,8 @@ struct State {
     calls: Vec<String>,
     /// `additionalDirectories` of the last new/load/resume.
     extra_roots: Vec<PathBuf>,
+    /// `_meta` of every new/load/resume, in order.
+    session_metas: Vec<Option<serde_json::Value>>,
     mode_id: String,
     model_id: String,
     fast_mode: bool,
@@ -70,6 +72,7 @@ impl Default for State {
             chats: HashMap::new(),
             calls: Vec::new(),
             extra_roots: Vec::new(),
+            session_metas: Vec::new(),
             mode_id: "auto".into(),
             model_id: "sonnet-4-5".into(),
             fast_mode: false,
@@ -159,6 +162,11 @@ impl FakeAgent {
         Self::default()
     }
 
+    /// Model the agent reports as current (before the first connect).
+    pub fn set_model_id(&self, id: &str) {
+        self.state.lock().unwrap().model_id = id.into();
+    }
+
     /// Method log, e.g. `["new s1", "close s1", "load s1"]`.
     pub fn calls(&self) -> Vec<String> {
         self.state.lock().unwrap().calls.clone()
@@ -166,6 +174,11 @@ impl FakeAgent {
 
     pub fn extra_roots(&self) -> Vec<PathBuf> {
         self.state.lock().unwrap().extra_roots.clone()
+    }
+
+    /// `_meta` the client sent with each new/load/resume.
+    pub fn session_metas(&self) -> Vec<Option<serde_json::Value>> {
+        self.state.lock().unwrap().session_metas.clone()
     }
 
     pub fn chat(&self, id: &str) -> Option<Vec<FakeMessage>> {
@@ -242,6 +255,7 @@ impl FakeAgent {
                     .on_receive_request(
                         async move |req: NewSessionRequest, responder, _cx| {
                             let mut st = s_new.lock().unwrap();
+                            st.session_metas.push(req.meta.map(serde_json::Value::Object));
                             st.extra_roots = req.additional_directories;
                             st.next_id += 1;
                             let id = format!("s{}", st.next_id);
@@ -263,6 +277,7 @@ impl FakeAgent {
                             let id = req.session_id.to_string();
                             let (history, modes, config) = {
                                 let mut st = s_load.lock().unwrap();
+                                st.session_metas.push(req.meta.clone().map(serde_json::Value::Object));
                                 st.extra_roots = req.additional_directories.clone();
                                 st.calls.push(format!("load {id}"));
                                 (
@@ -289,6 +304,7 @@ impl FakeAgent {
                         async move |req: ResumeSessionRequest, responder, _cx| {
                             let id = req.session_id.to_string();
                             let mut st = s_resume.lock().unwrap();
+                            st.session_metas.push(req.meta.map(serde_json::Value::Object));
                             st.extra_roots = req.additional_directories;
                             st.calls.push(format!("resume {id}"));
                             if st.chats.contains_key(&id) {

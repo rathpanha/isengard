@@ -20,6 +20,24 @@ status, architecture, or design. See [README.md](README.md).
   delete; auth `cursor_login` only).
 - **2026-10-29** — Cursor ACP roadmap: Install like Claude (pinned CLI into
   `…/agents/cursor/`, not user PATH / Cursor.app); Phase 0 = app-local smoke.
+- **2026-10-29** — `@` mention walk skips `graphify-out/` so generated graph
+  files no longer exhaust the walk budget (fixes
+  `nested_folder_query_matches_in_this_repo` locally).
+- **2026-10-29** — Release prep v0.1.17 (terminal scrollback, OpusPlan
+  fix): version bump, `docs/releases/v0.1.17.md`, status release lines.
+- **2026-10-29** — Terminal scrollback: mouse wheel / trackpad and
+  Shift+PageUp/PageDown scroll history (10,000 lines); selection, links and
+  cursor follow the scrolled viewport; typing or pasting snaps to the bottom.
+  Apps using the alternate screen or mouse reporting still get the wheel.
+- **2026-10-29** — OpusPlan Switch starts off: opening a Claude chat now pins
+  the concrete Model (or `opusplan` only if the saved pref says so), so the
+  flag setting or a terminal `"model":"opusplan"` no longer turns it on.
+- **2026-10-29** — OpusPlan Switch no longer needs terminal `/model opusplan`:
+  Claude Code only lists the `opusplan` alias when it is already the
+  configured model, so the built-in Claude adapter's new/load/resume/silent
+  sessions now carry `_meta.claudeCode.options.settings.model = "opusplan"`
+  (flag tier — the user's own model is still what the session reports/runs).
+  Also fixes a clippy `?` lint in `preferred_opusplan_id`.
 - **2026-10-29** — Release prep v0.1.16 (Open Folder hang fix): version bump,
   `docs/releases/v0.1.16.md`, status release lines.
 - **2026-10-29** — Open Folder no longer beachballs on large trees: `FsWatcher`

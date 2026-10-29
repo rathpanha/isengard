@@ -1753,6 +1753,52 @@ fn opusplan_harness(name: &str, cx: &mut TestAppContext) -> (Harness, FakeAgent)
     (h, agent)
 }
 
+/// Like [`opusplan_harness`], but the agent already runs `opusplan` when the
+/// chat opens (the flag setting or a terminal `"model":"opusplan"`) and the
+/// saved prefs are `prefs`.
+fn opusplan_running_harness(
+    name: &str,
+    prefs: crate::config::AgentPrefs,
+    cx: &mut TestAppContext,
+) -> (Harness, FakeAgent) {
+    let agent = FakeAgent::new();
+    agent.set_model_id("opusplan");
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.with_app(cx, |app, _, _| app.config.agent_prefs = prefs);
+    let folder = h.folder(name);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+    (h, agent)
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_switch_starts_off_even_when_the_agent_runs_the_alias(cx: &mut TestAppContext) {
+    let (h, agent) =
+        opusplan_running_harness("opusplan-default-off", crate::config::AgentPrefs::default(), cx);
+    assert!(panel_get(&h, cx, |p, _| p.opusplan_available()), "Switch is offered");
+    h.wait_for(cx, "alias replaced by a concrete model", |_| {
+        agent.calls().iter().any(|c| c.starts_with("set_config model=") && !c.contains("opusplan"))
+    });
+    assert!(!panel_get(&h, cx, |p, _| p.opusplan_on()), "Switch starts off");
+    assert!(panel_get(&h, cx, |p, _| p.composer_model_pickers_visible()));
+}
+
+#[gpui_kit::test]
+fn agent_opusplan_switch_stays_on_when_the_user_turned_it_on(cx: &mut TestAppContext) {
+    use crate::config::{AgentPrefValue, AgentPrefs};
+    let mut prefs = AgentPrefs::default();
+    prefs
+        .config
+        .insert("model".into(), AgentPrefValue::Value("opusplan".into()));
+    let (h, agent) = opusplan_running_harness("opusplan-stays-on", prefs, cx);
+    h.wait_for(cx, "alias pinned", |_| {
+        agent.calls().iter().any(|c| c == "set_config model=opusplan")
+    });
+    assert!(panel_get(&h, cx, |p, _| p.opusplan_on()));
+}
+
 fn calls_since(agent: &FakeAgent, from: usize) -> Vec<String> {
     agent.calls()[from..].to_vec()
 }
