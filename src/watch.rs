@@ -1,10 +1,15 @@
 //! File watching for the open workspace roots.
 //!
-//! Walks the tree ourselves and registers a **non-recursive** watch per
-//! directory, skipping build/VCS/cache dirs entirely. That matters on Linux:
-//! `RecursiveMode::Recursive` would create an inotify watch for every
-//! directory under `node_modules` / `target` / … and blow
-//! `fs.inotify.max_user_watches`. Event filtering alone does not prevent that.
+//! **Linux:** non-recursive watch on each root, then walks the tree for
+//! descendant watches, skipping build/VCS/cache dirs. `RecursiveMode::Recursive`
+//! would create an inotify watch for every directory under `node_modules` /
+//! `target` / … and blow `fs.inotify.max_user_watches`. Event filtering alone
+//! does not prevent that. The descendant walk runs **after** `FsWatcher::new`
+//! returns so opening a large folder never freezes the UI.
+//!
+//! **macOS / Windows:** one recursive watch per root (FSEvents /
+//! ReadDirectoryChangesW). No tree walk — those backends do not pay the
+//! Linux per-directory watch cost.
 //!
 //! A dedicated thread creates and owns the `notify` watcher (moving a macOS
 //! FSEvents watcher across threads after `watch()` is unreliable). The app
@@ -64,10 +69,15 @@ impl FsWatcher {
                         return;
                     }
                 };
+                // Register each root before ready so Open Folder can return with
+                // the top level already covered. Linux still walks descendants
+                // after ready (that walk used to beachball the UI).
+                watch_roots_shallow(&mut watcher, &roots);
+                let _ = ready_tx.send(Ok(()));
+                #[cfg(target_os = "linux")]
                 for root in &roots {
                     watch_dir_tree(&mut watcher, root);
                 }
-                let _ = ready_tx.send(Ok(()));
 
                 loop {
                     match shutdown_rx.try_recv() {
@@ -99,8 +109,25 @@ impl FsWatcher {
     }
 }
 
+/// One watch per workspace root — O(roots), never walks the tree.
+fn watch_roots_shallow(watcher: &mut RecommendedWatcher, roots: &[PathBuf]) {
+    for root in roots {
+        if is_ignored(root) {
+            continue;
+        }
+        #[cfg(target_os = "linux")]
+        let mode = RecursiveMode::NonRecursive;
+        #[cfg(not(target_os = "linux"))]
+        let mode = RecursiveMode::Recursive;
+        if let Err(err) = watcher.watch(root, mode) {
+            log::warn!("watch {}: {err}", root.display());
+        }
+    }
+}
+
 fn apply_raw_event(
-    watcher: &mut RecommendedWatcher,
+    #[cfg(target_os = "linux")] watcher: &mut RecommendedWatcher,
+    #[cfg(not(target_os = "linux"))] _watcher: &mut RecommendedWatcher,
     event: notify::Event,
     event_tx: &flume::Sender<FsChange>,
 ) {
@@ -113,13 +140,13 @@ fn apply_raw_event(
             | EventKind::Remove(_)
             | EventKind::Modify(notify::event::ModifyKind::Name(_))
     );
-    let created = matches!(event.kind, EventKind::Create(_));
     for path in event.paths {
         if is_ignored(&path) {
             continue;
         }
-        // New directories are not covered by the parent's non-recursive watch.
-        if created && path.is_dir() {
+        // Linux: new directories are not covered by the parent's non-recursive watch.
+        #[cfg(target_os = "linux")]
+        if matches!(event.kind, EventKind::Create(_)) && path.is_dir() {
             watch_dir_tree(watcher, &path);
         }
         let _ = event_tx.send(FsChange { path, structural });
@@ -127,6 +154,7 @@ fn apply_raw_event(
 }
 
 /// Non-recursive watch on `dir`, then the same for every non-ignored child dir.
+#[cfg(target_os = "linux")]
 fn watch_dir_tree(watcher: &mut RecommendedWatcher, dir: &Path) {
     if is_ignored(dir) {
         return;
@@ -153,17 +181,22 @@ fn is_ignored(path: &Path) -> bool {
     path.components().any(|c| {
         SKIP_COMPONENTS
             .iter()
-            .any(|skip| c.as_os_str() == std::ffi::OsStr::new(skip))
+            .any(|skip| c.as_os_str() == std::ffi::OsStr::new(*skip))
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FsWatcher, is_ignored, watch_dir_tree};
-    use notify::{RecommendedWatcher, Watcher};
+    use super::{FsWatcher, is_ignored};
     use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "linux")]
+    use super::watch_dir_tree;
+    #[cfg(target_os = "linux")]
+    use notify::{RecommendedWatcher, Watcher};
+    #[cfg(target_os = "linux")]
     use std::sync::mpsc;
-    use std::time::Duration;
 
     #[test]
     fn ignores_build_and_vcs_dirs() {
@@ -187,6 +220,39 @@ mod tests {
     }
 
     #[test]
+    fn reports_writes_in_nested_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let nested = root.join("a").join("b").join("c");
+        std::fs::create_dir_all(&nested).unwrap();
+        let watcher = FsWatcher::new(std::slice::from_ref(&root)).unwrap();
+        // Linux still walks after ready; give it a moment to reach `c`.
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(nested.join("x.txt"), "hi").unwrap();
+        let got = watcher.events().recv_timeout(Duration::from_secs(5));
+        assert!(got.is_ok(), "no nested event within 5s");
+    }
+
+    /// Open-folder used to beachball: `new` waited for the full Linux walk.
+    /// Ready must return before a large tree could finish registering.
+    #[test]
+    fn new_returns_without_waiting_on_tree_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        for i in 0..80 {
+            std::fs::create_dir_all(root.join(format!("branch{i}/a/b/c/d"))).unwrap();
+        }
+        let start = Instant::now();
+        let _watcher = FsWatcher::new(std::slice::from_ref(&root)).unwrap();
+        assert!(
+            start.elapsed() < Duration::from_millis(750),
+            "FsWatcher::new blocked for {:?} — must not wait on the tree walk",
+            start.elapsed()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn skipped_dirs_are_not_descended_into() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
@@ -203,12 +269,8 @@ mod tests {
         )
         .unwrap();
 
-        // Count watches by wrapping: watch_dir_tree should watch root + src only,
-        // never node_modules or node_modules/pkg.
         watch_dir_tree(&mut watcher, &root);
 
-        // If we incorrectly descended, unwatch would still leave watches; instead
-        // probe via a second walk helper that records visited dirs.
         let mut visited = Vec::new();
         fn collect(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             if is_ignored(dir) {
@@ -230,7 +292,9 @@ mod tests {
         collect(&root, &mut visited);
         assert!(visited.iter().any(|p| p.ends_with("src")));
         assert!(
-            visited.iter().all(|p| !p.to_string_lossy().contains("node_modules")),
+            visited
+                .iter()
+                .all(|p| !p.to_string_lossy().contains("node_modules")),
             "skip dirs must not be visited: {visited:?}"
         );
         let _ = watcher;

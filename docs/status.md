@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.1.15): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.1.16): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude Agent panel (ACP), and in-app updates on Linux / macOS /
 Windows. Early phased plan (egui → Kit → Agent v1) is finished — do not treat
@@ -127,12 +127,14 @@ What works today:
   whole-file Accept); Commit refuses leftover markers
   (rebase/cherry-pick → terminal). No persistent staging, branch UI, or
   Accept Both.
-- **File watching:** every workspace root is watched; edits made outside
-  Isengard (agent shell tools, `git checkout`, formatters, other editors) —
-  debounced 300 ms — reload **clean** open tabs, refresh loaded tree
-  directories on create/remove/rename (expand state kept), and refresh Source
-  Control. A tab with unsaved edits is never overwritten: one warning toast
-  per divergence, and Save still writes the buffer.
+- **File watching:** every workspace root is watched (macOS/Windows: one
+  recursive watch per root; Linux: per-dir walk off the UI thread so Open
+  Folder does not beachball). Edits made outside Isengard (agent shell tools,
+  `git checkout`, formatters, other editors) — debounced 300 ms — reload
+  **clean** open tabs, refresh loaded tree directories on create/remove/rename
+  (expand state kept), and refresh Source Control. A tab with unsaved edits is
+  never overwritten: one warning toast per divergence, and Save still writes
+  the buffer.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root) or while an agent turn or a terminal foreground process (Unix) is running
@@ -304,7 +306,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.15 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.1.16 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -321,7 +323,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.1.15.md](releases/v0.1.15.md). Human install:
+- Notes: [docs/releases/v0.1.16.md](releases/v0.1.16.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

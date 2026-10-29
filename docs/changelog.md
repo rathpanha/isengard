@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Release prep v0.1.16 (Open Folder hang fix): version bump,
+  `docs/releases/v0.1.16.md`, status release lines.
+- **2026-10-29** — Open Folder no longer beachballs on large trees: `FsWatcher`
+  returns before any directory walk; macOS/Windows use one recursive watch per
+  root (Linux still walks off the UI thread).
 - **2026-10-29** — Status roadmap: Cursor (and other) external ACP agents in
   phases 0–5 (smoke via `config.json`, auth, panel switch, capability-gated
   UI, optional `cursor/*` extensions); Claude remains default.

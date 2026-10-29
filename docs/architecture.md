@@ -532,13 +532,16 @@ src/
   assembly.
 - **File watching:** `workspace_changed` → `restart_fs_watch` (new
   `watch::FsWatcher` over `workspace.folders()`, `fs_watch_gen` bump so an old
-  pump stops; skipped under `cfg!(test)`). `FsWatcher` walks the tree and
-  registers a **non-recursive** watch per directory, never descending into
-  `.git` / `node_modules` / `target` / `.next` / `dist` / `__pycache__` /
-  `.venv` / `venv` (Linux inotify is one watch per dir — recursive watch on a
-  root would register under those trees and hit `max_user_watches`). New dirs
-  get a watch on create. The pump task `recv_async`s, sleeps 300 ms, drains,
-  then `apply_fs_changes`: per open text tab, compare disk with `saved` —
+  pump stops; skipped under `cfg!(test)`). `FsWatcher::new` watches each root
+  (cheap) then returns — it must **not** wait on a full tree walk (that used
+  to beachball Open Folder on large trees). **macOS / Windows:** one
+  `RecursiveMode::Recursive` watch per root. **Linux:** non-recursive watch on
+  each root before ready, then walk descendants off the UI thread, never
+  descending into `.git` / `node_modules` / `target` / `.next` / `dist` /
+  `__pycache__` / `.venv` / `venv` (inotify is one watch per dir — recursive on
+  a root would register under those trees and hit `max_user_watches`); new dirs
+  get a watch on create. The pump task `recv_async`s, sleeps 300 ms, drains, then
+  `apply_fs_changes`: per open text tab, compare disk with `saved` —
   equal → nothing, clean → `reload_open_file_from_disk` (keeps selection/
   scroll; undo still clears via Kit `set_value`), dirty → one warning in
   `disk_conflicts`, missing + clean → close tab, missing + dirty → warn and
