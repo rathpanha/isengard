@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-29** — Release prep v0.1.14 (tool-run cards): version bump,
+  `docs/releases/v0.1.14.md`, status release lines.
+- **2026-10-29** — Agent chat: 2+ consecutive tool calls (thoughts between them
+  included) collapse into one card (`N steps` / live title, collapsed by
+  default, auto-open for permission prompts) so long turns stop flooding the
+  transcript. Test: `agent_tool_runs_collapse_into_one_card`.
 - **2026-10-29** — Added a GitHub bug-report issue template
   (`.github/ISSUE_TEMPLATE/`, blank issues off) and a "Report a bug" section in
   README / CONTRIBUTING, stating issues may not be picked up or fixed.

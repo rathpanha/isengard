@@ -531,6 +531,32 @@ fn agent_writes_show_file_change_summary(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_tool_runs_collapse_into_one_card(cx: &mut TestAppContext) {
+    use agent_client_protocol::schema::v1::{SessionUpdate, ToolCall};
+
+    let h = Harness::new(cx);
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-shift-b", cx);
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    let tool = |id: &str| SessionUpdate::ToolCall(ToolCall::new(id.to_string(), format!("run {id}")));
+
+    panel.update(cx, |panel, cx| {
+        panel.seed_chat_session_for_test("chat-1");
+        panel.push_user_for_test("go", cx);
+        panel.apply_update_for_test(tool("t1"), cx);
+        // One tool alone is still an ordinary row.
+        assert!(panel.tool_runs_for_test().is_empty());
+        panel.apply_update_for_test(tool("t2"), cx);
+        panel.apply_update_for_test(tool("t3"), cx);
+        // user bubble is entry 0; tools are 1..=3.
+        assert_eq!(panel.tool_runs_for_test(), vec![(1, 3)]);
+        // Collapsed by default; the header click opens, a second closes.
+        assert!(panel.toggle_tool_group_for_test(1, cx));
+        assert!(!panel.toggle_tool_group_for_test(1, cx));
+    });
+}
+
+#[gpui_kit::test]
 fn agent_file_change_cards_survive_transcript_reload(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let path = h.file("notes.txt", "alpha\nbeta\n");

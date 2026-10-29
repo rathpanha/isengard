@@ -409,6 +409,16 @@ Add a row here whenever a new shared component is created.
   primary Install (`Download`, loading while npm runs) + danger error line;
   login → one button per agent login method (first primary, others outline)
   + outline Retry; failed → danger message + primary Retry.
+- **Tool-run card (agent chat):** 2+ consecutive tool calls, with any thoughts
+  between them, render as one card instead of one bordered row each
+  (`tool_run` / `render_tool_group` in `agent/panel.rs`; grouping is at render
+  time — `entries` stay one per tool so scroller indices line up, later rows
+  of a run are zero-height). Header = chevron + live tool title while one runs
+  (else `N steps`) + one status mark (Spinner / `CircleX` danger if any failed
+  / `Check`). Collapsed by default; click toggles; the card opens by itself
+  while a member awaits permission so Allow / Deny are never hidden. Members
+  show indented under the header with the normal tool rows. Leading and
+  trailing thoughts, text, plans and notices end a run.
 - **External file changes:** a clean open tab silently reloads when its file
   changes on disk; a tab with unsaved edits keeps them and shows one
   `notify_warning` ("<name> changed on disk — kept your unsaved edits"). The

@@ -526,6 +526,8 @@ pub struct AgentPanel {
     plan_limits_rate_limited: bool,
     /// Usage strip expanded in place (details capped so transcript keeps height).
     plan_usage_open: bool,
+    /// Tool-run cards the user expanded, keyed by the run's first tool id.
+    tool_groups_open: HashSet<String>,
     /// Agent is mid-compaction (`CompactionUpdate` InProgress).
     compacting: bool,
     /// Files written/deleted during the current turn (flushed to a summary card).
@@ -1003,6 +1005,7 @@ impl AgentPanel {
             plan_limits_stale: saved_limits_stale,
             plan_limits_rate_limited: false,
             plan_usage_open: false,
+            tool_groups_open: HashSet::new(),
             compacting: false,
             turn_file_changes: HashMap::new(),
             turn_git_baseline: None,
@@ -1293,6 +1296,26 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn apply_update_for_test(&mut self, update: SessionUpdate, cx: &mut Context<Self>) {
         self.apply_update(update, cx);
+    }
+
+    /// `(first, last)` entry index of every collapsible tool run (tests).
+    #[cfg(test)]
+    pub fn tool_runs_for_test(&self) -> Vec<(usize, usize)> {
+        let mut runs: Vec<_> = (0..self.entries.len())
+            .filter_map(|ix| tool_run(&self.entries, ix))
+            .collect();
+        runs.dedup();
+        runs
+    }
+
+    /// Click the card header of the run starting at `start`; returns whether it is open (tests).
+    #[cfg(test)]
+    pub fn toggle_tool_group_for_test(&mut self, start: usize, cx: &mut Context<Self>) -> bool {
+        self.toggle_tool_group(start, cx);
+        match self.entries.get(start) {
+            Some(Entry::Tool(t)) => self.tool_groups_open.contains(&t.id.to_string()),
+            _ => false,
+        }
     }
 
     /// Current value of the Mode config option (tests).
@@ -4350,21 +4373,41 @@ impl AgentPanel {
     }
 
     fn push_entry(&mut self, entry: Entry, cx: &mut Context<Self>) {
+        let is_tool = matches!(entry, Entry::Tool(_));
         self.entries.push(entry);
         self.scroller.update(cx, |s, cx| {
             s.append(1, cx);
         });
+        // A new tool can extend a run: its card (earlier row) changes too.
+        if is_tool {
+            self.touched(self.entries.len() - 1, cx);
+        }
     }
 
-    /// Row `ix` changed height (streamed text, tool status, …).
+    /// Row `ix` changed height (streamed text, tool status, …). Rows inside a
+    /// tool run are drawn by the run's first row, so that one is remeasured too.
     fn touched(&self, ix: usize, cx: &mut Context<Self>) {
+        let from = tool_run(&self.entries, ix).map_or(ix, |(start, _)| start);
         self.scroller.update(cx, |s, cx| {
-            s.remeasure_items(ix..ix + 1, cx);
+            s.remeasure_items(from..ix + 1, cx);
         });
+    }
+
+    fn toggle_tool_group(&mut self, start: usize, cx: &mut Context<Self>) {
+        let Some(Entry::Tool(tool)) = self.entries.get(start) else {
+            return;
+        };
+        let key = tool.id.to_string();
+        if !self.tool_groups_open.remove(&key) {
+            self.tool_groups_open.insert(key);
+        }
+        self.touched(start, cx);
+        cx.notify();
     }
 
     fn clear_entries(&mut self, cx: &mut Context<Self>) {
         self.pending_file_change_restore = false;
+        self.tool_groups_open.clear();
         self.entries.clear();
         self.scroller.update(cx, |s, cx| s.reset(0, cx));
     }
@@ -5263,20 +5306,7 @@ fn render_entry(
                 TextView::new(state).style(crate::theme::text_view_style(cx)),
             )
             .into_any_element(),
-        Entry::Thought(state) => div()
-            .w_full()
-            .min_w_0()
-            .pl_2()
-            .border_l_2()
-            .border_color(theme.border)
-            .text_xs()
-            .text_color(theme.muted_foreground)
-            .child(
-                // Explicit style: parent muted color would otherwise disable
-                // code-block highlighting (Kit "inverted surface" path).
-                TextView::new(state).style(crate::theme::text_view_style(cx)),
-            )
-            .into_any_element(),
+        Entry::Thought(state) => render_thought(state, cx),
         Entry::Tool(tool) => render_tool(panel, tool, cx),
         Entry::Subagent(sub) => render_subagent(sub, cx),
         Entry::Plan(items) => v_flex()
@@ -5528,6 +5558,126 @@ fn render_subagent(sub: &SubagentEntry, cx: &App) -> AnyElement {
                 )
                 .child(status),
         )
+        .into_any_element()
+}
+
+fn render_thought(state: &Entity<TextViewState>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    div()
+        .w_full()
+        .min_w_0()
+        .pl_2()
+        .border_l_2()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(
+            // Explicit style: parent muted color would otherwise disable
+            // code-block highlighting (Kit "inverted surface" path).
+            TextView::new(state).style(crate::theme::text_view_style(cx)),
+        )
+        .into_any_element()
+}
+
+/// Run of 2+ tool calls (thoughts between them included) that collapses into
+/// one card: `(first tool, last tool)` when `ix` lies inside it. Leading and
+/// trailing thoughts stay ordinary rows.
+// ponytail: rescans the contiguous Tool/Thought block per row (O(run²) per
+// frame); cache run bounds on the panel if transcripts ever get huge runs.
+fn tool_run(entries: &[Entry], ix: usize) -> Option<(usize, usize)> {
+    let grouped = |e: &Entry| matches!(e, Entry::Tool(_) | Entry::Thought(_));
+    if !entries.get(ix).is_some_and(grouped) {
+        return None;
+    }
+    let lo = entries[..ix].iter().rposition(|e| !grouped(e)).map_or(0, |p| p + 1);
+    let hi = entries[ix..].iter().position(|e| !grouped(e)).map_or(entries.len(), |p| ix + p);
+    let is_tool = |e: &Entry| matches!(e, Entry::Tool(_));
+    let start = lo + entries[lo..hi].iter().position(is_tool)?;
+    let end = lo + entries[lo..hi].iter().rposition(is_tool)?;
+    let tools = entries[start..=end].iter().filter(|e| is_tool(e)).count();
+    (tools >= 2 && (start..=end).contains(&ix)).then_some((start, end))
+}
+
+/// One card for a tool run: header (chevron, live title or `N steps`, status)
+/// and, when open, the member rows indented below it. Opens by itself while a
+/// tool waits for permission so Allow / Deny never hide.
+fn render_tool_group(
+    panel: &WeakEntity<AgentPanel>,
+    entries: &[Entry],
+    start: usize,
+    end: usize,
+    user_open: bool,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let tools: Vec<&ToolEntry> = entries[start..=end]
+        .iter()
+        .filter_map(|e| match e {
+            Entry::Tool(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    let open = user_open || tools.iter().any(|t| t.permission.is_some());
+    let running = tools
+        .iter()
+        .rev()
+        .find(|t| matches!(t.status, ToolCallStatus::Pending | ToolCallStatus::InProgress));
+    let label: SharedString = match running {
+        Some(t) => t.title.clone(),
+        None => format!("{} steps", tools.len()).into(),
+    };
+    let status: AnyElement = if running.is_some() {
+        Spinner::new().small().into_any_element()
+    } else if tools.iter().any(|t| t.status == ToolCallStatus::Failed) {
+        Icon::new(LucideIcon::CircleX)
+            .small()
+            .text_color(theme.danger)
+            .into_any_element()
+    } else {
+        Icon::new(LucideIcon::Check)
+            .small()
+            .text_color(theme.success)
+            .into_any_element()
+    };
+    let chevron = if open {
+        LucideIcon::ChevronDown
+    } else {
+        LucideIcon::ChevronRight
+    };
+    v_flex()
+        .w_full()
+        .gap_1()
+        .child(
+            h_flex()
+                .id(("agent-tool-group-toggle", start))
+                .w_full()
+                .gap_2()
+                .items_center()
+                .px_2()
+                .py_0p5()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.background)
+                .cursor_pointer()
+                .on_click({
+                    let panel = panel.clone();
+                    move |_, _, cx| {
+                        let _ = panel.update(cx, |p, cx| p.toggle_tool_group(start, cx));
+                    }
+                })
+                .child(Icon::new(chevron).small().text_color(theme.muted_foreground))
+                .child(div().flex_1().min_w_0().text_sm().truncate().child(label))
+                .child(status),
+        )
+        .when(open, |col| {
+            col.child(v_flex().w_full().gap_1().pl_3().children(
+                entries[start..=end].iter().map(|e| match e {
+                    Entry::Tool(t) => render_tool(panel, t, cx),
+                    Entry::Thought(state) => render_thought(state, cx),
+                    _ => div().into_any_element(),
+                }),
+            ))
+        })
         .into_any_element()
 }
 
@@ -7108,9 +7258,21 @@ impl AgentPanel {
                     return div().into_any_element();
                 };
                 let this = this.read(cx);
-                match this.entries.get(ix) {
-                    Some(entry) => render_entry(&panel, entry, ix, cx),
-                    None => div().into_any_element(),
+                match (this.entries.get(ix), tool_run(&this.entries, ix)) {
+                    // Drawn inside the run's first row.
+                    (Some(_), Some((start, _))) if start != ix => div().into_any_element(),
+                    (Some(Entry::Tool(first)), Some((_, end))) => {
+                        let open = this.tool_groups_open.contains(&first.id.to_string());
+                        div()
+                            .id(("agent-entry", ix))
+                            .w_full()
+                            .px_3()
+                            .py_0p5()
+                            .child(render_tool_group(&panel, &this.entries, ix, end, open, cx))
+                            .into_any_element()
+                    }
+                    (Some(entry), _) => render_entry(&panel, entry, ix, cx),
+                    (None, _) => div().into_any_element(),
                 }
             })
             // ~half the pane below the latest row so long chats can sit mid-

@@ -143,7 +143,9 @@ tabs, highlighted editor, status bar):
   run the agent's own `--cli auth login …` in a terminal tab; when that
   program exits the panel reconnects by itself (Retry stays as a fallback).
   Custom agent via `config.json` `agent.command` / `args` / `env`. Streams
-  markdown replies + thoughts, tool-call rows (kind icon, path, status),
+  markdown replies + thoughts, tool-call rows (kind icon, path, status;
+  2+ consecutive tools — thoughts between them included — collapse into one
+  card, see design.md),
   nested subagent rows (Explore/Agent progress while the main turn waits —
   ACP `clientCapabilities.subagents`; Agent settings **Subagent model**
   sets Claude’s `CLAUDE_CODE_SUBAGENT_MODEL`),
@@ -278,7 +280,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.13 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.1.14 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -296,7 +298,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.1.13.md](releases/v0.1.13.md). Human install:
+- Notes: [docs/releases/v0.1.14.md](releases/v0.1.14.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap — Agent panel after v1
