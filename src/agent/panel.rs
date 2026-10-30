@@ -1768,16 +1768,8 @@ impl AgentPanel {
         if self.settings.silent_model == silent && self.settings.subagent_model == sub {
             return;
         }
-        let sub_changed = self.settings.subagent_model != sub;
         self.settings.silent_model = silent;
         self.settings.subagent_model = sub;
-        if sub_changed {
-            if self.turn_running || self.silent.is_some() {
-                self.reconnect_after_turn = true;
-            } else if self.connection.is_some() {
-                self.start(cx);
-            }
-        }
         cx.notify();
     }
 
@@ -1793,7 +1785,7 @@ impl AgentPanel {
     }
 
     /// Default Claude Code subagent model (`CLAUDE_CODE_SUBAGENT_MODEL`).
-    /// Reloads the agent process so the env is picked up (Explore included).
+    /// Takes effect the next time the agent process starts; never restarts the chat.
     pub fn set_subagent_model(&mut self, id: Option<String>, cx: &mut Context<Self>) {
         let next = id.filter(|s| !s.is_empty());
         if self.settings.subagent_model == next {
@@ -1801,11 +1793,6 @@ impl AgentPanel {
         }
         self.settings.subagent_model = next;
         cx.emit(AgentPanelEvent::SettingsChanged);
-        if self.turn_running || self.silent.is_some() {
-            self.reconnect_after_turn = true;
-        } else if self.connection.is_some() {
-            self.start(cx);
-        }
         cx.notify();
     }
 
@@ -3802,7 +3789,8 @@ impl AgentPanel {
             let _ = reply.send(CursorCreatePlanOutcome::rejected("Rejected"));
         }
         self.touched(ix, cx);
-        cx.notify();
+        // Rejecting ends the turn: don't let the agent carry on without a plan.
+        self.stop(cx);
     }
 
     /// Prefer Mode config / legacy modes named `agent`.

@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Release prep v0.2.2 (diff scroll fix, agent subagent-model /
+  reject-plan fixes): version bump, `docs/releases/v0.2.2.md`, status release lines.
+- **2026-10-30** — Agent: changing the subagent model no longer restarts the
+  chat (applies on next agent start); rejecting a Cursor plan now stops the
+  turn instead of letting the agent keep running.
+- **2026-10-30** — Fix diff view snapping back to the top while scrolling: the
+  two panes' scroll sync now only follows the pane under the mouse (else the
+  focused one), so a shorter pane's clamped offset is no longer echoed back.
 - **2026-10-30** — Source Control refreshes on `.git` state changes (HEAD,
   index, refs, merge / rebase markers) so terminal commits, pulls and rebases
   no longer leave a stale "Rebase in progress"; git calls use

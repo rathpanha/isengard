@@ -366,6 +366,23 @@ impl IsengardApp {
         });
     }
 
+    /// Whether `source` (not `peer`) is the pane the user is scrolling:
+    /// the one under the mouse, else the focused one.
+    fn drives_diff_scroll(
+        source: &Entity<EditorState>,
+        peer: &Entity<EditorState>,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        let mouse = window.mouse_position();
+        let over_source = source.read(cx).input_bounds().contains(&mouse);
+        let over_peer = peer.read(cx).input_bounds().contains(&mouse);
+        if over_source || over_peer {
+            return over_source;
+        }
+        source.read(cx).focus_handle(cx).is_focused(window)
+    }
+
     /// Keep Diff/Conflict panes locked to the same scroll offset.
     ///
     /// `set_scroll_offset` is deferred until layout, so we ignore notifies from
@@ -385,6 +402,13 @@ impl IsengardApp {
             let target = target.clone();
             cx.observe_in(source, window, move |_, source, window, cx| {
                 if ignoring.get() == Some(source.entity_id()) {
+                    cx.notify();
+                    return;
+                }
+                // Only the pane the user is driving may push its offset. The
+                // peer clamps to its own (possibly shorter) content and
+                // notifies; echoing that back would snap the scroll to the top.
+                if !Self::drives_diff_scroll(&source, &target, window, cx) {
                     cx.notify();
                     return;
                 }
