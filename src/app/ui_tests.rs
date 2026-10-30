@@ -364,16 +364,17 @@ impl Harness {
 
     fn saved_chats(&self, folder: &Path, cx: &mut TestAppContext) -> (Vec<String>, Option<String>) {
         cx.read(|cx| {
-            let session = self
-                .app
-                .read(cx)
+            let app = self.app.read(cx);
+            let session = app
                 .config
                 .session(&folder.to_string_lossy())
                 .cloned()
                 .unwrap_or_default();
+            let slot = crate::acp::agent_slot_id(&app.config.agent);
+            let state = session.agent_slot(&slot);
             (
-                session.agent_chats.into_iter().map(|c| c.id).collect(),
-                session.agent_active,
+                state.chats.into_iter().map(|c| c.id).collect(),
+                state.active,
             )
         })
     }
@@ -1332,11 +1333,17 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
         });
     });
     let titles: Vec<String> = cx.read(|cx| {
-        h.app
-            .read(cx)
-            .config
+        let app = h.app.read(cx);
+        let slot = crate::acp::agent_slot_id(&app.config.agent);
+        app.config
             .session(&folder.to_string_lossy())
-            .map(|s| s.agent_chats.iter().map(|c| c.title.clone()).collect())
+            .map(|s| {
+                s.agent_slot(&slot)
+                    .chats
+                    .into_iter()
+                    .map(|c| c.title)
+                    .collect()
+            })
             .unwrap_or_default()
     });
     assert_eq!(titles, ["My notes"]);
@@ -1491,10 +1498,11 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     });
     let (saved, global, live) = cx.read(|cx| {
         let app = h.app.read(cx);
+        let slot = crate::acp::agent_slot_id(&app.config.agent);
         (
             app.config
                 .session(&folder.to_string_lossy())
-                .map(|s| s.agent_prefs.clone()),
+                .map(|s| s.agent_slot(&slot).prefs),
             app.config.agent_prefs.clone(),
             app.agent.as_ref().unwrap().read(cx).prefs().clone(),
         )
@@ -1534,13 +1542,7 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn agent_opusplan_switch_hides_model_pickers(cx: &mut TestAppContext) {
-    let agent = FakeAgent::new();
-    crate::acp::testing::install(&agent);
-    let h = Harness::new(cx);
-    let folder = h.folder("opusplan");
-    h.open_folder(&folder, cx);
-    h.press("secondary-shift-b", cx);
-    h.wait_ready(cx);
+    let (h, agent) = opusplan_harness("opusplan", cx);
 
     assert!(cx.read(|cx| {
         h.app
@@ -1733,12 +1735,17 @@ fn panel_get<R>(
     cx.read(|cx| f(h.app.read(cx).agent.as_ref().unwrap().read(cx), cx))
 }
 
-/// Open a ready agent panel on a fresh folder.
+/// Open a ready **Claude** agent panel (FakeAgent). OpusPlan is Claude-only;
+/// default [`Harness::new`] uses a placeholder custom command so tests do not
+/// spawn a real Claude — remember the Claude slot + clear `agent.command`.
 fn opusplan_harness(name: &str, cx: &mut TestAppContext) -> (Harness, FakeAgent) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
-    let h = Harness::new(cx);
+    // Default config: `agent.command` is None (Claude). Do not use
+    // [`Harness::new`]'s placeholder custom binary.
+    let h = Harness::with_config(AppConfig::default(), cx);
     let folder = h.folder(name);
+    remember_workspace_agent(&h, &folder, "claude", cx);
     h.open_folder(&folder, cx);
     h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
@@ -1756,13 +1763,35 @@ fn opusplan_running_harness(
     let agent = FakeAgent::new();
     agent.set_model_id("opusplan");
     crate::acp::testing::install(&agent);
-    let h = Harness::new(cx);
-    h.with_app(cx, |app, _, _| app.config.agent_prefs = prefs);
+    let h = Harness::with_config(
+        AppConfig {
+            agent_prefs: prefs,
+            ..AppConfig::default()
+        },
+        cx,
+    );
     let folder = h.folder(name);
+    remember_workspace_agent(&h, &folder, "claude", cx);
     h.open_folder(&folder, cx);
     h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
     (h, agent)
+}
+
+fn remember_workspace_agent(h: &Harness, folder: &Path, slot: &str, cx: &mut TestAppContext) {
+    let key = folder.to_string_lossy().into_owned();
+    let slot = slot.to_owned();
+    cx.update(|cx| {
+        h.app.update(cx, |app, _| {
+            app.config.put_session(
+                key,
+                crate::config::WorkspaceSession {
+                    agent: Some(slot),
+                    ..Default::default()
+                },
+            );
+        });
+    });
 }
 
 #[gpui_kit::test]
@@ -1997,6 +2026,241 @@ fn agent_opusplan_switch_hidden_when_agent_lacks_alias(cx: &mut TestAppContext) 
     assert!(!panel_get(&h, cx, |p, _| p.opusplan_available()));
     assert!(!h.has("agent-opusplan", cx), "no alias → no Switch");
     assert!(panel_get(&h, cx, |p, _| p.composer_model_pickers_visible()));
+}
+
+#[gpui_kit::test]
+fn cursor_parameterized_config_shows_model_fast_context_effort(cx: &mut TestAppContext) {
+    // Cursor's parameterized picker (after client `_meta.parameterizedModelPicker`)
+    // advertises Model + Fast + Context + Effort as separate configOptions —
+    // same composer chrome Claude already uses.
+    use agent_client_protocol::schema::v1::{
+        ConfigOptionUpdate, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigSelectOption, SessionUpdate,
+    };
+
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("cursor-params");
+    remember_workspace_agent(&h, &folder, "cursor-agent", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    panel_do(&h, cx, |p, cx| {
+        let options = vec![
+            SessionConfigOption::select(
+                "mode",
+                "Mode",
+                "agent",
+                vec![
+                    SessionConfigSelectOption::new("ask", "Ask"),
+                    SessionConfigSelectOption::new("agent", "Agent"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::Mode),
+            SessionConfigOption::select(
+                "model",
+                "Model",
+                "grok-4.7",
+                // Nine+ choices → composer menu uses the fixed 240px scroll
+                // viewport (shorter catalogs stay natural height).
+                vec![
+                    SessionConfigSelectOption::new("grok-4.7", "Grok 4.7"),
+                    SessionConfigSelectOption::new("claude-4.5-sonnet", "Claude 4.5 Sonnet"),
+                    SessionConfigSelectOption::new("claude-4.6-opus", "Claude 4.6 Opus"),
+                    SessionConfigSelectOption::new("gpt-5.4", "GPT-5.4"),
+                    SessionConfigSelectOption::new("composer-2", "Composer 2"),
+                    SessionConfigSelectOption::new("gemini-3", "Gemini 3"),
+                    SessionConfigSelectOption::new("kimi-k2.5", "Kimi K2.5"),
+                    SessionConfigSelectOption::new("auto", "Auto"),
+                    SessionConfigSelectOption::new("deepseek", "DeepSeek"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::Model),
+            SessionConfigOption::select(
+                "fast",
+                "Fast",
+                "true",
+                vec![
+                    SessionConfigSelectOption::new("true", "On"),
+                    SessionConfigSelectOption::new("false", "Off"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::ModelConfig),
+            SessionConfigOption::select(
+                "context",
+                "Context",
+                "256k",
+                vec![
+                    SessionConfigSelectOption::new("256k", "256K"),
+                    SessionConfigSelectOption::new("1m", "1M"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::ModelConfig),
+            SessionConfigOption::select(
+                "effort",
+                "Effort",
+                "high",
+                vec![
+                    SessionConfigSelectOption::new("low", "Low"),
+                    SessionConfigSelectOption::new("high", "High"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::ThoughtLevel),
+        ];
+        p.apply_update_for_test(
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options)),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    assert!(
+        h.has("agent-model-button", cx) || h.has("agent-model-family-button", cx),
+        "Model picker (flat or family)"
+    );
+    let model_trigger = if h.has("agent-model-button", cx) {
+        "agent-model-button"
+    } else {
+        "agent-model-family-button"
+    };
+    h.click(model_trigger, cx);
+    cx.run_until_parked();
+    let list_id = if model_trigger == "agent-model-button" {
+        "agent-model-list"
+    } else {
+        "agent-model-family-list"
+    };
+    let item0 = if model_trigger == "agent-model-button" {
+        "agent-model-item-0"
+    } else {
+        "agent-model-family-item-0"
+    };
+    assert!(
+        h.has(list_id, cx) || h.has(item0, cx),
+        "Model menu opens (scroll list or first item)"
+    );
+    h.click(model_trigger, cx);
+    assert!(h.has("agent-fast-mode", cx), "Fast Switch");
+    assert!(h.has("agent-context-button", cx), "Context picker");
+    assert!(h.has("agent-config-effort-button", cx), "Effort picker");
+    assert!(!h.has("agent-opusplan", cx), "OpusPlan stays Claude-only");
+
+    // Switching Model paints cached Fast/Context immediately (no wait for
+    // Cursor's catalog re-fetch). Seed cache via the current snapshot, then
+    // pick the other model once so its reply would normally clear toggles.
+    panel_do(&h, cx, |p, cx| p.set_config_for_test("model", "claude-4.5-sonnet", cx));
+    assert!(
+        !panel_get(&h, cx, |p, _| p.fast_mode_on().is_some()),
+        "unknown model clears Fast until Cursor replies"
+    );
+    // Simulate Cursor's set_config reply for the new model.
+    panel_do(&h, cx, |p, cx| {
+        use agent_client_protocol::schema::v1::{
+            ConfigOptionUpdate, SessionConfigOption, SessionConfigOptionCategory,
+            SessionConfigSelectOption, SessionUpdate,
+        };
+        let options = vec![
+            SessionConfigOption::select(
+                "model",
+                "Model",
+                "claude-4.5-sonnet",
+                vec![
+                    SessionConfigSelectOption::new("grok-4.7", "Grok 4.7"),
+                    SessionConfigSelectOption::new("claude-4.5-sonnet", "Claude 4.5 Sonnet"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::Model),
+            SessionConfigOption::select(
+                "fast",
+                "Fast",
+                "false",
+                vec![
+                    SessionConfigSelectOption::new("true", "On"),
+                    SessionConfigSelectOption::new("false", "Off"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::ModelConfig),
+            SessionConfigOption::select(
+                "context",
+                "Context",
+                "1m",
+                vec![
+                    SessionConfigSelectOption::new("256k", "256K"),
+                    SessionConfigSelectOption::new("1m", "1M"),
+                ],
+            )
+            .category(SessionConfigOptionCategory::ModelConfig),
+        ];
+        p.apply_update_for_test(
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options)),
+            cx,
+        );
+    });
+    assert_eq!(panel_get(&h, cx, |p, _| p.fast_mode_on()), Some(false));
+    // Switch back — cache should restore Grok's Fast=true without a round trip.
+    panel_do(&h, cx, |p, cx| p.set_config_for_test("model", "grok-4.7", cx));
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.fast_mode_on()),
+        Some(true),
+        "cached Grok Fast/Context paint instantly"
+    );
+    assert!(h.has("agent-context-button", cx));
+
+    // Utility settings mirror Context + Fast.
+    h.click("agent-settings-button", cx);
+    assert!(
+        h.has("agent-settings-utility-context-button", cx),
+        "Utility Context picker"
+    );
+}
+
+#[gpui_kit::test]
+fn cursor_agent_hides_opusplan_and_keeps_model_pickers(cx: &mut TestAppContext) {
+    // Sticky Claude `opusplan` prefs (or a FakeAgent list that still advertises
+    // the alias) must not hide Cursor's composer Model row / show OpusPlan.
+    use crate::config::{AgentPrefValue, AgentPrefs};
+
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let mut prefs = AgentPrefs::default();
+    prefs
+        .config
+        .insert("model".into(), AgentPrefValue::Value("opusplan".into()));
+    let h = Harness::with_config(
+        AppConfig {
+            agent_prefs: prefs,
+            ..AppConfig::default()
+        },
+        cx,
+    );
+    let folder = h.folder("cursor-no-opusplan");
+    remember_workspace_agent(&h, &folder, "cursor-agent", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    assert!(
+        !panel_get(&h, cx, |p, _| p.opusplan_available()),
+        "OpusPlan is Claude-only"
+    );
+    assert!(!panel_get(&h, cx, |p, _| p.opusplan_on()));
+    assert!(
+        !h.has("agent-opusplan", cx),
+        "Cursor composer must not show OpusPlan Switch"
+    );
+    assert!(
+        panel_get(&h, cx, |p, _| p.composer_model_pickers_visible()),
+        "Cursor keeps Model pickers (like Utility)"
+    );
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("set_config model=") && c.contains("opusplan")),
+        "must not pin Claude opusplan onto Cursor"
+    );
 }
 
 #[gpui_kit::test]
@@ -2364,6 +2628,135 @@ fn agent_answers_pending_permission(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn cursor_create_plan_build_switches_to_agent(cx: &mut TestAppContext) {
+    // Cursor Plan mode ends with blocking `cursor/create_plan`. Build it
+    // accepts (nested outcome), switches Mode → Agent, and continues.
+    use agent_client_protocol::schema::v1::{
+        ConfigOptionUpdate, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigSelectOption, SessionUpdate,
+    };
+
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("cursor-plan-build");
+    remember_workspace_agent(&h, &folder, "cursor-agent", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    panel_do(&h, cx, |p, cx| {
+        p.apply_update_for_test(
+            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(vec![
+                SessionConfigOption::select(
+                    "mode",
+                    "Mode",
+                    "plan",
+                    vec![
+                        SessionConfigSelectOption::new("ask", "Ask"),
+                        SessionConfigSelectOption::new("plan", "Plan"),
+                        SessionConfigSelectOption::new("agent", "Agent"),
+                    ],
+                )
+                .category(SessionConfigOptionCategory::Mode),
+            ])),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let reply = cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            // Real Cursor: create_plan blocks mid-turn — Build must queue
+            // continue, not assume the same turn keeps going.
+            panel.set_turn_running_for_test(true);
+            panel.inject_create_plan_for_test(cx)
+        })
+    });
+    assert!(
+        panel_get(&h, cx, |p, _| p.has_pending_create_plan_for_test()),
+        "plan card waits for Build"
+    );
+    assert!(h.has("agent-plan-build-plan-1", cx), "Build it button");
+
+    h.click("agent-plan-build-plan-1", cx);
+    cx.run_until_parked();
+
+    assert!(
+        !panel_get(&h, cx, |p, _| p.has_pending_create_plan_for_test()),
+        "Build clears the pending reply"
+    );
+    assert!(
+        !h.has("agent-plan-build-plan-1", cx),
+        "Build button gone after accept"
+    );
+    let answered = reply.try_recv().expect("create_plan reply");
+    assert_eq!(
+        answered,
+        crate::acp::CursorCreatePlanOutcome::accepted(),
+        "nested accepted outcome for Cursor"
+    );
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.mode_config_current_for_test()),
+        Some("agent".into()),
+        "Mode switches to Agent on Build"
+    );
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.outbound_queue_len()),
+        1,
+        "continue prompt queued until create_plan turn ends"
+    );
+    let previews = panel_get(&h, cx, |p, _| p.outbound_previews());
+    assert_eq!(previews.len(), 1, "one continue queued");
+    assert!(
+        previews[0].starts_with("Plan approved"),
+        "queued continue is the Build handoff, got {:?}",
+        previews[0]
+    );
+    h.wait_for(cx, "set_config mode=agent", |_| {
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config mode=agent")
+    });
+}
+
+#[gpui_kit::test]
+fn cursor_agent_auto_allows_tool_permissions(cx: &mut TestAppContext) {
+    // Cursor ACP Mode ≠ approval policy — every tool still
+    // `request_permission`. Isengard auto-picks Allow (Always > Once)
+    // so Agent/Plan/Ask are not a click-for-every-tool tax.
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("cursor-auto-perm");
+    remember_workspace_agent(&h, &folder, "cursor-agent", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let reply = cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.inject_pending_permission_for_test(cx))
+    });
+    assert!(
+        !panel_get(&h, cx, |p, _| p.has_pending_permission_for_test()),
+        "Cursor should not leave a pending Allow/Reject row"
+    );
+    assert!(
+        !h.has("agent-perm-t-perm-allow", cx),
+        "no Allow button — auto-answered"
+    );
+    let answered = reply.try_recv().expect("auto permission reply");
+    assert_eq!(
+        answered.map(|id| id.to_string()),
+        Some("allow".into()),
+        "auto-selected AllowOnce (no AllowAlways in the fixture)"
+    );
+}
+
+#[gpui_kit::test]
 fn agent_deletes_chat(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
@@ -2396,6 +2789,109 @@ fn agent_deletes_chat(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn agent_picker_shows_claude_and_cursor(cx: &mut TestAppContext) {
+    // No workspace agent yet → Claude | Cursor before Install / connect.
+    let mut config = AppConfig::default();
+    config.agent.command = None;
+    let h = Harness::with_config(config, cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    assert!(h.has("agent-pick-claude", cx), "Claude pick button");
+    assert!(
+        h.has("agent-pick-cursor-agent", cx),
+        "Cursor pick button (slot id cursor-agent)"
+    );
+    assert!(!h.has("agent-switch-button", cx), "no switch during picker");
+}
+
+#[gpui_kit::test]
+fn agent_pick_cursor_remembers_on_workspace_not_config(cx: &mut TestAppContext) {
+    let mut config = AppConfig::default();
+    config.agent.command = None;
+    let h = Harness::with_config(config, cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    assert!(h.has("agent-pick-cursor-agent", cx));
+    h.click("agent-pick-cursor-agent", cx);
+
+    let (global_command, remembered) = cx.read(|cx| {
+        let app = h.app.read(cx);
+        let key = folder.to_string_lossy().into_owned();
+        (
+            app.config.agent.command.clone(),
+            app.config
+                .session(&key)
+                .and_then(|s| s.agent.clone()),
+        )
+    });
+    assert!(
+        global_command.is_none(),
+        "built-in pick must not write config.json agent.command"
+    );
+    assert_eq!(
+        remembered.as_deref(),
+        Some(crate::acp::CURSOR_COMMAND),
+        "pick is stored on the workspace session"
+    );
+    // No app-local Cursor in the test env → Install empty-state.
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.force_not_installed_for_test(cx));
+    });
+    assert!(h.has("agent-install", cx), "Install after Cursor pick");
+    assert!(h.has("agent-switch-button", cx), "switch after pick");
+}
+
+#[gpui_kit::test]
+fn agent_restart_restores_workspace_agent_without_picker(cx: &mut TestAppContext) {
+    // Session already chose Cursor — reopen must not ask again (even with no chats).
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("proj");
+    remember_workspace_agent(&h, &folder, crate::acp::CURSOR_COMMAND, cx);
+    cx.update(|cx| {
+        h.app.update(cx, |app, _| {
+            app.config.save();
+        });
+    });
+    let config = cx.read(|cx| h.app.read(cx).config.clone());
+    let h2 = Harness::with_config(config, cx);
+    h2.open_folder(&folder, cx);
+    h2.press("secondary-shift-b", cx);
+    assert!(
+        !h2.has("agent-pick-claude", cx),
+        "remembered workspace agent skips picker"
+    );
+    assert!(!h2.has("agent-pick-cursor-agent", cx));
+    cx.update(|cx| {
+        let panel = h2.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.force_not_installed_for_test(cx));
+    });
+    assert!(h2.has("agent-install", cx), "Cursor Install after restore");
+    assert!(h2.has("agent-switch-button", cx), "switch available");
+}
+
+#[gpui_kit::test]
+fn agent_header_shows_brand_and_switch_when_ready(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            // Custom Harness command is not a builtin — force Claude branding.
+            panel.set_settings(crate::config::AgentSettings::default(), cx);
+            panel.force_ready_chrome_for_test(cx);
+        });
+    });
+    assert!(h.has("agent-switch-button", cx), "logo+chevron Switch Agent");
+}
+
+#[gpui_kit::test]
 fn agent_install_and_login_screens(cx: &mut TestAppContext) {
     // No FakeAgent: we only assert empty-state chrome, never npm / auth.
     let h = Harness::new(cx);
@@ -2415,6 +2911,50 @@ fn agent_install_and_login_screens(cx: &mut TestAppContext) {
     });
     assert!(h.has("agent-retry", cx), "Retry after login");
     assert!(h.has("agent-login-0", cx), "login method button");
+}
+
+#[gpui_kit::test]
+fn cursor_agent_install_screen_when_configured(cx: &mut TestAppContext) {
+    // Phase 0: `agent.command = "cursor-agent"` still shows Install (downloads
+    // Cursor CLI app-locally). No network — force empty state only.
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.set_settings(
+                crate::config::AgentSettings {
+                    command: Some(crate::acp::CURSOR_COMMAND.into()),
+                    ..Default::default()
+                },
+                cx,
+            );
+            panel.force_not_installed_for_test(cx);
+        });
+    });
+    assert!(h.has("agent-install", cx), "Cursor Install button");
+}
+
+#[gpui_kit::test]
+fn cursor_agent_login_screen_shows_button(cx: &mut TestAppContext) {
+    // Cursor advertises Agent-typed `cursor_login` (not terminal) — must still
+    // show a login button, not only Retry.
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.force_login_required_for_test(cx);
+        });
+    });
+    assert!(h.has("agent-login-0", cx), "login method button");
+    assert!(h.has("agent-retry", cx), "Retry");
 }
 
 #[gpui_kit::test]
@@ -2762,6 +3302,77 @@ fn commit_suggest_runs_in_parallel_across_repos(cx: &mut TestAppContext) {
     assert!(ready_after, "Suggest stays available in other repos");
     assert!(second, "second repo starts while the first is running");
     assert!(!same_again, "the same repo cannot double-start");
+}
+
+#[gpui_kit::test]
+fn git_suggest_menu_lists_generate_and_agents(cx: &mut TestAppContext) {
+    // One PencilSparkles control: Generate (heuristic) + Claude + Cursor.
+    let h = Harness::new(cx);
+    let folder = h.folder("proj");
+    h.open_folder(&folder, cx);
+    // Don't call on_show_git (async refresh would wipe the seeded section).
+    h.with_app(cx, |app, window, cx| {
+        app.sidebar_view = super::SidebarView::Git;
+        app.sidebar_visible = true;
+        let root = folder.clone();
+        app.git.update(cx, |git, cx| {
+            git.seed_suggest_repo_for_test(root, &["src/a.rs"], window, cx);
+        });
+        cx.notify();
+    });
+    cx.run_until_parked();
+    assert!(h.has("git-suggest-0", cx), "single Suggest trigger");
+    assert!(!h.has("git-suggest-ai-0", cx), "no separate AI button");
+    h.click("git-suggest-0", cx);
+    assert!(h.has("git-suggest-generate-0", cx), "Generate in menu");
+    assert!(h.has("git-suggest-ai-claude-0", cx), "Claude in menu");
+    assert!(
+        h.has("git-suggest-ai-cursor-agent-0", cx),
+        "Cursor in menu"
+    );
+    h.click("git-suggest-generate-0", cx);
+    let msg = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .git
+            .read(cx)
+            .commit_message_for_test(&folder, cx)
+    });
+    assert!(
+        !msg.trim().is_empty(),
+        "Generate fills the commit box: {msg:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn git_suggest_ai_runs_for_ready_claude_slot(cx: &mut TestAppContext) {
+    // Built-in Claude slot + FakeAgent: menu → Claude starts a silent job.
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::with_config(AppConfig::default(), cx);
+    let folder = h.folder("proj");
+    remember_workspace_agent(&h, &folder, "claude", cx);
+    h.open_folder(&folder, cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    let news_before = agent.calls().iter().filter(|c| c.starts_with("new ")).count();
+    h.with_app(cx, |app, window, cx| {
+        app.suggest_git_commit_ai(
+            folder.clone(),
+            vec!["a.rs".into()],
+            crate::acp::BuiltinAgent::Claude,
+            window,
+            cx,
+        );
+    });
+    h.wait_for(cx, "commit suggest opened a throwaway session", |_| {
+        agent.calls().iter().filter(|c| c.starts_with("new ")).count() > news_before
+    });
+    assert!(
+        cx.read(|cx| h.app.read(cx).pending_commit_suggest.is_none()),
+        "no queue when Claude is already Ready"
+    );
 }
 
 #[gpui_kit::test]

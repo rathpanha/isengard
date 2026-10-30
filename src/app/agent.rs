@@ -1,7 +1,7 @@
 //! Right Agent panel: show/hide, plus the agent's file and login requests.
 use super::*;
 use super::tab::TabBody;
-use crate::acp::slice_lines;
+use crate::acp::{self, BuiltinAgent, launch_for_workspace, slice_lines, with_builtin};
 use crate::agent::{Attachment, LineRange, line_at_offset};
 use crate::terminal::pty::TerminalCommand;
 
@@ -127,41 +127,108 @@ impl IsengardApp {
         cx.notify();
     }
 
-    /// After a workspace switch: park the old panel (its agent finishes any
-    /// running turn, then stops) and bring up this workspace's panel, reusing
-    /// it — transcript and all — if we were here before.
-    pub(super) fn switch_agent_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let key = self.workspace.session_key();
+    /// Claude ↔ Cursor: remember the choice on this workspace session (not
+    /// global `agent.command`), remount under that slot, Install / connect.
+    pub(super) fn switch_builtin_agent(
+        &mut self,
+        agent: BuiltinAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws_key) = self.workspace.session_key() else {
+            return;
+        };
+        // Persist the outgoing slot's chats before remounting.
+        self.persist_session(cx);
+        self.set_workspace_agent(ws_key.as_str(), agent.slot_id());
+        let next = with_builtin(&self.config.agent, agent);
+        let key = acp::panel_key(&ws_key, &next);
         let current_key = self.agent.as_ref().and_then(|a| self.agent_key(a));
-        if current_key.is_some() && current_key == key {
+        if current_key.as_deref() == Some(key.as_str()) {
+            if let Some(panel) = self.agent.clone() {
+                panel.update(cx, |panel, cx| {
+                    panel.set_settings(next, cx);
+                    panel.begin_after_pick(cx);
+                });
+            }
+            self.persist_session(cx);
+            cx.notify();
             return;
         }
         if let Some(old) = self.agent.take() {
             old.update(cx, |agent, cx| agent.suspend(cx));
         }
-        let Some(key) = key else {
+        self.switch_agent_panel(window, cx);
+        if let Some(panel) = self.agent.clone() {
+            // User already chose — skip picker even when the slot has no chats.
+            panel.update(cx, |panel, cx| panel.begin_after_pick(cx));
+        }
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    /// Write `sessions.<key>.agent` (Claude / Cursor / custom slot id).
+    fn set_workspace_agent(&mut self, ws_key: &str, slot: &str) {
+        let mut session = self.config.session(ws_key).cloned().unwrap_or_default();
+        session.agent = Some(slot.to_owned());
+        self.config.put_session(ws_key.to_owned(), session);
+        self.config.save();
+    }
+
+    /// After a workspace switch: park the old panel (its agent finishes any
+    /// running turn, then stops) and bring up this workspace's panel, reusing
+    /// it — transcript and all — if we were here before.
+    pub(super) fn switch_agent_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ws_key) = self.workspace.session_key() else {
+            if let Some(old) = self.agent.take() {
+                old.update(cx, |agent, cx| agent.suspend(cx));
+            }
             return;
         };
+        let remembered = self
+            .config
+            .session(&ws_key)
+            .and_then(|s| s.remembered_agent());
+        let (settings, awaiting_pick) =
+            launch_for_workspace(&self.config.agent, remembered.as_deref());
+        let key = acp::panel_key(&ws_key, &settings);
+        let current_key = self.agent.as_ref().and_then(|a| self.agent_key(a));
+        if current_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        if let Some(old) = self.agent.take() {
+            old.update(cx, |agent, cx| agent.suspend(cx));
+        }
         if let Some((panel, _)) = self.agents.get(&key) {
             self.agent = Some(panel.clone());
             self.sync_git_agent_ready(cx);
             return;
         }
         let roots = self.workspace.folders().to_vec();
-        let settings = self.config.agent.clone();
-        let (chats, active, prefs) = self
+        let slot = acp::agent_slot_id(&settings);
+        let saved = self
             .config
-            .session(&key)
-            .map(|s| (s.agent_chats.clone(), s.agent_active.clone(), s.agent_prefs.clone()))
+            .session(&ws_key)
+            .map(|s| s.agent_slot(&slot))
             .unwrap_or_default();
         // A folder with no picks yet starts from the last ones used anywhere.
-        let prefs = if prefs.is_empty() {
+        let prefs = if saved.prefs.is_empty() {
             self.config.agent_prefs.clone()
         } else {
-            prefs
+            saved.prefs
         };
-        let panel =
-            cx.new(|cx| AgentPanel::new(roots, settings, chats, active, prefs, window, cx));
+        let panel = cx.new(|cx| {
+            AgentPanel::new(
+                roots,
+                settings,
+                saved.chats,
+                saved.active,
+                prefs,
+                awaiting_pick,
+                window,
+                cx,
+            )
+        });
         let subscription =
             cx.subscribe_in(&panel, window, |this, panel, event: &AgentPanelEvent, window, cx| {
                 this.handle_agent_event(panel, event, window, cx);
@@ -251,15 +318,24 @@ impl IsengardApp {
                 }
             }
             AgentPanelEvent::SettingsChanged => {
-                let settings = panel.read(cx).settings().clone();
-                self.config.agent = settings.clone();
+                let settings = panel.read(cx).settings();
+                // Silent / subagent only — never persist launch `command` from
+                // the panel (Claude/Cursor choice lives on the workspace session).
+                self.config.agent.silent_model = settings.silent_model.clone();
+                self.config.agent.subagent_model = settings.subagent_model.clone();
                 self.config.save();
-                // Keep cached panels on the same global silent_model / launch.
+                let silent = settings.silent_model.clone();
+                let sub = settings.subagent_model.clone();
                 for (other, _) in self.agents.values() {
                     if other != panel {
-                        other.update(cx, |a, cx| a.set_settings(settings.clone(), cx));
+                        other.update(cx, |a, cx| {
+                            a.set_shared_agent_models(silent.clone(), sub.clone(), cx);
+                        });
                     }
                 }
+            }
+            AgentPanelEvent::SwitchAgent(agent) if is_current => {
+                self.switch_builtin_agent(*agent, window, cx);
             }
             AgentPanelEvent::PermissionRequested if !is_current => {
                 let name = self
@@ -290,15 +366,23 @@ impl IsengardApp {
     /// A background panel's chat index changed: update just those fields of
     /// its saved session (the rest belongs to that workspace's last visit).
     fn persist_background_chats(&mut self, panel: &Entity<AgentPanel>, cx: &App) {
-        let Some(key) = self.agent_key(panel) else {
+        let Some(panel_key) = self.agent_key(panel) else {
             return;
         };
-        let mut session = self.config.session(&key).cloned().unwrap_or_default();
+        let Some((ws_key, slot)) = acp::split_panel_key(&panel_key) else {
+            return;
+        };
+        let mut session = self.config.session(ws_key).cloned().unwrap_or_default();
         let agent = panel.read(cx);
-        session.agent_chats = agent.chats().to_vec();
-        session.agent_active = agent.active_chat().map(str::to_owned);
-        session.agent_prefs = agent.prefs().clone();
-        self.config.put_session(key, session);
+        session.set_agent_slot(
+            slot,
+            crate::config::AgentSlotSession {
+                chats: agent.chats().to_vec(),
+                active: agent.active_chat().map(str::to_owned),
+                prefs: agent.prefs().clone(),
+            },
+        );
+        self.config.put_session(ws_key.to_owned(), session);
         self.config.save();
     }
 

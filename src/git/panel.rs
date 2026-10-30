@@ -5,16 +5,18 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     h_flex,
     input::{InputEvent, Textarea, TextareaState},
     list::ListItem,
+    popover::{Popover, PopoverState},
     v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
+use crate::acp::BuiltinAgent;
 use crate::file_tree::{material_icon, tree_icon};
 
 use crate::config::GitRepoSession;
@@ -96,10 +98,11 @@ pub enum GitPanelEvent {
     },
     /// Ask the app to confirm discarding every change in a repo.
     ConfirmDiscardAll { repo: PathBuf, count: usize },
-    /// AI Suggest for selected paths (Ready ACP agent on a throwaway session).
+    /// AI Suggest for selected paths via Claude or Cursor (throwaway session).
     SuggestCommitAi {
         root: PathBuf,
         paths: Vec<String>,
+        agent: BuiltinAgent,
     },
     /// Worktree paths the user discarded — agent **N Files** cards should drop them.
     DiscardedPaths { paths: Vec<PathBuf> },
@@ -140,8 +143,6 @@ pub struct GitPanel {
     collapsed: HashSet<PathBuf>,
     /// Absolute worktree path of the open diff/conflict tab (row highlight).
     active_path: Option<PathBuf>,
-    /// Agent panel can run a silent Suggest turn (`can_suggest_commit`).
-    agent_ready: bool,
     /// Commit-box bottom-edge drag (pixel floor past the auto cap).
     msg_resize: Option<MsgResize>,
     /// Applied on the next [`Self::apply_statuses`] (async load after restore).
@@ -159,7 +160,6 @@ impl GitPanel {
             expanded: HashMap::new(),
             collapsed: HashSet::new(),
             active_path: None,
-            agent_ready: false,
             msg_resize: None,
             pending_session_ui: None,
             _message_subs: Vec::new(),
@@ -260,14 +260,6 @@ impl GitPanel {
     }
 
     /// Enable/disable the Claude Suggest icon (synced from the Agent panel).
-    pub fn set_agent_ready(&mut self, ready: bool, cx: &mut Context<Self>) {
-        if self.agent_ready == ready {
-            return;
-        }
-        self.agent_ready = ready;
-        cx.notify();
-    }
-
     /// Highlight the change row for the active diff/conflict tab (or clear).
     pub fn set_active_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
         if self.active_path == path {
@@ -464,6 +456,53 @@ impl GitPanel {
         self.collapsed.contains(root)
     }
 
+    /// Seed one repo section with selected changes (Suggest menu UI tests).
+    #[cfg(test)]
+    pub fn seed_suggest_repo_for_test(
+        &mut self,
+        root: PathBuf,
+        rel_paths: &[&str],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let changes: Vec<GitChange> = rel_paths
+            .iter()
+            .map(|rel| GitChange {
+                path: root.join(rel),
+                rel_path: (*rel).to_owned(),
+                old_rel_path: None,
+                status: 'M',
+            })
+            .collect();
+        let selected: HashSet<String> = rel_paths.iter().map(|r| (*r).to_owned()).collect();
+        let status = RepoStatus {
+            root: root.clone(),
+            branch: "main".into(),
+            changes,
+            ahead: 0,
+            behind: 0,
+            op: None,
+            error: None,
+        };
+        let mut labels = HashMap::new();
+        labels.insert(root.clone(), "proj".into());
+        self.apply_statuses(vec![status], labels, window, cx);
+        if let Some(section) = self.section_mut(&root) {
+            section.selected = selected;
+        }
+        cx.notify();
+    }
+
+    /// Commit-box draft for a repo (Suggest UI tests).
+    #[cfg(test)]
+    pub fn commit_message_for_test(&self, root: &Path, cx: &App) -> String {
+        self.sections
+            .iter()
+            .find(|s| s.status.root == root)
+            .map(|s| s.message.read(cx).value().to_string())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn toggle_repo(&mut self, root: &Path, cx: &mut Context<Self>) {
         if !self.collapsed.remove(root) {
             self.collapsed.insert(root.to_path_buf());
@@ -507,12 +546,12 @@ impl GitPanel {
         self.apply_heuristic_suggest(root, window, cx);
     }
 
-    /// Ask the app to AI-Suggest (Ready agent only — no heuristic fallback).
-    fn suggest_ai(&mut self, root: &Path, cx: &mut Context<Self>) {
+    /// Ask the app to AI-Suggest with Claude or Cursor (no heuristic fallback).
+    fn suggest_ai(&mut self, root: &Path, agent: BuiltinAgent, cx: &mut Context<Self>) {
         let Some(section) = self.sections.iter().find(|s| s.status.root == root) else {
             return;
         };
-        if section.busy.is_some() || !self.agent_ready {
+        if section.busy.is_some() {
             return;
         }
         let Some(paths) = self.selected_paths(root) else {
@@ -522,6 +561,7 @@ impl GitPanel {
         cx.emit(GitPanelEvent::SuggestCommitAi {
             root: root.to_path_buf(),
             paths,
+            agent,
         });
     }
 
@@ -931,7 +971,6 @@ impl Render for GitPanel {
         } else {
             let mut painted = 0usize;
             let section_count = self.sections.len();
-            let agent_ready = self.agent_ready;
             'sections: for (si, section) in self.sections.iter().enumerate() {
                 let root = section.status.root.clone();
                 let busy_op = section.busy.clone();
@@ -1176,76 +1215,172 @@ impl Render for GitPanel {
                                         h_flex()
                                             .gap_1()
                                             .child({
-                                                let heur_disabled =
-                                                    busy || nothing_selected || lock_suggest;
-                                                let mut btn = Button::new(format!("git-suggest-{si}"))
-                                                    .outline()
-                                                    .small()
-                                                    .icon(LucideIcon::WandSparkles)
-                                                    .tooltip(if nothing_selected || lock_suggest {
-                                                        "Select files to Suggest a commit message"
-                                                    } else if busy {
-                                                        "Wait for the current Git action to finish"
-                                                    } else {
-                                                        "Suggest commit message"
-                                                    })
-                                                    .disabled(heur_disabled);
-                                                if !heur_disabled {
-                                                    let root = root.clone();
-                                                    btn = btn.cursor_pointer().on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            this.suggest_heuristic(&root, window, cx);
-                                                        },
-                                                    ));
-                                                }
-                                                btn
-                                            })
-                                            .child({
                                                 let suggesting = busy_op == Some(BusyOp::Suggest);
-                                                let ai_disabled = busy
-                                                    || nothing_selected
-                                                    || lock_suggest
-                                                    || !agent_ready;
-                                                // Don't use outline_btn — it always sets
-                                                // cursor_pointer even when disabled.
-                                                let mut btn = Button::new(format!("git-suggest-ai-{si}"))
-                                                    .outline()
-                                                    .small()
-                                                    .tooltip(if agent_ready {
-                                                        if nothing_selected || lock_suggest {
-                                                            "Select files to Suggest with Claude"
-                                                        } else if busy {
-                                                            "Wait for the current Git action to finish"
-                                                        } else {
-                                                            "Suggest with Claude"
-                                                        }
-                                                    } else {
-                                                        "Open the Agent panel and wait until Ready"
-                                                    })
-                                                    .disabled(ai_disabled)
-                                                    .when(suggesting, |b| {
-                                                        b.icon(LucideIcon::Loader).loading(true)
-                                                    })
-                                                    .when(!suggesting, |b| {
-                                                        // Material SVG ignores Kit disabled `fg`;
-                                                        // match outline disabled (~muted @ 0.5).
-                                                        b.child(
-                                                            div()
-                                                                .flex()
-                                                                .items_center()
-                                                                .when(ai_disabled, |d| d.opacity(0.5))
-                                                                .child(material_icon("claude", 14.)),
-                                                        )
-                                                    });
-                                                if !ai_disabled {
+                                                let suggest_disabled =
+                                                    busy || nothing_selected || lock_suggest;
+                                                let tip = if nothing_selected || lock_suggest {
+                                                    "Select files to Suggest a commit message"
+                                                } else if busy {
+                                                    "Wait for the current Git action to finish"
+                                                } else {
+                                                    "Suggest commit message"
+                                                };
+                                                if suggesting {
+                                                    Button::new(format!("git-suggest-{si}"))
+                                                        .outline()
+                                                        .small()
+                                                        .icon(LucideIcon::Loader)
+                                                        .loading(true)
+                                                        .tooltip(tip)
+                                                        .disabled(true)
+                                                        .into_any_element()
+                                                } else {
                                                     let root = root.clone();
-                                                    btn = btn.cursor_pointer().on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.suggest_ai(&root, cx);
-                                                        },
-                                                    ));
+                                                    let git = cx.entity().downgrade();
+                                                    Popover::new(format!("git-suggest-menu-{si}"))
+                                                        .anchor(Anchor::TopLeft)
+                                                        .trigger(
+                                                            Button::new(format!("git-suggest-{si}"))
+                                                                .outline()
+                                                                .small()
+                                                                .icon(LucideIcon::PencilSparkles)
+                                                                .tooltip(tip)
+                                                                .disabled(suggest_disabled)
+                                                                .when(!suggest_disabled, |b| {
+                                                                    b.cursor_pointer()
+                                                                }),
+                                                        )
+                                                        .content(move |_state: &mut PopoverState, _, cx| {
+                                                            let popover = cx.weak_entity();
+                                                            let dismiss = |popover: WeakEntity<
+                                                                PopoverState,
+                                                            >,
+                                                                           window: &mut Window,
+                                                                           cx: &mut App| {
+                                                                if let Some(p) = popover.upgrade() {
+                                                                    p.update(cx, |p, cx| {
+                                                                        p.dismiss(window, cx);
+                                                                    });
+                                                                }
+                                                            };
+                                                            v_flex()
+                                                                .w(px(148.))
+                                                                .child({
+                                                                    let (root, git, popover) = (
+                                                                        root.clone(),
+                                                                        git.clone(),
+                                                                        popover.clone(),
+                                                                    );
+                                                                    ListItem::new(SharedString::from(
+                                                                        format!(
+                                                                            "git-suggest-generate-{si}"
+                                                                        ),
+                                                                    ))
+                                                                    .cursor_pointer()
+                                                                    .on_click(move |_, window, cx| {
+                                                                        dismiss(
+                                                                            popover.clone(),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                        _ = git.update(
+                                                                            cx,
+                                                                            |this, cx| {
+                                                                                this.suggest_heuristic(
+                                                                                    &root, window, cx,
+                                                                                );
+                                                                            },
+                                                                        );
+                                                                    })
+                                                                    .child(
+                                                                        h_flex()
+                                                                            .w_full()
+                                                                            .gap_1p5()
+                                                                            .items_center()
+                                                                            .child(
+                                                                                Icon::new(
+                                                                                    LucideIcon::WandSparkles,
+                                                                                )
+                                                                                .small(),
+                                                                            )
+                                                                            .child(
+                                                                                div()
+                                                                                    .flex_1()
+                                                                                    .min_w_0()
+                                                                                    .text_sm()
+                                                                                    .child("Generate"),
+                                                                            ),
+                                                                    )
+                                                                })
+                                                                .children(
+                                                                    [
+                                                                        BuiltinAgent::Claude,
+                                                                        BuiltinAgent::Cursor,
+                                                                    ]
+                                                                    .into_iter()
+                                                                    .map(|agent| {
+                                                                        let (
+                                                                            root,
+                                                                            git,
+                                                                            popover,
+                                                                        ) = (
+                                                                            root.clone(),
+                                                                            git.clone(),
+                                                                            popover.clone(),
+                                                                        );
+                                                                        ListItem::new(
+                                                                            SharedString::from(
+                                                                                format!(
+                                                                                    "git-suggest-ai-{}-{si}",
+                                                                                    agent.slot_id()
+                                                                                ),
+                                                                            ),
+                                                                        )
+                                                                        .cursor_pointer()
+                                                                        .on_click(
+                                                                            move |_, window, cx| {
+                                                                                dismiss(
+                                                                                    popover.clone(),
+                                                                                    window,
+                                                                                    cx,
+                                                                                );
+                                                                                _ = git.update(
+                                                                                    cx,
+                                                                                    |this, cx| {
+                                                                                        this.suggest_ai(
+                                                                                            &root,
+                                                                                            agent,
+                                                                                            cx,
+                                                                                        );
+                                                                                    },
+                                                                                );
+                                                                            },
+                                                                        )
+                                                                        .child(
+                                                                            h_flex()
+                                                                                .w_full()
+                                                                                .gap_1p5()
+                                                                                .items_center()
+                                                                                .child(material_icon(
+                                                                                    agent.icon_stem(),
+                                                                                    14.,
+                                                                                ))
+                                                                                .child(
+                                                                                    div()
+                                                                                        .flex_1()
+                                                                                        .min_w_0()
+                                                                                        .text_sm()
+                                                                                        .child(
+                                                                                            agent
+                                                                                                .display_name(),
+                                                                                        ),
+                                                                                ),
+                                                                        )
+                                                                    }),
+                                                                )
+                                                        })
+                                                        .into_any_element()
                                                 }
-                                                btn
                                             })
                                             .child(
                                                 with_loading(

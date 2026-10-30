@@ -47,8 +47,10 @@ use crate::acp::schema::{
 #[cfg(test)]
 use crate::acp::schema::ToolCallUpdateFields;
 use crate::acp::{
-    self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, CLAUDE_AGENT_NAME, FileRead,
-    FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen, SilentConfigValue,
+    self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, BuiltinAgent, CLAUDE_AGENT_NAME,
+    CURSOR_AGENT_NAME, CURSOR_COMMAND, CreatePlanAsk, CursorCreatePlanOutcome,
+    CursorPlanTodoStatus, FileRead, FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
+    SilentConfigValue, builtin_agent,
 };
 use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
 use crate::agent::slash::{self, SlashQuery, MAX_SLASH_HITS};
@@ -58,7 +60,7 @@ use crate::agent::prompt::{
 };
 use crate::agent::limits;
 use crate::editor::document;
-use crate::file_tree::tree_icon;
+use crate::file_tree::{material_icon, tree_icon};
 use crate::config::{
     AgentChat, AgentFileChange, AgentFileChangesCard, AgentPrefValue, AgentPrefs, AgentSettings,
     MAX_AGENT_CHATS,
@@ -102,12 +104,16 @@ pub enum AgentPanelEvent {
     CommitSuggestFailed { root: PathBuf },
     /// [`AgentPanel::can_silent_prompt`] may have flipped (Source Control Claude Suggest).
     PromptabilityChanged,
+    /// User picked Claude or Cursor — remount the panel under that slot.
+    SwitchAgent(BuiltinAgent),
 }
 
 #[derive(Clone)]
 enum Status {
     /// Not connected yet (or no folder open).
     Idle,
+    /// Built-in agents, no chats yet — user picks Claude or Cursor.
+    PickAgent,
     NotInstalled,
     Installing,
     Starting,
@@ -220,12 +226,24 @@ enum Entry {
     /// Nested Agent / Explore / Task child — progress while the main turn waits.
     Subagent(SubagentEntry),
     Plan(Vec<PlanEntry>),
+    /// Cursor `cursor/create_plan` — markdown plan + Build it / Reject.
+    CursorPlan(CursorPlanEntry),
     /// Collapsible end-of-turn summary of files the agent wrote/deleted.
     FileChanges {
         files: Vec<FileChangeRow>,
         expanded: bool,
     },
     Notice { text: SharedString, error: bool },
+}
+
+struct CursorPlanEntry {
+    tool_call_id: String,
+    name: Option<SharedString>,
+    overview: Option<SharedString>,
+    plan: Entity<TextViewState>,
+    todos: Vec<(SharedString, CursorPlanTodoStatus)>,
+    /// `None` after Build / Reject / cancel.
+    reply: Option<flume::Sender<CursorCreatePlanOutcome>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -449,6 +467,8 @@ pub struct AgentPanel {
     info: Option<AgentInfo>,
     launch: Option<AgentLaunch>,
     connection: Option<AgentConnection>,
+    /// ACP `authenticate` ids to run on the next connect (after CLI login).
+    pending_auth_ids: Vec<String>,
     /// Bumped per connection so events from a dropped one are ignored.
     generation: u64,
     turn_running: bool,
@@ -511,6 +531,10 @@ pub struct AgentPanel {
     modes: Option<SessionModeState>,
     /// ACP session config options (model selector, …).
     config_options: Option<Vec<SessionConfigOption>>,
+    /// Cursor parameterized picker: Fast/Context/Effort per model id, so
+    /// switching Model can paint instantly while `set_config_option` (which
+    /// re-fetches the model catalog) is still in flight.
+    model_param_cache: HashMap<String, Vec<SessionConfigOption>>,
     /// Last composer choices, re-applied whenever a chat opens.
     prefs: AgentPrefs,
     /// Live context-window usage for the open session (`usage_update`).
@@ -817,12 +841,13 @@ impl AgentPanel {
         chats: Vec<AgentChat>,
         active: Option<String>,
         prefs: AgentPrefs,
+        awaiting_pick: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         // Plan limits come from Claude's own login; skip for custom agents
         // and in tests (no network).
-        let polls_limits = !cfg!(test) && settings.command.is_none();
+        let polls_limits = !cfg!(test) && settings.command.is_none() && !awaiting_pick;
         // Last good numbers survive a restart, so a rate-limited endpoint
         // does not blank the strip (dimmed until a fetch succeeds).
         let saved_limits = if polls_limits {
@@ -963,10 +988,15 @@ impl AgentPanel {
             settings,
             roots,
             reconnect_after_turn: false,
-            status: Status::Idle,
+            status: if awaiting_pick {
+                Status::PickAgent
+            } else {
+                Status::Idle
+            },
             info: None,
             launch: None,
             connection: None,
+            pending_auth_ids: Vec::new(),
             generation: 0,
             turn_running: false,
             nested_menu_open: Rc::new(Cell::new(false)),
@@ -998,6 +1028,7 @@ impl AgentPanel {
             next_silent_job: 0,
             modes: None,
             config_options: None,
+            model_param_cache: HashMap::new(),
             prefs,
             usage: None,
             usage_by_chat: HashMap::new(),
@@ -1114,22 +1145,40 @@ impl AgentPanel {
         find_fast_option(&self.config_options).map(fast_is_on)
     }
 
-    /// Whether the OpusPlan Switch is available (agent advertises the alias).
+    /// Built-in Claude ACP adapter (OpusPlan / plan-limits / Claude meta).
+    ///
+    /// FakeAgent tests never set `launch` — rely on workspace settings
+    /// (`command: None` / slot `claude`). Cursor is never Claude.
+    fn is_claude_agent(&self) -> bool {
+        match builtin_agent(&self.settings) {
+            Some(BuiltinAgent::Claude) => true,
+            Some(_) => false,
+            None => self.launch.as_ref().is_some_and(|l| l.claude),
+        }
+    }
+
+    /// Built-in Cursor Agent — Mode ≠ approval; ACP always asks, so we
+    /// auto-allow (and launch with `--force`).
+    fn is_cursor_agent(&self) -> bool {
+        matches!(builtin_agent(&self.settings), Some(BuiltinAgent::Cursor))
+    }
+
+    /// Whether the OpusPlan Switch is available (Claude + agent advertises the alias).
     #[cfg(test)]
     pub fn opusplan_available(&self) -> bool {
-        find_opusplan_choice(&self.config_options).is_some()
+        self.is_claude_agent() && find_opusplan_choice(&self.config_options).is_some()
     }
 
     /// Whether OpusPlan is on — sticky prefs, not only live Model current (tests).
     #[cfg(test)]
     pub fn opusplan_on(&self) -> bool {
-        opusplan_is_on(&self.prefs, &self.config_options)
+        self.is_claude_agent() && opusplan_is_on(&self.prefs, &self.config_options)
     }
 
     /// Whether Model / Version / Context pickers should render (tests).
     #[cfg(test)]
     pub fn composer_model_pickers_visible(&self) -> bool {
-        !opusplan_is_on(&self.prefs, &self.config_options)
+        self.composer_shows_model_pickers()
             && (model_family_split(&self.config_options).is_some()
                 || find_select(
                     &self.config_options,
@@ -1137,6 +1186,11 @@ impl AgentPanel {
                     "model",
                 )
                 .is_some())
+    }
+
+    /// Composer Model row: hidden only while Claude OpusPlan Switch is on.
+    fn composer_shows_model_pickers(&self) -> bool {
+        !(self.is_claude_agent() && opusplan_is_on(&self.prefs, &self.config_options))
     }
 
     /// Family labels offered by the Model picker (tests) — excludes OpusPlan.
@@ -1688,6 +1742,32 @@ impl AgentPanel {
             return;
         }
         self.settings = settings;
+        self.agent_name = default_name(&self.settings);
+        cx.notify();
+    }
+
+    /// Sync global silent / subagent model without changing which agent this panel launches.
+    pub fn set_shared_agent_models(
+        &mut self,
+        silent_model: Option<String>,
+        subagent_model: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let silent = silent_model.filter(|s| !s.is_empty());
+        let sub = subagent_model.filter(|s| !s.is_empty());
+        if self.settings.silent_model == silent && self.settings.subagent_model == sub {
+            return;
+        }
+        let sub_changed = self.settings.subagent_model != sub;
+        self.settings.silent_model = silent;
+        self.settings.subagent_model = sub;
+        if sub_changed {
+            if self.turn_running || self.silent.is_some() {
+                self.reconnect_after_turn = true;
+            } else if self.connection.is_some() {
+                self.start(cx);
+            }
+        }
         cx.notify();
     }
 
@@ -1802,6 +1882,29 @@ impl AgentPanel {
             &family,
             Some(&version),
             prefer_ctx.as_deref(),
+        );
+        self.set_silent_model(id, cx);
+    }
+
+    /// Pick a utility-model context within the current silent family+version.
+    fn set_silent_model_context(&mut self, context: String, cx: &mut Context<Self>) {
+        let Some(split) = model_family_split(&self.config_options) else {
+            return;
+        };
+        let current = self
+            .settings
+            .silent_model
+            .as_ref()
+            .and_then(|id| split.choices.iter().find(|c| &c.id == id));
+        let family = current
+            .map(|c| c.family.clone())
+            .unwrap_or_else(|| split.family.clone());
+        let version = current.and_then(|c| c.version.clone());
+        let id = pick_silent_model_id(
+            &split.choices,
+            &family,
+            version.as_deref(),
+            Some(context.as_str()),
         );
         self.set_silent_model(id, cx);
     }
@@ -2106,6 +2209,44 @@ impl AgentPanel {
         rx
     }
 
+    /// Seed a Cursor `create_plan` card awaiting Build / Reject (tests).
+    #[cfg(test)]
+    pub fn inject_create_plan_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> flume::Receiver<CursorCreatePlanOutcome> {
+        let (tx, rx) = flume::bounded(1);
+        self.push_create_plan(
+            CreatePlanAsk {
+                tool_call_id: "plan-1".into(),
+                name: Some("Refactor tabs".into()),
+                overview: Some("Tighten layout".into()),
+                plan: "1. Inspect sizing.\n2. Update calculations.".into(),
+                todos: Vec::new(),
+                reply: tx,
+            },
+            cx,
+        );
+        rx
+    }
+
+    /// True when the create_plan card for `plan-1` still awaits Build (tests).
+    #[cfg(test)]
+    pub fn has_pending_create_plan_for_test(&self) -> bool {
+        self.entries.iter().any(|e| {
+            matches!(
+                e,
+                Entry::CursorPlan(p) if p.tool_call_id == "plan-1" && p.reply.is_some()
+            )
+        })
+    }
+
+    /// Pretend a user turn is open (tests — create_plan is mid-turn when Build fires).
+    #[cfg(test)]
+    pub fn set_turn_running_for_test(&mut self, running: bool) {
+        self.turn_running = running;
+    }
+
     /// Answer the pending permission on tool `t-perm` (tests).
     #[cfg(test)]
     pub fn answer_permission_for_test(&mut self, option_id: &str, cx: &mut Context<Self>) {
@@ -2144,6 +2285,13 @@ impl AgentPanel {
         cx.notify();
     }
 
+    /// Force Ready chrome without a live agent (tests — header logo / switch).
+    #[cfg(test)]
+    pub fn force_ready_chrome_for_test(&mut self, cx: &mut Context<Self>) {
+        self.status = Status::Ready;
+        cx.notify();
+    }
+
     /// Force the Login empty-state (tests; does not open a terminal).
     #[cfg(test)]
     pub fn force_login_required_for_test(&mut self, cx: &mut Context<Self>) {
@@ -2152,6 +2300,8 @@ impl AgentPanel {
             description: Some("Sign in with Claude.ai".into()),
             args: vec!["--cli".into(), "auth".into(), "login".into()],
             env: std::collections::HashMap::new(),
+            replace_args: false,
+            method_id: None,
         }]);
         cx.notify();
     }
@@ -2574,6 +2724,19 @@ impl AgentPanel {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.status, Status::PickAgent) {
+            return;
+        }
+        self.start_resolved(cx);
+    }
+
+    /// True while the Claude / Cursor picker is showing (no agent chosen yet).
+    pub fn is_awaiting_pick(&self) -> bool {
+        matches!(self.status, Status::PickAgent)
+    }
+
+    /// Resolve / Install / spawn (skips the Claude vs Cursor picker).
+    fn start_resolved(&mut self, cx: &mut Context<Self>) {
         self.disconnect(cx);
         if self.roots.is_empty() {
             self.status = Status::Idle;
@@ -2588,15 +2751,43 @@ impl AgentPanel {
         }
         let launch = match acp::resolve(&self.settings) {
             Resolved::Launch(launch) => launch,
-            Resolved::ClaudeNotInstalled => {
+            Resolved::ClaudeNotInstalled | Resolved::CursorNotInstalled => {
                 self.status = Status::NotInstalled;
                 cx.notify();
                 return;
             }
         };
-        let connection = AgentConnection::spawn(&launch, roots);
+        let auth_ids = std::mem::take(&mut self.pending_auth_ids);
+        let connection = if auth_ids.is_empty() {
+            AgentConnection::spawn(&launch, roots)
+        } else {
+            AgentConnection::spawn_auth(&launch, roots, auth_ids)
+        };
         self.launch = Some(launch);
         self.attach(connection, cx);
+    }
+
+    /// First-open picker or header switch — app persists the workspace agent
+    /// and remounts / connects under that slot.
+    fn request_switch_agent(&mut self, agent: BuiltinAgent, cx: &mut Context<Self>) {
+        if self.turn_running {
+            return;
+        }
+        if builtin_agent(&self.settings) == Some(agent) && !matches!(self.status, Status::PickAgent)
+        {
+            return;
+        }
+        cx.emit(AgentPanelEvent::SwitchAgent(agent));
+    }
+
+    /// After the app remounted this panel for a picker / switch: Install or connect.
+    /// Skips the empty-chat picker (the user already chose).
+    pub fn begin_after_pick(&mut self, cx: &mut Context<Self>) {
+        self.suspend_after_turn = false;
+        match acp::resolve(&self.settings) {
+            Resolved::ClaudeNotInstalled | Resolved::CursorNotInstalled => self.install(cx),
+            Resolved::Launch(_) => self.start_resolved(cx),
+        }
     }
 
     /// Pump `connection`'s events into this panel (tests attach fakes here).
@@ -2903,7 +3094,9 @@ impl AgentPanel {
         self.remember_pref(None, Some(mode_id), cx);
         // Mode changes interact with Claude's `settings.json` model (often
         // `opusplan`) — keep the session aligned with our OpusPlan Switch.
-        self.sync_model_after_mode_change(cx);
+        if self.is_claude_agent() {
+            self.sync_model_after_mode_change(cx);
+        }
         cx.notify();
     }
 
@@ -2933,6 +3126,8 @@ impl AgentPanel {
         let Some(connection) = &self.connection else {
             return;
         };
+        // Capture before borrowing `config_options` mutably.
+        let claude = self.is_claude_agent();
         if let Some(options) = &mut self.config_options {
             let mut order: Vec<usize> = (0..options.len()).collect();
             order.sort_by_key(|&i| options[i].category != Some(SessionConfigOptionCategory::Model));
@@ -2950,6 +3145,11 @@ impl AgentPanel {
                         }
                     }
                     (SessionConfigKind::Select(_), AgentPrefValue::Value(value)) => {
+                        // Claude OpusPlan prefs must not pin Cursor / other agents
+                        // to a model id they don't own (or hide their Model row).
+                        if !claude && is_opusplan_model_id(value) {
+                            continue;
+                        }
                         let valid = select_from_option(opt).is_some_and(|s| {
                             s.current != *value && s.choices.iter().any(|(v, _)| v == value)
                         });
@@ -2987,12 +3187,30 @@ impl AgentPanel {
                     && o.category == Some(SessionConfigOptionCategory::Mode)
             })
         });
+        let is_model = self.config_options.as_ref().is_some_and(|opts| {
+            opts.iter().any(|o| {
+                o.id.0.as_ref() == config_id
+                    && (o.category == Some(SessionConfigOptionCategory::Model)
+                        || o.id.0.as_ref() == "model")
+            })
+        });
         // Optimistic label update; agent reply / ConfigOptionUpdate is source of truth.
         if let Some(options) = &mut self.config_options
             && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == config_id)
             && let SessionConfigKind::Select(select) = &mut opt.kind
         {
             select.current_value = value.clone().into();
+        }
+        // Cursor re-fetches its model catalog on every model set_config — paint
+        // cached Fast/Context/Effort for this model immediately when we have them;
+        // otherwise drop stale params so the UI does not show the previous
+        // model's toggles until the reply arrives.
+        if is_model {
+            if self.model_param_cache.contains_key(&value) {
+                self.apply_cached_model_params(&value);
+            } else if let Some(options) = &mut self.config_options {
+                options.retain(|o| !is_model_parameter_option(o));
+            }
         }
         if let Some(connection) = &self.connection {
             connection.set_config(config_id.clone(), value.clone());
@@ -3002,6 +3220,41 @@ impl AgentPanel {
             self.sync_model_after_mode_change(cx);
         }
         cx.notify();
+    }
+
+    /// Swap Fast/Context/Effort from [`Self::model_param_cache`] (keep Mode/Model).
+    fn apply_cached_model_params(&mut self, model_id: &str) {
+        let Some(cached) = self.model_param_cache.get(model_id).cloned() else {
+            return;
+        };
+        let Some(options) = &mut self.config_options else {
+            return;
+        };
+        options.retain(|o| !is_model_parameter_option(o));
+        options.extend(cached);
+    }
+
+    /// Remember the current model's ModelConfig / ThoughtLevel / Fast rows.
+    fn cache_current_model_params(&mut self) {
+        let Some(model_id) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        )
+        .map(|m| m.current) else {
+            return;
+        };
+        let Some(options) = &self.config_options else {
+            return;
+        };
+        let params: Vec<SessionConfigOption> = options
+            .iter()
+            .filter(|o| is_model_parameter_option(o))
+            .cloned()
+            .collect();
+        if !params.is_empty() {
+            self.model_param_cache.insert(model_id, params);
+        }
     }
 
     /// After Mode changes (and on session open): OpusPlan on → pin `opusplan`; off → pin the concrete
@@ -3109,6 +3362,9 @@ impl AgentPanel {
 
     /// Select Claude's `opusplan` Model alias (Opus in Plan, Sonnet otherwise).
     fn set_opusplan_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        if !self.is_claude_agent() {
+            return;
+        }
         let Some(model) = find_select(
             &self.config_options,
             Some(SessionConfigOptionCategory::Model),
@@ -3188,7 +3444,19 @@ impl AgentPanel {
         self.status = Status::Installing;
         self.install_error = None;
         cx.notify();
-        let task = cx.background_spawn(async move { acp::install_claude() });
+        let cursor = self
+            .settings
+            .command
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|c| c == CURSOR_COMMAND);
+        let task = cx.background_spawn(async move {
+            if cursor {
+                acp::install_cursor()
+            } else {
+                acp::install_claude()
+            }
+        });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| match result {
@@ -3207,14 +3475,27 @@ impl AgentPanel {
         let Some(launch) = &self.launch else {
             return;
         };
+        if let Some(id) = &method.method_id {
+            self.pending_auth_ids = vec![id.clone()];
+        }
+        // Agent-only methods with no CLI args: just Retry (authenticate on connect).
+        if method.args.is_empty() && method.method_id.is_some() {
+            self.retry(cx);
+            return;
+        }
         let mut env: Vec<(String, String)> = launch
             .env
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         env.extend(method.env.iter().map(|(k, v)| (k.clone(), v.clone())));
-        let mut args = launch.args.clone();
-        args.extend(method.args.iter().cloned());
+        let args = if method.replace_args {
+            method.args.clone()
+        } else {
+            let mut args = launch.args.clone();
+            args.extend(method.args.iter().cloned());
+            args
+        };
         cx.emit(AgentPanelEvent::Login {
             title: method.name.clone(),
             command: TerminalCommand {
@@ -3334,33 +3615,10 @@ impl AgentPanel {
 
     /// Send the next queued prompt, if any and idle.
     fn drain_outbound_queue(&mut self, cx: &mut Context<Self>) {
-        if !self.can_prompt() {
-            return;
-        }
         let Some(item) = self.outbound.pop_front() else {
             return;
         };
-        let Some(connection) = &self.connection else {
-            self.outbound.push_front(item);
-            return;
-        };
-        let Some(session) = self.session.clone() else {
-            self.outbound.push_front(item);
-            return;
-        };
-        connection.prompt(item.blocks);
-        self.turn_running = true;
-        self.begin_turn_file_tracking();
-        self.touch_chat(&session, Some(&item.title));
-        cx.emit(AgentPanelEvent::ChatsChanged);
-        self.push_entry(
-            Entry::User {
-                text: item.text.into(),
-                refs: item.refs,
-            },
-            cx,
-        );
-        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        self.send_queued_prompt(item, cx);
         cx.notify();
     }
 
@@ -3440,6 +3698,7 @@ impl AgentPanel {
         }
         // ACP: the client answers open permission prompts with Cancelled.
         self.cancel_pending_permissions(cx);
+        self.cancel_pending_create_plans(cx);
         cx.notify();
     }
 
@@ -3452,6 +3711,165 @@ impl AgentPanel {
                 self.touched(ix, cx);
             }
         }
+    }
+
+    fn cancel_pending_create_plans(&mut self, cx: &mut Context<Self>) {
+        for ix in 0..self.entries.len() {
+            if let Entry::CursorPlan(plan) = &mut self.entries[ix]
+                && let Some(reply) = plan.reply.take()
+            {
+                let _ = reply.send(CursorCreatePlanOutcome::cancelled());
+                self.touched(ix, cx);
+            }
+        }
+    }
+
+    fn push_create_plan(&mut self, ask: CreatePlanAsk, cx: &mut Context<Self>) {
+        let CreatePlanAsk {
+            tool_call_id,
+            name,
+            overview,
+            plan,
+            todos,
+            reply,
+        } = ask;
+        let plan_view = cx.new(|cx| TextViewState::markdown(&plan, cx).selectable(true));
+        self.push_entry(
+            Entry::CursorPlan(CursorPlanEntry {
+                tool_call_id,
+                name: name.map(Into::into),
+                overview: overview.map(Into::into),
+                plan: plan_view,
+                todos: todos
+                    .into_iter()
+                    .map(|t| (SharedString::from(t.content), t.status))
+                    .collect(),
+                reply: Some(reply),
+            }),
+            cx,
+        );
+        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+    }
+
+    /// Build it — accept plan, switch to Agent mode, then continue executing.
+    ///
+    /// Cursor ends the prompt turn after `create_plan` accept — it does not
+    /// keep building in the same turn. Always queue/send a continue prompt
+    /// (HAPI plan→execute handoff); if the create_plan turn is still open,
+    /// wait for `TurnEnded` via the outbound queue.
+    fn build_create_plan(&mut self, tool_call_id: &str, cx: &mut Context<Self>) {
+        let Some(ix) = self.entries.iter().rposition(|e| match e {
+            Entry::CursorPlan(p) => p.tool_call_id == tool_call_id && p.reply.is_some(),
+            _ => false,
+        }) else {
+            return;
+        };
+        let Some(reply) = (if let Entry::CursorPlan(p) = &mut self.entries[ix] {
+            p.reply.take()
+        } else {
+            None
+        }) else {
+            return;
+        };
+        // Mode first so the continue turn is already Agent when it starts.
+        self.switch_to_agent_mode(cx);
+        let _ = reply.send(CursorCreatePlanOutcome::accepted());
+        self.touched(ix, cx);
+        self.queue_or_send_plan_continue(cx);
+        cx.notify();
+    }
+
+    fn reject_create_plan(&mut self, tool_call_id: &str, cx: &mut Context<Self>) {
+        let Some(ix) = self.entries.iter().rposition(|e| match e {
+            Entry::CursorPlan(p) => p.tool_call_id == tool_call_id && p.reply.is_some(),
+            _ => false,
+        }) else {
+            return;
+        };
+        if let Entry::CursorPlan(p) = &mut self.entries[ix]
+            && let Some(reply) = p.reply.take()
+        {
+            let _ = reply.send(CursorCreatePlanOutcome::rejected("Rejected"));
+        }
+        self.touched(ix, cx);
+        cx.notify();
+    }
+
+    /// Prefer Mode config / legacy modes named `agent`.
+    fn switch_to_agent_mode(&mut self, cx: &mut Context<Self>) {
+        if let Some(sel) =
+            find_select(&self.config_options, Some(SessionConfigOptionCategory::Mode), "mode")
+        {
+            if let Some((id, _)) = sel.choices.iter().find(|(id, name)| {
+                id.eq_ignore_ascii_case("agent") || name.eq_ignore_ascii_case("Agent")
+            }) {
+                // Keep legacy mode state in sync (same as the Mode picker).
+                if let Some(modes) = &mut self.modes {
+                    modes.current_mode_id = id.clone().into();
+                }
+                self.set_config_value(sel.config_id.clone(), id.clone(), cx);
+                return;
+            }
+        }
+        if let Some(modes) = &self.modes
+            && let Some(m) = modes.available_modes.iter().find(|m| {
+                m.id.0.as_ref().eq_ignore_ascii_case("agent")
+                    || m.name.eq_ignore_ascii_case("Agent")
+            })
+        {
+            self.set_mode(m.id.to_string(), cx);
+        }
+    }
+
+    fn plan_continue_prompt() -> QueuedPrompt {
+        let text =
+            "Plan approved. Continue executing the plan toward the original request.".to_owned();
+        QueuedPrompt {
+            title: "Build it".into(),
+            text: text.clone(),
+            refs: Vec::new(),
+            blocks: vec![ContentBlock::Text(TextContent::new(text))],
+        }
+    }
+
+    /// After Build: queue if the create_plan turn is still open, else send now.
+    fn queue_or_send_plan_continue(&mut self, cx: &mut Context<Self>) {
+        let item = Self::plan_continue_prompt();
+        if self.turn_running {
+            // Front of the queue — Build beats any typed follow-ups.
+            self.outbound.push_front(item);
+            cx.notify();
+            return;
+        }
+        self.send_queued_prompt(item, cx);
+    }
+
+    fn send_queued_prompt(&mut self, item: QueuedPrompt, cx: &mut Context<Self>) {
+        if !self.can_prompt() {
+            self.outbound.push_front(item);
+            return;
+        }
+        let Some(connection) = &self.connection else {
+            self.outbound.push_front(item);
+            return;
+        };
+        let Some(session) = self.session.clone() else {
+            self.outbound.push_front(item);
+            return;
+        };
+        connection.prompt(item.blocks);
+        self.turn_running = true;
+        self.begin_turn_file_tracking();
+        self.touch_chat(&session, Some(&item.title));
+        cx.emit(AgentPanelEvent::ChatsChanged);
+        self.push_entry(
+            Entry::User {
+                text: item.text.into(),
+                refs: item.refs,
+            },
+            cx,
+        );
+        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
     }
 
     fn answer_permission(
@@ -3995,9 +4413,10 @@ impl AgentPanel {
                 }
                 if let Some(opts) = config_options {
                     self.config_options = Some(opts);
+                    self.cache_current_model_params();
                 }
                 self.apply_prefs(cx);
-                if find_opusplan_choice(&self.config_options).is_some() {
+                if self.is_claude_agent() && find_opusplan_choice(&self.config_options).is_some() {
                     // The opusplan flag setting (`claude_session_meta`) or a
                     // terminal `"model":"opusplan"` would otherwise run the
                     // alias with the Switch off.
@@ -4021,6 +4440,7 @@ impl AgentPanel {
             }
             AgentEvent::ConfigOptions(options) => {
                 self.config_options = Some(options);
+                self.cache_current_model_params();
                 self.ensure_usage_placeholder();
             }
             AgentEvent::SessionOpenFailed { open, message } => {
@@ -4095,7 +4515,12 @@ impl AgentPanel {
             AgentEvent::Permission(ask) => {
                 // Silent-session tool asks are cancelled in the ACP client by
                 // session id; anything that reaches here is for the open chat.
-                self.ask_permission(ask, cx);
+                if self.ask_permission(ask, cx) {
+                    cx.emit(AgentPanelEvent::PermissionRequested);
+                }
+            }
+            AgentEvent::CreatePlan(ask) => {
+                self.push_create_plan(ask, cx);
                 cx.emit(AgentPanelEvent::PermissionRequested);
             }
             AgentEvent::ReadFile(read) => cx.emit(AgentPanelEvent::ReadFile(read)),
@@ -4164,6 +4589,7 @@ impl AgentPanel {
             }
             SessionUpdate::ConfigOptionUpdate(update) => {
                 self.config_options = Some(update.config_options);
+                self.cache_current_model_params();
                 // Model / context size may have changed before the next turn.
                 self.ensure_usage_placeholder();
                 // Don't reassert here — Claude often reports the resolved
@@ -4347,7 +4773,9 @@ impl AgentPanel {
         self.touched(ix, cx);
     }
 
-    fn ask_permission(&mut self, ask: PermissionAsk, cx: &mut Context<Self>) {
+    /// Attach Allow/Reject buttons, or auto-allow for Cursor. Returns whether
+    /// the UI still has a pending prompt (`PermissionRequested`).
+    fn ask_permission(&mut self, ask: PermissionAsk, cx: &mut Context<Self>) -> bool {
         let PermissionAsk {
             tool_call,
             options,
@@ -4355,6 +4783,16 @@ impl AgentPanel {
         } = ask;
         let id = tool_call.tool_call_id.clone();
         self.update_tool_call(tool_call, cx);
+        // Cursor Mode (Agent/Plan/Ask) does not gate approval — every tool
+        // hits `session/request_permission`. Without a client policy the UI
+        // asks forever; match CLI `--force` and prefer AllowAlways.
+        if self.is_cursor_agent()
+            && let Some(option_id) = prefer_allow_permission(&options)
+        {
+            let _ = reply.send(Some(option_id));
+            self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+            return false;
+        }
         if let Some(ix) = self.tool_index(&id)
             && let Entry::Tool(tool) = &mut self.entries[ix]
         {
@@ -4362,8 +4800,12 @@ impl AgentPanel {
                 let _ = old.reply.send(None);
             }
             self.touched(ix, cx);
+            self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+            return true;
         }
-        self.scroller.update(cx, |s, cx| s.scroll_to_end(cx));
+        // Tool row missing — cancel so the agent is not stuck.
+        let _ = reply.send(None);
+        false
     }
 
     fn push_notice(&mut self, text: impl Into<SharedString>, error: bool, cx: &mut Context<Self>) {
@@ -4441,8 +4883,9 @@ async fn next_event(events: &flume::Receiver<AgentEvent>, cx: &mut AsyncApp) -> 
 }
 
 fn default_name(settings: &AgentSettings) -> SharedString {
-    match settings.command.as_deref() {
-        Some(command) if !command.trim().is_empty() => crate::editor::document::file_name(
+    match settings.command.as_deref().map(str::trim) {
+        Some(CURSOR_COMMAND) => CURSOR_AGENT_NAME.into(),
+        Some(command) if !command.is_empty() => crate::editor::document::file_name(
             std::path::Path::new(command),
         )
         .into(),
@@ -4620,6 +5063,19 @@ fn pick_silent_model_id(
         .find(|c| display_context_label(choices, c).as_deref() == prefer_ctx)
         .or_else(|| in_family.first().copied())
         .map(|c| c.id.clone())
+}
+
+/// Prefer AllowAlways, then AllowOnce — Cursor ACP option ids vary; match by kind.
+fn prefer_allow_permission(options: &[PermissionOption]) -> Option<PermissionOptionId> {
+    options
+        .iter()
+        .find(|o| matches!(o.kind, PermissionOptionKind::AllowAlways))
+        .or_else(|| {
+            options
+                .iter()
+                .find(|o| matches!(o.kind, PermissionOptionKind::AllowOnce))
+        })
+        .map(|o| o.option_id.clone())
 }
 
 fn find_select(
@@ -4890,6 +5346,37 @@ fn is_fast_option(opt: &SessionConfigOption) -> bool {
     id.contains("fast") || name.contains("fast")
 }
 
+/// Fast / Context / Effort (etc.) that Cursor rebuilds when Model changes.
+fn is_model_parameter_option(opt: &SessionConfigOption) -> bool {
+    if matches!(
+        opt.category,
+        Some(SessionConfigOptionCategory::Mode | SessionConfigOptionCategory::Model)
+    ) || opt.id.0.as_ref() == "mode"
+        || opt.id.0.as_ref() == "model"
+    {
+        return false;
+    }
+    is_fast_option(opt)
+        || matches!(
+            opt.category,
+            Some(
+                SessionConfigOptionCategory::ModelConfig
+                    | SessionConfigOptionCategory::ThoughtLevel
+            )
+        )
+        || {
+            let id = opt.id.0.as_ref().to_ascii_lowercase();
+            let name = opt.name.to_ascii_lowercase();
+            id.contains("context")
+                || name.contains("context")
+                || name.contains("window")
+                || id.contains("effort")
+                || name.contains("effort")
+                || id.contains("think")
+                || name.contains("reason")
+        }
+}
+
 fn find_fast_option(options: &Option<Vec<SessionConfigOption>>) -> Option<&SessionConfigOption> {
     options.as_ref()?.iter().find(|o| is_fast_option(o))
 }
@@ -5123,6 +5610,11 @@ fn mode_icon(id: &str, name: &str) -> LucideIcon {
         LucideIcon::ListTodo
     } else if blob.contains("auto") {
         LucideIcon::Sparkles
+    } else if blob.contains("debug") {
+        LucideIcon::Bug
+    } else if blob.contains("multitask") || blob.contains("multi-task") || blob.contains("multi task")
+    {
+        LucideIcon::Layers
     } else if blob.contains("accept")
         || blob.contains("code")
         || (blob.contains("edit") && !blob.contains("ask"))
@@ -5166,22 +5658,34 @@ fn config_option_icon(opt: &SessionConfigOption) -> LucideIcon {
 }
 
 /// Dedicated ACP Context / window-size select (not the Model list).
+///
+/// Claude often encodes context on Model ids (`…[1m]`); Cursor's parameterized
+/// picker advertises a separate `model_config` Context select (e.g. `256K`).
 fn find_context_select(options: &Option<Vec<SessionConfigOption>>) -> Option<ConfigSelect> {
     let options = options.as_ref()?;
     let opt = options.iter().find(|o| {
-        if is_fast_option(o) {
+        if is_fast_option(o)
+            || matches!(o.category, Some(SessionConfigOptionCategory::Model))
+            || o.id.0.as_ref() == "model"
+        {
             return false;
         }
         let id = o.id.0.as_ref().to_ascii_lowercase();
         let name = o.name.to_ascii_lowercase();
-        (id.contains("context") || name.contains("context") || name.contains("window"))
-            && select_from_option(o).is_some_and(|s| {
-                s.choices.iter().any(|(cid, cname)| {
-                    normalize_context_token(cname).is_some()
-                        || normalize_context_token(cid).is_some()
-                        || context_from_model_id(cid).is_some()
-                })
-            })
+        let looks_like_context =
+            id.contains("context") || name.contains("context") || name.contains("window");
+        if !looks_like_context {
+            return false;
+        }
+        select_from_option(o).is_some_and(|s| {
+            s.choices.len() >= 2
+                && (matches!(o.category, Some(SessionConfigOptionCategory::ModelConfig))
+                    || s.choices.iter().any(|(cid, cname)| {
+                        normalize_context_token(cname).is_some()
+                            || normalize_context_token(cid).is_some()
+                            || context_from_model_id(cid).is_some()
+                    }))
+        })
     })?;
     select_from_option(opt)
 }
@@ -5342,6 +5846,7 @@ fn render_entry(
                     )
             }))
             .into_any_element(),
+        Entry::CursorPlan(plan) => render_cursor_plan(panel, plan, cx),
         // Sticky strip above the composer owns this UI — keep a zero-height
         // placeholder so MessageScroller indices stay aligned with `entries`.
         Entry::FileChanges { .. } => div().into_any_element(),
@@ -5768,6 +6273,121 @@ fn render_tool(panel: &WeakEntity<AgentPanel>, tool: &ToolEntry, cx: &App) -> An
         .into_any_element()
 }
 
+fn render_cursor_plan(
+    panel: &WeakEntity<AgentPanel>,
+    plan: &CursorPlanEntry,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let pending = plan.reply.is_some();
+    let tool_call_id = plan.tool_call_id.clone();
+    v_flex()
+        .w_full()
+        .gap_2()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.popover)
+        .p_3()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(if pending { "Plan ready" } else { "Plan" }),
+        )
+        .when_some(plan.name.as_ref(), |col, name| {
+            col.child(div().text_sm().child(name.clone()))
+        })
+        .when_some(plan.overview.as_ref(), |col, overview| {
+            col.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(overview.clone()),
+            )
+        })
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .text_sm()
+                .child(TextView::new(&plan.plan).style(crate::theme::text_view_style(cx))),
+        )
+        .when(!plan.todos.is_empty(), |col| {
+            col.child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .children(plan.todos.iter().map(|(content, status)| {
+                        let (color, done) = match status {
+                            CursorPlanTodoStatus::Completed => (theme.success, true),
+                            CursorPlanTodoStatus::InProgress => (theme.warning, false),
+                            CursorPlanTodoStatus::Cancelled => (theme.muted_foreground, true),
+                            CursorPlanTodoStatus::Pending => (theme.muted_foreground, false),
+                        };
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(status_mark(color))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .text_sm()
+                                    .when(done, |d| {
+                                        d.text_color(theme.muted_foreground).line_through()
+                                    })
+                                    .child(content.clone()),
+                            )
+                    })),
+            )
+        })
+        .when(pending, |col| {
+            let build_id = tool_call_id.clone();
+            let reject_id = tool_call_id.clone();
+            let build_panel = panel.clone();
+            let reject_panel = panel.clone();
+            col.child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "agent-plan-build-{tool_call_id}"
+                        )))
+                        .w_full()
+                        .small()
+                        .primary()
+                        .cursor_pointer()
+                        .label("Build it")
+                        .on_click(move |_, _, cx| {
+                            let id = build_id.clone();
+                            let _ = build_panel.update(cx, |panel, cx| {
+                                panel.build_create_plan(&id, cx);
+                            });
+                        }),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "agent-plan-reject-{tool_call_id}"
+                        )))
+                        .w_full()
+                        .small()
+                        .danger()
+                        .outline()
+                        .cursor_pointer()
+                        .label("Reject")
+                        .on_click(move |_, _, cx| {
+                            let id = reject_id.clone();
+                            let _ = reject_panel.update(cx, |panel, cx| {
+                                panel.reject_create_plan(&id, cx);
+                            });
+                        }),
+                    ),
+            )
+        })
+        .into_any_element()
+}
+
 impl AgentPanel {
     /// Live status line: what the agent is doing right now (real tool title when possible).
     fn activity_label(&self) -> Option<SharedString> {
@@ -5819,7 +6439,9 @@ impl AgentPanel {
                 match self.entries.last() {
                     Some(Entry::Thought(_)) => Some("Thinking…".into()),
                     Some(Entry::Agent(_)) => Some("Writing…".into()),
-                    Some(Entry::Plan(_)) => Some("Planning…".into()),
+                    Some(Entry::Plan(_)) | Some(Entry::CursorPlan(_)) => {
+                        Some("Planning…".into())
+                    }
                     Some(Entry::Subagent(sub)) => Some(format!("{}…", sub.title).into()),
                     _ => Some("Working…".into()),
                 }
@@ -5837,17 +6459,29 @@ impl AgentPanel {
             Status::Failed(_) => theme.danger,
             _ => theme.muted_foreground,
         };
+        let border = theme.border;
+        let danger = theme.danger;
+        let warning = theme.warning;
+        let muted = theme.muted_foreground;
+        let picking = matches!(self.status, Status::PickAgent);
         let can_new_chat =
             !self.turn_running && matches!(self.status, Status::Ready | Status::Failed(_));
+        let builtin = builtin_agent(&self.settings);
         // Session title only — turn activity lives in the transcript footer.
-        let title: SharedString = self
-            .active
-            .as_ref()
-            .and_then(|id| self.chats.iter().find(|c| &c.id == id))
-            .map(|c| c.title.as_str())
-            .filter(|t| !t.is_empty())
-            .unwrap_or("New chat")
-            .into();
+        let title: SharedString = if picking {
+            "Choose agent".into()
+        } else {
+            self.active
+                .as_ref()
+                .and_then(|id| self.chats.iter().find(|c| &c.id == id))
+                .map(|c| c.title.as_str())
+                .filter(|t| !t.is_empty())
+                .unwrap_or("New chat")
+                .into()
+        };
+        let switch = builtin
+            .filter(|_| !picking)
+            .map(|agent| self.render_agent_switch(agent, cx));
         h_flex()
             .w_full()
             .h(px(theme::PANEL_HEADER_ROW_H))
@@ -5856,8 +6490,9 @@ impl AgentPanel {
             .gap_2()
             .px_3()
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(border)
             .child(status_mark(color))
+            .children(switch)
             .child(
                 div()
                     .flex_1()
@@ -5872,11 +6507,11 @@ impl AgentPanel {
                     _ => 0,
                 };
                 let color = if pct >= 95 {
-                    theme.danger
+                    danger
                 } else if pct >= 80 {
-                    theme.warning
+                    warning
                 } else {
-                    theme.muted_foreground
+                    muted
                 };
                 row.child(
                     div()
@@ -5918,6 +6553,84 @@ impl AgentPanel {
                     .tooltip("Hide Agent Panel")
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(AgentPanelEvent::Hide))),
             )
+            .into_any_element()
+    }
+
+    /// Header: current agent logo + chevron → Claude ↔ Cursor popover.
+    fn render_agent_switch(&self, current: BuiltinAgent, cx: &mut Context<Self>) -> AnyElement {
+        let locked = self.turn_running;
+        let panel = cx.entity().downgrade();
+        let muted = cx.theme().muted_foreground;
+        Popover::new("agent-switch")
+            .anchor(Anchor::TopLeft)
+            .trigger(
+                Button::new("agent-switch-button")
+                    .ghost()
+                    .small()
+                    .tooltip(format!("Switch Agent · {}", current.display_name()))
+                    .disabled(locked)
+                    .when(!locked, |b| b.cursor_pointer())
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .flex_shrink_0()
+                            .child(material_icon(current.icon_stem(), 16.))
+                            .child(
+                                Icon::new(LucideIcon::ChevronsUpDown)
+                                    .small()
+                                    .text_color(muted),
+                            ),
+                    ),
+            )
+            .content(move |_state: &mut PopoverState, _, cx| {
+                let popover = cx.weak_entity();
+                let theme = cx.theme();
+                v_flex().w(px(220.)).children(
+                    [BuiltinAgent::Claude, BuiltinAgent::Cursor]
+                        .into_iter()
+                        .map(|agent| {
+                            let selected = agent == current;
+                            let (panel, popover) = (panel.clone(), popover.clone());
+                            ListItem::new(SharedString::from(format!(
+                                "agent-switch-{}",
+                                agent.slot_id()
+                            )))
+                            .selected(selected)
+                            .cursor_pointer()
+                            .on_click(move |_, window, cx| {
+                                if let Some(p) = popover.upgrade() {
+                                    p.update(cx, |p, cx| p.dismiss(window, cx));
+                                }
+                                _ = panel.update(cx, |this, cx| {
+                                    this.request_switch_agent(agent, cx);
+                                });
+                            })
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(material_icon(agent.icon_stem(), 16.))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_sm()
+                                            .child(agent.display_name()),
+                                    )
+                                    .when(selected, |row| {
+                                        row.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child("Current"),
+                                        )
+                                    }),
+                            )
+                        }),
+                )
+            })
             .into_any_element()
     }
 
@@ -6452,9 +7165,9 @@ impl AgentPanel {
             .child(text)
     }
 
-    /// OpusPlan as a Kit Switch — sets Claude's `opusplan` Model alias.
+    /// OpusPlan as a Kit Switch — Claude only; sets the `opusplan` Model alias.
     fn render_opusplan_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
-        if find_opusplan_choice(&self.config_options).is_none() {
+        if !self.is_claude_agent() || find_opusplan_choice(&self.config_options).is_none() {
             return div().into_any_element();
         }
         let checked = opusplan_is_on(&self.prefs, &self.config_options);
@@ -6574,7 +7287,7 @@ impl AgentPanel {
     /// Settings body: one row per knob — `Label → controls…`.
     fn render_agent_settings_body(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
-            .w(px(360.))
+            .w(px(420.))
             .gap_2()
             .p_2()
             .child(self.render_utility_model_setting_row(cx))
@@ -6881,6 +7594,66 @@ impl AgentPanel {
             ))
         });
 
+        // Claude-style context on the silent model id, else Cursor's separate
+        // Context config (edits the open chat — silent jobs copy those prefs).
+        let context_picker = if let (Some(split), Some(choice)) = (split.as_ref(), silent_choice) {
+            let family = choice.family.as_str();
+            let version = choice.version.as_deref();
+            let mut contexts: Vec<(String, String)> = Vec::new();
+            for c in &split.choices {
+                if c.family != family || c.version.as_deref() != version {
+                    continue;
+                }
+                let Some(label) = display_context_label(&split.choices, c) else {
+                    continue;
+                };
+                if contexts.iter().any(|(_, l)| l == &label) {
+                    continue;
+                }
+                contexts.push((label.clone(), label));
+            }
+            (contexts.len() >= 2).then(|| {
+                let current = display_context_label(&split.choices, choice).unwrap_or_default();
+                self.render_bottom_select(
+                    "agent-settings-utility-context",
+                    LucideIcon::Maximize2,
+                    "Context",
+                    if current.is_empty() { "—" } else { current.as_str() },
+                    &current,
+                    &contexts,
+                    locked,
+                    cx,
+                    |this, ctx, cx| this.set_silent_model_context(ctx, cx),
+                )
+            })
+        } else if let Some(opt) = find_context_select(&self.config_options) {
+            let config_id = opt.config_id.clone();
+            let label = opt
+                .choices
+                .iter()
+                .find(|(id, _)| id == &opt.current)
+                .map(|(_, n)| n.as_str())
+                .unwrap_or(opt.current.as_str());
+            Some(self.render_bottom_select(
+                "agent-settings-utility-context",
+                LucideIcon::Maximize2,
+                "Context",
+                label,
+                &opt.current,
+                &opt.choices,
+                locked,
+                cx,
+                move |this, id, cx| this.set_config_value(config_id.clone(), id, cx),
+            ))
+        } else {
+            None
+        };
+
+        let fast_toggle = find_fast_option(&self.config_options).map(|_| {
+            // Same Fast Switch as the composer (open chat + silent inherit).
+            self.render_fast_toggle(cx)
+        });
+
         h_flex()
             .w_full()
             .items_center()
@@ -6895,6 +7668,8 @@ impl AgentPanel {
             )
             .child(model_picker)
             .children(version_picker)
+            .children(context_picker)
+            .children(fast_toggle)
             .into_any_element()
     }
 
@@ -6981,8 +7756,18 @@ impl AgentPanel {
             .content(move |_state: &mut PopoverState, _, cx| {
                 let popover = cx.weak_entity();
                 let popover_id = popover_id.clone();
+                // Fixed viewport when tall — `max_h` + `overflow_y_scrollbar`'s
+                // `size_full` wrapper expands with content inside an auto-height
+                // Popover, so the list never overflows and wheel scrolls the
+                // composer row (`overflow_x_scroll`) instead. Match mention/slash
+                // menus: definite height + `overflow_y_scroll`.
+                let tall = choices.len() > 8;
                 v_flex()
+                    .id(SharedString::from(format!("{popover_id}-list")))
                     .w(px(200.))
+                    .max_h(px(240.))
+                    .when(tall, |col| col.h(px(240.)))
+                    .overflow_y_scroll()
                     .children(choices.iter().enumerate().map(|(ix, (id, name))| {
                         let selected = id == &current;
                         let (panel, popover) = (panel.clone(), popover.clone());
@@ -7132,6 +7917,32 @@ impl AgentPanel {
             .into_any_element()
     }
 
+    fn render_pick_agent_button(
+        &self,
+        agent: BuiltinAgent,
+        primary: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = SharedString::from(format!("agent-pick-{}", agent.slot_id()));
+        let button = Button::new(id)
+            .cursor_pointer()
+            .label(agent.display_name())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(material_icon(agent.icon_stem(), 16.)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.request_switch_agent(agent, cx);
+            }));
+        if primary {
+            button.primary().into_any_element()
+        } else {
+            button.outline().into_any_element()
+        }
+    }
+
     /// Centered message for every state without a live session.
     fn render_state(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
@@ -7146,10 +7957,24 @@ impl AgentPanel {
             .text_center();
         let title = |text: SharedString| div().text_sm().child(text);
         let hint = |text: SharedString| div().text_xs().text_color(muted).child(text);
+        if matches!(self.status, Status::PickAgent) {
+            let claude = self.render_pick_agent_button(BuiltinAgent::Claude, true, cx);
+            let cursor = self.render_pick_agent_button(BuiltinAgent::Cursor, false, cx);
+            return col
+                .child(title("Which agent?".into()))
+                .child(hint(
+                    "Claude uses your Claude Code login. Cursor uses your Cursor login. \
+                     Chats stay separate."
+                        .into(),
+                ))
+                .child(v_flex().gap_2().w_full().max_w(px(280.)).children([claude, cursor]))
+                .into_any_element();
+        }
         match &self.status {
             Status::Idle if self.roots.is_empty() => col
                 .child(hint("Open a folder to use the agent.".into()))
                 .into_any_element(),
+            Status::PickAgent => unreachable!("handled above"),
             Status::Opening if matches!(self.opening, Some(SessionOpen::Load(_))) => col
                 .child(Spinner::new())
                 .child(hint("Loading chat…".into()))
@@ -7164,12 +7989,21 @@ impl AgentPanel {
                 .into_any_element(),
             Status::NotInstalled | Status::Installing => {
                 let installing = matches!(self.status, Status::Installing);
+                let cursor = self
+                    .settings
+                    .command
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|c| c == CURSOR_COMMAND);
+                let hint_text = if cursor {
+                    "Install downloads the Cursor Agent CLI into Isengard's data folder \
+                     (not your PATH / Cursor.app). It signs in with your Cursor login."
+                } else {
+                    "Install downloads the Claude Agent adapter into Isengard's data \
+                     folder (runs on Bun). It signs in with your Claude Code login."
+                };
                 col.child(title(format!("{name} is not installed").into()))
-                    .child(hint(
-                        "Install downloads the Claude Agent adapter into Isengard's data \
-                         folder (runs on Bun). It signs in with your Claude Code login."
-                            .into(),
-                    ))
+                    .child(hint(hint_text.into()))
                     .child(
                         Button::new("agent-install")
                             .primary()
@@ -7189,7 +8023,8 @@ impl AgentPanel {
                 .child(hint(if methods.is_empty() {
                     "Sign in with the agent's own CLI, then press Retry.".into()
                 } else {
-                    "Login runs in the terminal panel. Press Retry when it finishes.".into()
+                    "Login runs in the terminal. When it finishes we reconnect and authenticate."
+                        .into()
                 }))
                 .child(
                     h_flex().flex_wrap().justify_center().gap_2().children(
@@ -7592,10 +8427,11 @@ impl AgentPanel {
     }
 
     /// Mode / Model / Version / Context / Fast / Effort on the left (scroll);
-    /// OpusPlan pinned right via `justify_between` when advertised. OpusPlan on
-    /// hides Model/Version/Context (Claude owns the alias). Height stays fixed.
+    /// OpusPlan pinned right via `justify_between` on Claude when advertised.
+    /// Claude OpusPlan on hides Model/Version/Context; Cursor / other agents
+    /// keep the Model row (Utility already lists every advertised model).
     fn render_composer_config_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let show_model_pickers = !opusplan_is_on(&self.prefs, &self.config_options);
+        let show_model_pickers = self.composer_shows_model_pickers();
         let left = h_flex()
             .id("agent-composer-config-left")
             .min_w_0()
@@ -7651,15 +8487,18 @@ impl AgentPanel {
             .items_center()
             .justify_between()
             .child(left)
-            .when(find_opusplan_choice(&self.config_options).is_some(), |row| {
-                row.child(
-                    h_flex()
-                        .id("agent-composer-config-right")
-                        .flex_none()
-                        .items_center()
-                        .child(self.render_opusplan_toggle(cx)),
-                )
-            })
+            .when(
+                self.is_claude_agent() && find_opusplan_choice(&self.config_options).is_some(),
+                |row| {
+                    row.child(
+                        h_flex()
+                            .id("agent-composer-config-right")
+                            .flex_none()
+                            .items_center()
+                            .child(self.render_opusplan_toggle(cx)),
+                    )
+                },
+            )
             .into_any_element()
     }
 

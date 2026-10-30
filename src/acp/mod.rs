@@ -4,6 +4,7 @@
 //! permission requests. UI lives in `crate::agent`.
 
 mod client;
+mod cursor_ext;
 mod files;
 mod install;
 mod registry;
@@ -12,9 +13,14 @@ pub mod testing;
 
 pub use agent_client_protocol::schema::v1 as schema;
 pub use client::{
-    AgentConnection, AgentEvent, AgentInfo, FileRead, FileWrite, LoginMethod, PermissionAsk,
-    SessionOpen, SilentConfigValue,
+    AgentConnection, AgentEvent, AgentInfo, CreatePlanAsk, FileRead, FileWrite, LoginMethod,
+    PermissionAsk, SessionOpen, SilentConfigValue,
 };
+pub use cursor_ext::{CursorCreatePlanOutcome, CursorPlanTodoStatus};
 pub use files::slice_lines;
-pub use install::install_claude;
-pub use registry::{AgentLaunch, CLAUDE_AGENT_NAME, Resolved, resolve};
+pub use install::{install_claude, install_cursor};
+pub use registry::{
+    AgentLaunch, BuiltinAgent, CLAUDE_AGENT_NAME, CURSOR_AGENT_NAME, CURSOR_COMMAND, Resolved,
+    agent_slot_id, builtin_agent, launch_for_workspace, panel_key, resolve, split_panel_key,
+    with_builtin,
+};

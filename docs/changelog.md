@@ -3,6 +3,45 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Cursor **Build it**: after accept, always queue a continue
+  prompt (Cursor stops the plan turn — same-turn execute was a no-op).
+- **2026-10-30** — Cursor Plan mode: handle blocking `cursor/create_plan` —
+  show the plan card with **Build it** / Reject; Build accepts (nested
+  outcome), switches Mode → Agent, and continues the turn.
+- **2026-10-29** — Cursor Agent: auto-allow tool permissions (AllowAlways
+  preferred) and default launch `--force acp` — Mode does not gate
+  approval on ACP, so every tool was prompting.
+- **2026-10-29** — Composer Mode/Model/… menus: 240px viewport +
+  `overflow_y_scroll` when the catalog is long (wheel was hitting the
+  config row’s horizontal scroller instead of the list).
+- **2026-10-29** — Cursor model switch: cache Fast/Context/Effort per model so
+  the composer does not wait on Cursor’s catalog re-fetch; Utility settings
+  also show Context + Fast. Debug/Multitask stay IDE-only — ACP agent only
+  advertises Agent/Plan/Ask.
+- **2026-10-29** — Cursor ACP: advertise `_meta.parameterizedModelPicker` so
+  sessions expose separate Model / Fast / Context / Effort config options
+  (same composer chrome as Claude) instead of flat variant strings.
+- **2026-10-29** — Source Control Suggest is one `PencilSparkles` menu:
+  Generate (heuristic) + Claude + Cursor (compact popover).
+- **2026-10-29** — OpusPlan Switch is Claude-only; Cursor keeps the composer
+  Model picker (sticky `opusplan` prefs no longer hide it or pin the alias).
+- **2026-10-29** — Agent Switch control is the header logo + `ChevronsUpDown`
+  (not a separate Bot / ArrowLeftRight buried in the trailing icons).
+- **2026-10-29** — Agent choice is per workspace session (`sessions.*.agent`),
+  not `config.json` `agent.command`; restart restores the last agent (no
+  re-picker).
+- **2026-10-29** — Agent panel: empty built-in slot shows Claude | Cursor
+  picker (auto-Install on pick); header Material logo + Switch Agent popover
+  remounts the other slot; Cursor ACP Phase 2 (Claude ↔ Cursor) done.
+- **2026-10-29** — Cursor ACP Phase 1 start: Agent-typed `cursor_login` shows a
+  Login button (`cursor-agent login` in the terminal, then `authenticate` on
+  reconnect); Claude vs Cursor chat lists are stored in separate session slots.
+- **2026-10-29** — Cursor ACP Phase 0: app-local Install of pinned Cursor CLI
+  (`…/agents/cursor/`), `agent.command = "cursor-agent"` resolve + panel Install
+  copy; recorded `initialize` caps vs Claude (no embeddedContext / resume /
+  delete; auth `cursor_login` only).
+- **2026-10-29** — Cursor ACP roadmap: Install like Claude (pinned CLI into
+  `…/agents/cursor/`, not user PATH / Cursor.app); Phase 0 = app-local smoke.
 - **2026-10-29** — `@` mention walk skips `graphify-out/` so generated graph
   files no longer exhaust the walk budget (fixes
   `nested_folder_query_matches_in_this_repo` locally).

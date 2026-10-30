@@ -167,16 +167,25 @@ pub struct WorkspaceSession {
     /// Agent panel width (px) in `agent-split`.
     #[serde(default = "default_agent_width")]
     pub agent_width: f32,
-    /// Agent chats started in this folder/workspace, newest first. The agent
-    /// stores the transcripts; this is only Isengard's index of which belong here.
+    /// Last built-in / custom agent chosen in this folder/workspace
+    /// (`claude`, `cursor-agent`, …). `None` → first-open picker (builtins).
+    /// Not `config.json` `agent.command` — that stays for custom/test launches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// Agent chats for the default Claude slot (legacy flat fields). Other
+    /// agents (e.g. `cursor-agent`) live in [`Self::agent_slots`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub agent_chats: Vec<AgentChat>,
-    /// Chat reopened when the panel connects.
+    /// Chat reopened when the panel connects (Claude slot).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_active: Option<String>,
-    /// Composer Mode / Model / Effort / … last picked in this folder/workspace.
+    /// Composer Mode / Model / Effort / … last picked (Claude slot).
     #[serde(skip_serializing_if = "AgentPrefs::is_empty")]
     pub agent_prefs: AgentPrefs,
+    /// Per-agent chat index (`cursor-agent`, custom binaries, …).
+    /// Key = slot id (`claude` lives in the legacy fields above).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_slots: BTreeMap<String, AgentSlotSession>,
     /// Explorer / Source Control / Search strip selection.
     #[serde(default)]
     pub sidebar_panel: SidebarPanel,
@@ -221,6 +230,19 @@ pub enum AgentPrefValue {
 
 /// Cap for remembered agent chats per folder/workspace.
 pub const MAX_AGENT_CHATS: usize = 50;
+
+/// Chats / active id / composer prefs for one agent process (`claude`,
+/// `cursor-agent`, …) inside a workspace session.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentSlotSession {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chats: Vec<AgentChat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+    #[serde(default, skip_serializing_if = "AgentPrefs::is_empty")]
+    pub prefs: AgentPrefs,
+}
 
 /// One row in a persisted end-of-turn **N Files** card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,12 +294,59 @@ impl Default for WorkspaceSession {
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
             agent_visible: false,
             agent_width: DEFAULT_AGENT_WIDTH,
+            agent: None,
             agent_chats: Vec::new(),
             agent_active: None,
             agent_prefs: AgentPrefs::default(),
+            agent_slots: BTreeMap::new(),
             sidebar_panel: SidebarPanel::default(),
             search: SearchSessionState::default(),
             git_repos: Vec::new(),
+        }
+    }
+}
+
+impl WorkspaceSession {
+    /// Slot id last used here (`claude`, `cursor-agent`, …), including a
+    /// one-shot infer from older sessions that only stored chats.
+    pub fn remembered_agent(&self) -> Option<String> {
+        if let Some(id) = self.agent.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            return Some(id.to_owned());
+        }
+        if !self.agent_chats.is_empty() {
+            return Some("claude".into());
+        }
+        self.agent_slots
+            .iter()
+            .find(|(_, slot)| !slot.chats.is_empty())
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Chats / active / prefs for one agent slot (`claude`, `cursor-agent`, …).
+    pub fn agent_slot(&self, slot: &str) -> AgentSlotSession {
+        if let Some(saved) = self.agent_slots.get(slot) {
+            return saved.clone();
+        }
+        if slot == "claude" {
+            return AgentSlotSession {
+                chats: self.agent_chats.clone(),
+                active: self.agent_active.clone(),
+                prefs: self.agent_prefs.clone(),
+            };
+        }
+        AgentSlotSession::default()
+    }
+
+    /// Write one agent slot. Claude keeps the legacy flat fields so older
+    /// builds still see the chat index.
+    pub fn set_agent_slot(&mut self, slot: &str, state: AgentSlotSession) {
+        if slot == "claude" {
+            self.agent_chats = state.chats;
+            self.agent_active = state.active;
+            self.agent_prefs = state.prefs;
+            self.agent_slots.remove("claude");
+        } else {
+            self.agent_slots.insert(slot.to_owned(), state);
         }
     }
 }
@@ -366,14 +435,17 @@ impl Default for UpdateSettings {
     }
 }
 
-/// External ACP agent for the Agent panel. Empty → built-in Claude Agent
-/// (app-local install, then `claude-agent-acp` on `PATH`). The agent owns the
-/// model and login; Isengard never stores API keys.
+/// Global agent prefs for the Agent panel. Built-in Claude / Cursor choice is
+/// **per workspace** (`WorkspaceSession.agent`), not `command` here. Use
+/// `command` only for a custom ACP binary (tests / gemini / …). Empty + no
+/// workspace pick → first-open Claude|Cursor picker. The agent owns the model
+/// and login; Isengard never stores API keys.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentSettings {
-    /// Executable speaking ACP over stdio (absolute, or looked up on `PATH`),
-    /// e.g. `"gemini"` with `args: ["--experimental-acp"]`.
+    /// Custom ACP executable (absolute or `PATH`), e.g. `"gemini"` with
+    /// `args: ["--experimental-acp"]`. Not used for Claude / Cursor — those
+    /// are chosen in the panel and stored on the workspace session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -781,11 +853,67 @@ mod tests {
         let session: WorkspaceSession = serde_json::from_str(r#"{"open_files":[]}"#).unwrap();
         assert!(!session.agent_visible);
         assert_eq!(session.agent_width, DEFAULT_AGENT_WIDTH);
+        assert_eq!(session.agent, None);
+        assert!(session.remembered_agent().is_none());
         assert!(session.agent_chats.is_empty());
         assert_eq!(session.agent_active, None);
+        assert!(session.agent_slots.is_empty());
         assert_eq!(session.sidebar_panel, SidebarPanel::Files);
         assert!(session.search.is_empty());
         assert!(session.git_repos.is_empty());
+    }
+
+    #[test]
+    fn remembered_agent_infers_from_legacy_chats() {
+        let mut session = WorkspaceSession::default();
+        assert_eq!(session.remembered_agent(), None);
+        session.agent_chats.push(AgentChat {
+            id: "c1".into(),
+            title: "hi".into(),
+            updated: 1,
+            file_changes: Vec::new(),
+        });
+        assert_eq!(session.remembered_agent().as_deref(), Some("claude"));
+        session.agent = Some("cursor-agent".into());
+        assert_eq!(session.remembered_agent().as_deref(), Some("cursor-agent"));
+    }
+
+    #[test]
+    fn agent_slots_keep_claude_and_cursor_chats_apart() {
+        let mut session = WorkspaceSession::default();
+        session.set_agent_slot(
+            "claude",
+            AgentSlotSession {
+                chats: vec![AgentChat {
+                    id: "c1".into(),
+                    title: "Claude chat".into(),
+                    updated: 1,
+                    file_changes: Vec::new(),
+                }],
+                active: Some("c1".into()),
+                prefs: AgentPrefs::default(),
+            },
+        );
+        session.set_agent_slot(
+            "cursor-agent",
+            AgentSlotSession {
+                chats: vec![AgentChat {
+                    id: "k1".into(),
+                    title: "Cursor chat".into(),
+                    updated: 2,
+                    file_changes: Vec::new(),
+                }],
+                active: Some("k1".into()),
+                prefs: AgentPrefs::default(),
+            },
+        );
+        assert_eq!(session.agent_chats[0].id, "c1");
+        assert!(!session.agent_slots.contains_key("claude"));
+        assert_eq!(
+            session.agent_slot("cursor-agent").chats[0].title,
+            "Cursor chat"
+        );
+        assert_eq!(session.agent_slot("claude").chats[0].title, "Claude chat");
     }
 
     #[test]

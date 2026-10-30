@@ -257,21 +257,33 @@ Add a row here whenever a new shared component is created.
   Status-bar Sidebar / Terminal / Agent tooltips include the shortcut.
   Header `PanelRightClose` hides. Header: `PANEL_HEADER_ROW_H`, `border_b`, 7×7
   status square (success ready, warning starting/working, danger failed,
-  muted otherwise) + **session title** (active chat title, or `New chat`;
-  no activity suffix — busy line is transcript-footer only) +
-  muted/warning/danger `text_xs` context used/size (e.g. `53K / 200K`;
-  `— / 200K` seeded on open/switch until ACP `usage_update`) + ghost
-  `Plus` New Chat. When the agent advertises a Model option, ghost
+  muted otherwise) + **Switch Agent** control (built-in only): ghost button
+  with Material Claude/Cursor logo + muted `ChevronsUpDown` (Popover,
+  TopLeft; Claude / Cursor `ListItem`s with thumbs + "Current"; writes
+  `sessions.<workspace>.agent`, remounts that chat slot, auto-Installs if
+  needed — does **not** set global `agent.command`; hidden on the picker /
+  custom agents; disabled during a user turn) + **session title** (active
+  chat title, or `New chat`; on the picker `Choose agent`; no activity
+  suffix — busy line is transcript-footer only) + muted/warning/danger
+  `text_xs` context used/size (e.g. `53K / 200K`; `— / 200K` seeded on
+  open/switch until ACP `usage_update`) +
+  ghost `Plus` New Chat. When the agent advertises a Model option, ghost
   `SlidersHorizontal` **Agent settings** (Popover, TopRight,
   `overlay_closable(false)` + own outside-click dismiss that ignores clicks while a nested model menu is open): stacked
   rows `Label →` upward Popover selects. **Utility model** → Chat model /
-  family (+ Version when split) — Improve / titles / Git Suggest
-  (`agent.silent_model`; not an editor Preferences panel). **Subagent
-  model** → Default / family (+ Version) — `agent.subagent_model` →
-  `CLAUDE_CODE_SUBAGENT_MODEL` + `_FORCE=1` on Claude Agent launch;
-  reconnects. ACP `Default (recommended)` folds into inherit (Chat model /
-  Default), not listed twice. Chat-list rows append last-known
-  used/size beside the relative time when available (process memory only).
+  family (+ Version / Context when split, plus Cursor Fast / Context when
+  advertised) — Improve / titles / Git Suggest (`agent.silent_model`; not
+  an editor Preferences panel). **Subagent model** → Default / family
+  (+ Version) — `agent.subagent_model` → `CLAUDE_CODE_SUBAGENT_MODEL` +
+  `_FORCE=1` on Claude Agent launch; reconnects. ACP
+  `Default (recommended)` folds into inherit (Chat model / Default), not
+  listed twice. Chat-list rows append last-known used/size beside the
+  relative time when available (process memory only).
+  **First open** (no `sessions.*.agent` yet for this folder/workspace):
+  centered **Which agent?** with primary Claude + outline Cursor buttons
+  (Material thumbs); pick remembers the agent on the session, Installs if
+  missing, then connects. Restart restores that agent (no re-picker).
+  Custom global `agent.command` skips this screen.
   Under the header, an
   N Files-style accordion (not Kit Accordion — `size_full` steals transcript
   height): chevron + slim `5h` / `Week` `Progress` bars
@@ -329,11 +341,21 @@ Add a row here whenever a new shared component is created.
   `AgentChat.file_changes` and restored after ACP `session/load`); plan as
   7×7 status
   squares + text (done = muted + line-through);
-  notices `text_xs` muted or danger. **Permission prompts
+  notices `text_xs` muted or danger. **Cursor Plan ready** (`cursor/create_plan`):
+  bordered popover-surface card with optional name/overview, selectable
+  markdown plan, todo status marks, then full-width **Build it**
+  (`.primary()`) and **Reject** (`.danger().outline()`); Build answers
+  nested `{ outcome: { outcome: "accepted" } }`, sets Mode to Agent, then
+  always queues/sends a continue prompt (Cursor ends the plan turn on
+  accept — same-turn execute does not happen); Reject / Stop send
+  rejected/cancelled. **Permission prompts
   are inline** on the tool row (not a modal — several can be open while
   updates keep streaming): options stacked full-width in a `v_flex`
   (never side-by-side wrap), `.small()` + `.w_full()`, allow-once
   `.primary()`, allow-always `.outline()`, reject `.danger().outline()`.
+  **Cursor** never shows them — Mode is not an approval policy on ACP,
+  so the panel auto-selects AllowAlways (else AllowOnce) and Cursor
+  launches with `--force`. Claude still prompts (Auto mode is agent-side).
   Composer: optional wrap-row of attachment chips
   (Material icon + basename / `file:n-m`, or 40×40 image thumbs — no leading
   `@` on chip text) with ghost `CircleX` remove — chips are from the Attach
@@ -370,21 +392,28 @@ Add a row here whenever a new shared component is created.
   `Zap` + Kit `Switch` labeled `Fast` (Zap / Opus Plan `ListTodo` icons and the
   drawn label use `theme.foreground` like Mode/Model, `muted_foreground` @ 0.5
   (same as a disabled ghost Button) while locked — label is not `Switch::label`, which stays bright); **Opus Plan** (label) pinned
-  right (`justify_between`) when the Model select advertises `opusplan` /
-  `opusplan[1m]` (or an “Opus Plan” name) — Switch-only (alias omitted
-  from Model/family/version/context menus); on sets that alias (prefers
-  `[1m]` if the prior model used 1M), remembers it in `agent_prefs`, and
-  **hides** Model family / Version / flat Model / Context; Mode changes
-  sync Model to the Switch (on → `opusplan`, off → remembered concrete id
-  so `~/.claude/settings.json` `"model":"opusplan"` cannot take over);
-  tooltip says Opus in Plan / Sonnet otherwise; off restores the model
-  used before turning on (saved in `agent_prefs.model_before_opusplan`, so
-  it survives restarts; an id the agent no longer offers falls back to the
-  live model); other options by ACP name with
+  right (`justify_between`) on **Claude only** when the Model select
+  advertises `opusplan` / `opusplan[1m]` (or an “Opus Plan” name) —
+  Switch-only (alias omitted from Model/family/version/context menus); on
+  sets that alias (prefers `[1m]` if the prior model used 1M), remembers
+  it in `agent_prefs`, and **hides** Model family / Version / flat Model /
+  Context; Mode changes sync Model to the Switch (on → `opusplan`, off →
+  remembered concrete id so `~/.claude/settings.json` `"model":"opusplan"`
+  cannot take over); tooltip says Opus in Plan / Sonnet otherwise; off
+  restores the model used before turning on (saved in
+  `agent_prefs.model_before_opusplan`, so it survives restarts; an id the
+  agent no longer offers falls back to the live model). Cursor / other
+  agents keep the composer Model picker even if sticky prefs still say
+  `opusplan` (do not apply that id; Utility model list is unrestricted);
+  other options by ACP name with
   heuristic icons (`Brain` thought/effort, `Users` agent/persona, else
   `SlidersHorizontal`) — Popover upward, `ListItem`s,
-  disabled while a turn runs or the session is not Ready; Prefer
-  `configOptions` over legacy `modes`. Config band is always
+  disabled while a turn runs or the session is not Ready;   Prefer
+  `configOptions` over legacy `modes`. Composer Mode/Model/Version/Context
+  Popovers use a capped list (`max_h` 240px; fixed `h` 240px when more than
+  eight choices + `overflow_y_scroll` — not `overflow_y_scrollbar` alone,
+  which fails to clamp under the band’s horizontal scroller) so long Cursor
+  model catalogs scroll instead of stealing the wheel. Config band is always
   `AGENT_COMPOSER_CONFIG_ROW_H` (36px); left group scrolls horizontally
   (no wrap) so open/switch/first options do not change composer height;
   last options are kept across reconnect and not cleared when an open
@@ -474,20 +503,20 @@ Add a row here whenever a new shared component is created.
   `Push (N)` when behind / ahead of upstream), commit `Textarea` in a
   pixel-height box (one line idle; auto height from content up to 6
   rows; bottom drag grip raises a floor through 20 rows — past the auto
-  cap; taller content scrolls inside) + outlined icon Suggests + Commit
+  cap; taller content scrolls inside) + outlined icon Suggest + Commit
   (disabled while message empty or nothing selected), collapsible
   changes list with select-all +
-  per-file checkboxes (default none selected; Commit / Suggests use
-  selection only; `git add -- <paths>` then commit). Suggest is **two**
-  `.small()` outline icon buttons: heuristic `WandSparkles` (path draft)
-  and Claude (Material `claude.svg` thumb). Both omit `on_click` while
-  disabled (no selection / busy / conflict lock; Claude also until Agent
-  `can_suggest_commit`; Suggest in one repo never disables other repos —
-  jobs run concurrently, one per repo). Tooltips explain why. Claude’s SVG ignores Kit
-  disabled `fg`, so the thumb uses `opacity(0.5)` when disabled (same
-  ballpark as outline muted). Claude uses a one-shot throwaway ACP
-  session — open chat `session_id` untouched and not marked busy;
-  `.loading` on the Claude icon while the turn runs; never auto-commits;
+  per-file checkboxes (default none selected; Commit / Suggest use
+  selection only; `git add -- <paths>` then commit). Suggest is **one**
+  `.small()` outline `PencilSparkles` whose compact Popover (~148px)
+  lists **Generate** (`WandSparkles`, path-heuristic draft) then Claude /
+  Cursor (Material thumbs). Disabled with no selection / busy / conflict
+  lock (AI Suggest in one repo never disables other repos — jobs run
+  concurrently, one per repo). Picking an agent that is not the Ready
+  Agent panel switches to it and queues Suggest until Ready (toast).
+  Tooltips explain why. AI uses a one-shot throwaway ACP session — open
+  chat `session_id` untouched and not marked busy; `.loading` on the
+  PencilSparkles trigger while the turn runs; never auto-commits; AI
   failure toasts — no heuristic fallback.
   Change rows:
   checkbox + Material `tree_icon` + path, status letter on the right,
@@ -519,7 +548,7 @@ Add a row here whenever a new shared component is created.
   --ours|--theirs` + `add`). Accept lives in the editor only — not on
   panel change rows. After resolve, conflict tab closes; open worktree
   buffers reload. While an op is in progress or any `U` remains: disable
-  Pull, Push, Discard, Discard all; both Suggest icons disabled. Commit
+  Pull, Push, Discard, Discard all; Suggest disabled. Commit
   stays available for merges (selection → `git add` then commit) but
   **refuses** if any selected path still contains conflict markers
   (`<<<<<<<` / `=======` / `>>>>>>>`); Commit disabled during rebase /

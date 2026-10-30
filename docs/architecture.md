@@ -74,6 +74,7 @@ the user toolchain.
 | `dirs::config_dir()/isengard/config.json` | Settings, recents, sessions, update check stamp (macOS: Application Support) |
 | `dirs::data_dir()/isengard/lsp/` | `bin/` wrappers + `pkg/` installs (servers + Bun) |
 | `dirs::data_dir()/isengard/agents/claude/` | Claude ACP adapter (`bun add --cwd`) |
+| `dirs::data_dir()/isengard/agents/cursor/` | Cursor Agent CLI (pinned lab tarball; `agent.command = "cursor-agent"`) |
 | `dirs::data_dir()/isengard/runtime/bun-cache/` | Bun install cache (not `~/.bun/install/cache`) |
 | `<folder>/.isengard-workspace` | Multi-root workspace JSON (optional) |
 
@@ -271,7 +272,7 @@ src/
 ├── app/                 IsengardApp entity (one GPUI view; split by concern)
 │   ├── mod.rs           struct + `new`, shared types (`Switch`, `SidebarView`)
 │   ├── actions.rs       `actions!`, tab path actions, key bindings, menu bridge
-│   ├── agent.rs         Agent panel toggle, OS attach picker, file I/O, login → terminal
+│   ├── agent.rs         Agent panel toggle, Claude↔Cursor switch, OS attach, login → terminal
 │   ├── bun.rs           first-run Bun setup dialog (Install / Quit)
 │   ├── tab.rs           `EditorTab` / `TabBody` / `DiffKind`
 │   ├── workspace.rs     open/switch/persist workspace, recents, titles
@@ -329,7 +330,8 @@ src/
 │   ├── client.rs        `AgentConnection`: own thread, `block_on`, flume
 │   │                    commands in / `AgentEvent`s out (+ reply senders)
 │   ├── registry.rs      `config.agent` command, else built-in Claude Agent
-│   ├── install.rs       app-local `bun add --cwd …/agents/claude`
+│   ├── install.rs       app-local agents: Claude `bun add --cwd …/agents/claude`;
+│   │                    Cursor CLI tarball into `…/agents/cursor/`
 │   ├── files.rs         `slice_lines` for `fs/read_text_file` ranges
 │   └── testing.rs       (tests) in-memory `FakeAgent` + `install` hook
 ├── agent/
@@ -452,22 +454,28 @@ src/
   (`sidebar_width` / `sidebar_visible` / `terminal_height`); resizable
   element ids include the session key so Kit state does not leak across
   folders. `ToggleSidebar` / `⌘B`/`Ctrl+B`.
-- **Agent panel:** one `Entity<AgentPanel>` per folder/workspace in
-  `IsengardApp::agents` (keyed by session key, with its subscription);
+- **Agent panel:** one `Entity<AgentPanel>` per folder/workspace **and**
+  agent slot in `IsengardApp::agents` (key = `acp::panel_key` =
+  session key + `\x1e` + `claude` / `cursor-agent` / custom command);
   `IsengardApp::agent` is the current one, shown as the right child of
   `h_resizable("agent-split-{session key}")` around the whole body (sidebar +
   editor + terminal) while a folder is open. `apply_switch` →
   `switch_agent_panel`: old panel `suspend()` (running turn continues; agent
   dropped when it ends → `Status::Suspended`, transcript kept), new panel
-  reused from the map or created from that key's saved `agent_chats` /
-  `agent_active` / `agent_prefs` (empty → global `AppConfig::agent_prefs`).
-  `agent_visible` / `agent_width` / chat index / prefs live on
-  `WorkspaceSession`; `ChatsChanged` / `PrefsChanged` from a background panel
-  patch only those fields of its saved session. Header `SlidersHorizontal`
-  Agent settings popover uses labeled rows (`Utility model → Model →
-  Version`); `SettingsChanged` writes global `AppConfig::agent` (including
-  `silent_model` for Improve / title / Git Suggest throwaway sessions) and
-  syncs other cached panels.
+  reused from the map or created from that slot's saved chats / active /
+  prefs (Claude also mirrors legacy `agent_chats` fields; empty prefs →
+  global `AppConfig::agent_prefs`).   No `WorkspaceSession.agent` yet (and no custom global `agent.command`) →
+  `Status::PickAgent` until Claude/Cursor is chosen; `SwitchAgent` / picker →
+  `switch_builtin_agent` writes `sessions.*.agent` (not global
+  `agent.command`), remounts, `begin_after_pick` (Install or connect).
+  `launch_for_workspace` builds panel settings from the remembered slot +
+  global silent/subagent prefs. `agent_visible` / `agent_width` / remembered
+  agent / chat index / prefs live on `WorkspaceSession`; `ChatsChanged` /
+  `PrefsChanged` from a background panel patch only those fields of its
+  saved session. Header `SlidersHorizontal` Agent settings popover uses
+  labeled rows (`Utility model → Model → Version`); `SettingsChanged` writes
+  global silent / subagent model only (never launch `command`) and syncs
+  those onto other cached panels.
   `AgentPrefs`
   = composer picks (config option id → select value / bool, plus legacy
   `modes` id), recorded in `set_config_value` / `set_config_bool` /
@@ -526,7 +534,15 @@ src/
   Paste image/paths also become chips. `session/prompt`
   sends `Vec<ContentBlock>` (`resource` when `embeddedContext`, else
   `<context>` text, else `resource_link`; images when `image`). Caps from
-  `AgentInfo` after `initialize`. `apply_switch` calls
+  `AgentInfo` after `initialize`. Client `initialize` also sets
+  `_meta.parameterizedModelPicker: true` so Cursor ACP advertises separate
+  Model / Fast / Context / Effort `configOptions` (without it, Cursor
+  collapses those into flat model-variant strings). Built-in Cursor
+  defaults to `cursor-agent --force acp` (CLI Run Everything); the panel
+  also auto-answers `request_permission` with AllowAlways/AllowOnce —
+  Cursor Mode does not suppress those prompts. Blocking
+  `cursor/create_plan` is typed in `acp/cursor_ext.rs` and surfaced as a
+  plan card (**Build it** → nested accepted + Mode Agent). `apply_switch` calls
   `reset_agent_for_workspace` (drops the agent: the SDK kills its process
   group). Tests: `AgentConnection::spawn_with` takes any `ConnectTo<Client>`;
   `acp::testing::FakeAgent` serves `Channel::duplex` connections with shared
