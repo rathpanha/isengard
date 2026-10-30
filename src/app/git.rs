@@ -256,6 +256,7 @@ impl IsengardApp {
                     state.set_value(new_text.clone(), window, cx);
                     state.set_readonly(true, cx);
                 });
+                Self::match_diff_extent(&old, &new, window, cx);
                 let highlights = Self::apply_diff_pane_highlights(
                     &old,
                     &new,
@@ -303,6 +304,7 @@ impl IsengardApp {
             Self::new_diff_editor(language, old_text.clone(), is_conflict, window, cx);
         let new =
             Self::new_diff_editor(language, new_text.clone(), is_conflict, window, cx);
+        Self::match_diff_extent(&old, &new, window, cx);
         let highlights = Self::apply_diff_pane_highlights(
             &old,
             &new,
@@ -364,6 +366,33 @@ impl IsengardApp {
                 cx,
             );
         });
+    }
+
+    /// Give both panes the same scrollable height.
+    ///
+    /// The panes share one scroll offset, so the shorter pane must be able to
+    /// reach every offset the longer one can. Otherwise each push overshoots
+    /// its end: it paints one over-scrolled frame, clamps back and notifies
+    /// again, so the shorter pane jitters while the longer one is scrolled.
+    /// Padding the shorter pane's empty bottom rows (Kit's
+    /// `scroll_beyond_last_line`) equalises the extent. Call after the texts
+    /// change. Folded rows (Change diffs) can still make the extents differ.
+    pub(super) fn match_diff_extent(
+        old: &Entity<EditorState>,
+        new: &Entity<EditorState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        /// Empty rows below the longest pane's last line (Kit's own floor).
+        const BOTTOM_ROWS: usize = 3;
+        let old_rows = old.read(cx).text().lines_len();
+        let new_rows = new.read(cx).text().lines_len();
+        let longest = old_rows.max(new_rows);
+        for (pane, rows) in [(old, old_rows), (new, new_rows)] {
+            pane.update(cx, |state, cx| {
+                state.set_scroll_beyond_last_line(Some(BOTTOM_ROWS + longest - rows), window, cx);
+            });
+        }
     }
 
     /// Whether `source` (not `peer`) is the pane the user is scrolling:

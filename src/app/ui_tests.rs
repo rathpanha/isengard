@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gpui_kit::{
     AppContext as _, Bounds, Entity, TestAppContext, WindowBounds, WindowHandle, WindowOptions,
-    base::Root, px, size, test::TestWindowExt as _,
+    InputEvent as _, base::Root, px, size, test::TestWindowExt as _,
 };
 
 use super::{AgentPanelEvent, IsengardApp};
@@ -3783,4 +3783,212 @@ fn tab_in_terminal_is_bound_to_the_shell(cx: &mut TestAppContext) {
         })
         .expect("window alive");
     assert_eq!(keys, (Some("tab".into()), Some("shift-tab".into())));
+}
+
+// --- Diff / conflict scroll sync ------------------------------------------
+
+/// `lines` numbered lines; every `every`-th one differs per side so the panes
+/// have hunks but different lengths.
+fn numbered(lines: usize, tag: &str) -> String {
+    (0..lines)
+        .map(|i| {
+            if i % 50 == 25 {
+                format!("line {i} {tag}\n")
+            } else {
+                format!("line {i}\n")
+            }
+        })
+        .collect()
+}
+
+impl Harness {
+    /// Opens a Current|Incoming conflict compare (`conflict`) or a
+    /// HEAD|Working Tree change diff of the two texts.
+    fn open_diff_texts(&self, conflict: bool, left: &str, right: &str, cx: &mut TestAppContext) {
+        let path = self.dir.path().join("c.txt");
+        let (left, right) = (left.to_string(), right.to_string());
+        self.with_app(cx, |app, window, cx| {
+            let (virtual_path, kind) = if conflict {
+                let n = crate::git::conflict_hunks(&left, &right).len();
+                (
+                    crate::editor::document::conflict_preview_path(&path),
+                    super::tab::DiffKind::Conflict {
+                        repo: self.dir.path().to_path_buf(),
+                        rel_path: "c.txt".into(),
+                        hunk_choices: vec![None; n],
+                    },
+                )
+            } else {
+                (
+                    crate::editor::document::diff_preview_path(&path),
+                    super::tab::DiffKind::Change,
+                )
+            };
+            app.open_side_by_side_diff(
+                virtual_path,
+                crate::editor::language::Language::from_path(&path),
+                kind,
+                left,
+                right,
+                false,
+                window,
+                cx,
+            );
+        });
+        cx.update_window(self.window.into(), |_, window, cx| window.render_frame(cx))
+            .expect("window alive");
+        cx.run_until_parked();
+    }
+
+    /// (left, right) editor states of the active diff tab.
+    fn diff_panes(
+        &self,
+        cx: &mut TestAppContext,
+    ) -> (Entity<gpui_kit::component::input::EditorState>, Entity<gpui_kit::component::input::EditorState>) {
+        cx.read(|cx| match &self.app.read(cx).tabs.active().expect("tab").body {
+            super::tab::TabBody::Diff { old, new, .. } => (old.clone(), new.clone()),
+            _ => panic!("active tab is not a diff"),
+        })
+    }
+
+    fn mouse_move(&self, at: gpui_kit::Point<gpui_kit::Pixels>, cx: &mut TestAppContext) {
+        cx.update_window(self.window.into(), |_, window, cx| {
+            window.dispatch_event(
+                gpui_kit::MouseMoveEvent {
+                    position: at,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .expect("window alive");
+        cx.run_until_parked();
+    }
+
+    fn wheel(&self, at: gpui_kit::Point<gpui_kit::Pixels>, dy: f32, cx: &mut TestAppContext) {
+        self.wheel_xy(at, 0., dy, cx);
+    }
+
+    fn wheel_xy(
+        &self,
+        at: gpui_kit::Point<gpui_kit::Pixels>,
+        dx: f32,
+        dy: f32,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update_window(self.window.into(), |_, window, cx| {
+            window.dispatch_event(
+                gpui_kit::ScrollWheelEvent {
+                    position: at,
+                    delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(dx), px(dy))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            // Real frames run `on_next_frame` callbacks first, then paint.
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .expect("window alive");
+        cx.run_until_parked();
+    }
+
+    fn render_frames(&self, n: usize, cx: &mut TestAppContext) {
+        for _ in 0..n {
+            cx.update_window(self.window.into(), |_, window, cx| {
+                window.simulate_next_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("window alive");
+            cx.run_until_parked();
+        }
+    }
+}
+
+
+/// Wheel `steps` ticks over the pane at `at` and assert the two panes never
+/// disagree and the scroll never moves back the way it came (no snap to the
+/// top, no jitter on the shorter pane).
+fn assert_locked_scroll(
+    h: &Harness,
+    label: &str,
+    at: gpui_kit::Point<gpui_kit::Pixels>,
+    dy: f32,
+    steps: usize,
+    cx: &mut TestAppContext,
+) {
+    let (l, r) = h.diff_panes(cx);
+    h.mouse_move(at, cx);
+    let mut prev = cx.read(|cx| f32::from(l.read(cx).scroll_offset().y));
+    for step in 0..steps {
+        h.wheel(at, dy, cx);
+        let (lo, ro) = cx.read(|cx| {
+            (
+                f32::from(l.read(cx).scroll_offset().y),
+                f32::from(r.read(cx).scroll_offset().y),
+            )
+        });
+        assert_eq!(lo, ro, "{label}: panes disagree at step {step}");
+        assert!(
+            (dy < 0. && lo <= prev) || (dy > 0. && lo >= prev),
+            "{label}: scroll moved back at step {step} ({prev} -> {lo})"
+        );
+        prev = lo;
+    }
+}
+
+/// The shorter pane used to be pushed offsets past its own end on every
+/// scroll tick, so it painted over-scrolled frames and jittered.
+#[gpui_kit::test]
+fn diff_panes_stay_locked_when_one_is_shorter(cx: &mut TestAppContext) {
+    for (conflict, left_lines, right_lines) in
+        [
+            (true, 150, 400),
+            (true, 400, 150),
+            // A pane that fits in the viewport (max offset 0) must not pin
+            // the longer one to the top.
+            (true, 10, 400),
+            (false, 10, 400),
+        ]
+    {
+        let label = format!(
+            "{} {left_lines}|{right_lines}",
+            if conflict { "conflict" } else { "change" }
+        );
+        let h = Harness::new(cx);
+        h.open_diff_texts(
+            conflict,
+            &numbered(left_lines, "ours"),
+            &numbered(right_lines, "theirs"),
+            cx,
+        );
+        h.render_frames(3, cx);
+        let (l, r) = h.diff_panes(cx);
+        let (lb, rb) = cx.read(|cx| (l.read(cx).input_bounds(), r.read(cx).input_bounds()));
+        // Scroll all the way down then back up over each pane in turn, well
+        // past the shorter pane's last line.
+        for (side, bounds) in [("left", lb), ("right", rb)] {
+            let label = format!("{label}, over {side}");
+            assert_locked_scroll(&h, &label, bounds.center(), -360., 24, cx);
+            assert_locked_scroll(&h, &label, bounds.center(), 360., 24, cx);
+            let top = cx.read(|cx| f32::from(l.read(cx).scroll_offset().y));
+            assert_eq!(top, 0., "{label}: did not return to the top");
+        }
+    }
+}
+
+/// Opening / refreshing a diff in place re-equalises the panes.
+#[gpui_kit::test]
+fn reopened_diff_keeps_panes_locked(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.open_diff_texts(true, &numbered(400, "a"), &numbered(400, "b"), cx);
+    // Same tab, now with a much shorter left side (the in-place refresh path).
+    h.open_diff_texts(true, &numbered(100, "a"), &numbered(400, "b"), cx);
+    h.render_frames(3, cx);
+    let (_, r) = h.diff_panes(cx);
+    let rb = cx.read(|cx| r.read(cx).input_bounds());
+    assert_locked_scroll(&h, "reopened", rb.center(), -360., 24, cx);
 }

@@ -262,10 +262,9 @@ pub fn detect_repo_op(root: &Path) -> Option<RepoOp> {
     if git_path_exists(root, "CHERRY_PICK_HEAD") {
         return Some(RepoOp::CherryPick);
     }
-    if git_path_exists(root, "REBASE_HEAD")
-        || git_path_exists(root, "rebase-merge")
-        || git_path_exists(root, "rebase-apply")
-    {
+    // Not `REBASE_HEAD`: git can leave it behind after a finished rebase, and
+    // git itself only counts these two directories as "rebase in progress".
+    if git_path_exists(root, "rebase-merge") || git_path_exists(root, "rebase-apply") {
         return Some(RepoOp::Rebase);
     }
     None
@@ -1099,6 +1098,33 @@ DD both_deleted.rs\n";
         assert!(u_paths.contains(&"both_deleted.rs"));
         assert_eq!(changes[3].status, 'M');
         assert_eq!(changes[4].status, '?');
+    }
+
+    /// A leftover `REBASE_HEAD` (git keeps it after a rebase that stopped on a
+    /// conflict and was then continued) must not read as a rebase in progress.
+    #[test]
+    fn stale_rebase_head_is_not_a_rebase_in_progress() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let git_dir = root.join(".git");
+        fs::write(git_dir.join("REBASE_HEAD"), "0".repeat(40)).unwrap();
+        assert_eq!(detect_repo_op(&root), None, "REBASE_HEAD alone");
+
+        fs::create_dir(git_dir.join("rebase-merge")).unwrap();
+        assert!(matches!(detect_repo_op(&root), Some(RepoOp::Rebase)));
+        fs::remove_dir(git_dir.join("rebase-merge")).unwrap();
+
+        fs::create_dir(git_dir.join("rebase-apply")).unwrap();
+        assert!(matches!(detect_repo_op(&root), Some(RepoOp::Rebase)));
     }
 
     #[test]

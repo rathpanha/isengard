@@ -3,6 +3,17 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Source Control: a leftover `.git/REBASE_HEAD` (git keeps it
+  after a rebase that hit a conflict and was continued) no longer shows
+  "Rebase in progress" and disables Pull / Push / Discard; only
+  `rebase-merge` / `rebase-apply` count, like git itself.
+- **2026-10-30** — Fix the shorter pane of the Diff / Conflict view jittering
+  (scrolling up and down by itself) while the longer pane is scrolled: the
+  panes share one scroll offset but had different scroll extents, so every
+  push overshot the shorter pane's end and it painted an over-scrolled frame
+  before clamping back. Both panes now get the same extent (shorter one padded
+  via `scroll_beyond_last_line`); the mouse-driven sync from v0.2.2 is
+  unchanged.
 - **2026-10-30** — Release prep v0.2.3 (v0.2.2 CI failed on flaky tests, never
   published): terminal reader task now polls on the scheduler clock under
   `cfg(test)` (cross-thread wakeup panic in `ui_tests`); version bump, notes

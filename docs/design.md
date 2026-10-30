@@ -527,7 +527,8 @@ Add a row here whenever a new shared component is created.
   changes header (confirms; `reset --hard` + `clean -fd`). Header Refresh
   is ghost icon-only. Pull is `--ff-only`. Click a change opens a
   **read-only** side-by-side preview tab (equal HEAD | Working Tree
-  panes; locked scroll; opens scrolled to the first change; deleted
+  panes; locked scroll — the shorter pane is padded with empty bottom rows so
+  both share one scroll extent; opens scrolled to the first change; deleted
   lines danger-fill / inserted success-fill; overview ruler ticks; not
   editable). System `git` on PATH; errors toast.
   Refresh on view open / workspace change / after actions / Refresh /
