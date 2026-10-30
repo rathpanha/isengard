@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Release prep v0.2.4 (diff / conflict scroll jitter, stale
+  `REBASE_HEAD` banner): version bump, `docs/releases/v0.2.4.md`, status
+  release lines.
 - **2026-10-30** — Source Control: a leftover `.git/REBASE_HEAD` (git keeps it
   after a rebase that hit a conflict and was continued) no longer shows
   "Rebase in progress" and disables Pull / Push / Discard; only
