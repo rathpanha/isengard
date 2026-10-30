@@ -722,7 +722,7 @@ fn agent_turn_end_refreshes_stale_push_badge(cx: &mut TestAppContext) {
         app.sidebar_view = super::SidebarView::Git;
         app.sidebar_visible = true;
         app.git.update(cx, |git, cx| {
-            git.seed_repo_status_for_test(root.clone(), "proj", "main", 2, 0, &[], window, cx);
+            git.seed_repo_status_for_test(root.clone(), ("proj", "main"), (2, 0), &[], window, cx);
         });
         cx.notify();
     });

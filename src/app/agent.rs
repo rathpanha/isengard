@@ -219,12 +219,14 @@ impl IsengardApp {
         };
         let panel = cx.new(|cx| {
             AgentPanel::new(
-                roots,
-                settings,
-                saved.chats,
-                saved.active,
-                prefs,
-                awaiting_pick,
+                crate::agent::AgentPanelOpen {
+                    roots,
+                    settings,
+                    chats: saved.chats,
+                    active: saved.active,
+                    prefs,
+                    awaiting_pick,
+                },
                 window,
                 cx,
             )

@@ -7,5 +7,5 @@ mod panel;
 mod prompt;
 mod slash;
 
-pub use panel::{AgentPanel, AgentPanelEvent};
+pub use panel::{AgentPanel, AgentPanelEvent, AgentPanelOpen};
 pub use prompt::{Attachment, LineRange, image_from_path, line_at_offset};

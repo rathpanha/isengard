@@ -1,11 +1,11 @@
 # Current status
 
-Shipping editor (v0.1.17): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.2.0): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
-Control, Claude Agent panel (ACP), and in-app updates on Linux / macOS /
-Windows. Early phased plan (egui → Kit → Agent v1) is finished — do not treat
-“Phase 5” as open work. Gaps and deferred items are only under **Known
-issues** and **Roadmap** below.
+Control, Claude + Cursor Agent panel (ACP), and in-app updates on Linux /
+macOS / Windows. Early phased plan (egui → Kit → Agent v1) is finished — do
+not treat “Phase 5” as open work. Gaps and deferred items are only under
+**Known issues** and **Roadmap** below.
 
 What works today:
 
@@ -323,7 +323,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.1.17 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.2.0 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -340,7 +340,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.1.17.md](releases/v0.1.17.md). Human install:
+- Notes: [docs/releases/v0.2.0.md](releases/v0.2.0.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap
@@ -368,7 +368,7 @@ stdio; panel UX stays capability-gated because much of it is Claude-shaped
 | **2** | Process-level agent switch in the panel (Claude vs Cursor vs custom), persist, reconnect. Install follows the selected agent. | **done (Claude ↔ Cursor)** — per-workspace `sessions.*.agent` + picker once, header logo+chevron Switch, remount/Install; custom global `agent.command` only (no picker). Remove affordance still deferred |
 | **3** | Capability-gated UI: Opus Plan / plan-limits / subagent-model / Claude-only chrome only when that agent advertises them; silent jobs (Improve / titles / Git Suggest) only if multi-session works | **partial** — Git Suggest menu: Generate + Claude|Cursor (may switch panel); client `_meta.parameterizedModelPicker` so Cursor advertises Model/Fast/Context/Effort like the IDE; OpusPlan still Claude-only |
 | **4** | Optional Cursor extensions: `cursor/ask_question` (blocking, highest priority), then `create_plan` / `update_todos`, then `task` / `generate_image` | **partial** — `cursor/create_plan` → plan card + Build it (Agent mode + continue); `ask_question` / todos / task / image still deferred |
-| **5** | README / release notes: Cursor Install is app-local like Claude; Cursor.app optional; subscription still required | with 2 |
+| **5** | README / release notes: Cursor Install is app-local like Claude; Cursor.app optional; subscription still required | **done** (v0.2.0 notes) |
 
 **Claude vs Cursor gaps (living):** Cursor binary from Cursor’s lab download
 (app-local), not `@agentclientprotocol/*`; needs Cursor subscription / login;

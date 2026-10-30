@@ -456,6 +456,17 @@ fn render_image_thumb(thumb: &ImageThumb, id: SharedString, border: Hsla) -> Any
         .into_any_element()
 }
 
+/// Inputs for [`AgentPanel::new`] (keeps the constructor under clippy's
+/// argument-count lint).
+pub struct AgentPanelOpen {
+    pub roots: Vec<PathBuf>,
+    pub settings: AgentSettings,
+    pub chats: Vec<AgentChat>,
+    pub active: Option<String>,
+    pub prefs: AgentPrefs,
+    pub awaiting_pick: bool,
+}
+
 pub struct AgentPanel {
     settings: AgentSettings,
     /// Workspace roots: the agent runs in the first, sees all of them.
@@ -835,16 +846,15 @@ fn relative_time(then: u64, now: u64) -> String {
 }
 
 impl AgentPanel {
-    pub fn new(
-        roots: Vec<PathBuf>,
-        settings: AgentSettings,
-        chats: Vec<AgentChat>,
-        active: Option<String>,
-        prefs: AgentPrefs,
-        awaiting_pick: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(open: AgentPanelOpen, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let AgentPanelOpen {
+            roots,
+            settings,
+            chats,
+            active,
+            prefs,
+            awaiting_pick,
+        } = open;
         // Plan limits come from Claude's own login; skip for custom agents
         // and in tests (no network).
         let polls_limits = !cfg!(test) && settings.command.is_none() && !awaiting_pick;
@@ -3799,17 +3809,16 @@ impl AgentPanel {
     fn switch_to_agent_mode(&mut self, cx: &mut Context<Self>) {
         if let Some(sel) =
             find_select(&self.config_options, Some(SessionConfigOptionCategory::Mode), "mode")
-        {
-            if let Some((id, _)) = sel.choices.iter().find(|(id, name)| {
+            && let Some((id, _)) = sel.choices.iter().find(|(id, name)| {
                 id.eq_ignore_ascii_case("agent") || name.eq_ignore_ascii_case("Agent")
-            }) {
-                // Keep legacy mode state in sync (same as the Mode picker).
-                if let Some(modes) = &mut self.modes {
-                    modes.current_mode_id = id.clone().into();
-                }
-                self.set_config_value(sel.config_id.clone(), id.clone(), cx);
-                return;
+            })
+        {
+            // Keep legacy mode state in sync (same as the Mode picker).
+            if let Some(modes) = &mut self.modes {
+                modes.current_mode_id = id.clone().into();
             }
+            self.set_config_value(sel.config_id.clone(), id.clone(), cx);
+            return;
         }
         if let Some(modes) = &self.modes
             && let Some(m) = modes.available_modes.iter().find(|m| {

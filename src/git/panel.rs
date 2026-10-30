@@ -479,7 +479,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.seed_repo_status_for_test(root, label, branch, 0, 0, rel_paths, window, cx);
+        self.seed_repo_status_for_test(root, (label, branch), (0, 0), rel_paths, window, cx);
     }
 
     /// Seed a repo section including ahead/behind (stale Push/Pull badge tests).
@@ -487,14 +487,14 @@ impl GitPanel {
     pub fn seed_repo_status_for_test(
         &mut self,
         root: PathBuf,
-        label: &str,
-        branch: &str,
-        ahead: u32,
-        behind: u32,
+        identity: (&str, &str),
+        sync: (u32, u32),
         rel_paths: &[&str],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (label, branch) = identity;
+        let (ahead, behind) = sync;
         let changes: Vec<GitChange> = rel_paths
             .iter()
             .map(|rel| GitChange {

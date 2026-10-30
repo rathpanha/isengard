@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Release prep v0.2.0 (Cursor ACP built-in + Source Control
+  polish): version bump, `docs/releases/v0.2.0.md`, status release lines.
 - **2026-10-30** — Source Control refreshes after every agent turn end (not
   only when worktree files change) so Push(N)/Pull(N) clear after `git push`.
 - **2026-10-30** — Source Control repo header: truncate the branch name under
