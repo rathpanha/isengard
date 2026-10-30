@@ -4184,32 +4184,32 @@ impl AgentPanel {
             }
         }
         let pending = std::mem::take(&mut self.turn_file_changes);
-        if pending.is_empty() {
-            return;
+        if !pending.is_empty() {
+            let mut files: Vec<FileChangeRow> = pending.into_values().map(|p| p.row()).collect();
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            // Drop no-ops (write same content, or delete already-empty).
+            files.retain(|f| f.added > 0 || f.removed > 0 || f.deleted);
+            if !files.is_empty() {
+                // User count already includes this turn's bubble.
+                let turn = self
+                    .entries
+                    .iter()
+                    .filter(|e| matches!(e, Entry::User { .. }))
+                    .count()
+                    .saturating_sub(1) as u32;
+                self.remember_file_changes(turn, &files, cx);
+                self.push_entry(
+                    Entry::FileChanges {
+                        files,
+                        expanded: false,
+                    },
+                    cx,
+                );
+            }
         }
-        let mut files: Vec<FileChangeRow> = pending.into_values().map(|p| p.row()).collect();
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        // Drop no-ops (write same content, or delete already-empty).
-        files.retain(|f| f.added > 0 || f.removed > 0 || f.deleted);
-        if files.is_empty() {
-            return;
-        }
-        // User count already includes this turn's bubble.
-        let turn = self
-            .entries
-            .iter()
-            .filter(|e| matches!(e, Entry::User { .. }))
-            .count()
-            .saturating_sub(1) as u32;
-        self.remember_file_changes(turn, &files, cx);
-        self.push_entry(
-            Entry::FileChanges {
-                files,
-                expanded: false,
-            },
-            cx,
-        );
-        // Shell edits never went through WriteFile — refresh Source Control.
+        // Always refresh Source Control. `git push` / fetch / commit only
+        // touch `.git` (FS watcher ignores it), so a worktree-delta-only
+        // refresh left Push(N) / Pull(N) stale until manual Refresh.
         cx.emit(AgentPanelEvent::WorkspaceTouched);
     }
 

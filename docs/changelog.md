@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Source Control refreshes after every agent turn end (not
+  only when worktree files change) so Push(N)/Pull(N) clear after `git push`.
 - **2026-10-30** — Source Control repo header: truncate the branch name under
   width pressure, not the repo label.
 - **2026-10-30** — Cursor **Build it**: after accept, always queue a continue

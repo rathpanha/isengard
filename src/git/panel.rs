@@ -479,6 +479,22 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.seed_repo_status_for_test(root, label, branch, 0, 0, rel_paths, window, cx);
+    }
+
+    /// Seed a repo section including ahead/behind (stale Push/Pull badge tests).
+    #[cfg(test)]
+    pub fn seed_repo_status_for_test(
+        &mut self,
+        root: PathBuf,
+        label: &str,
+        branch: &str,
+        ahead: u32,
+        behind: u32,
+        rel_paths: &[&str],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let changes: Vec<GitChange> = rel_paths
             .iter()
             .map(|rel| GitChange {
@@ -493,8 +509,8 @@ impl GitPanel {
             root: root.clone(),
             branch: branch.into(),
             changes,
-            ahead: 0,
-            behind: 0,
+            ahead,
+            behind,
             op: None,
             error: None,
         };
@@ -505,6 +521,14 @@ impl GitPanel {
             section.selected = selected;
         }
         cx.notify();
+    }
+
+    /// Ahead/behind for the first section (Push/Pull badge UI tests).
+    #[cfg(test)]
+    pub fn ahead_behind_for_test(&self) -> Option<(u32, u32)> {
+        self.sections
+            .first()
+            .map(|s| (s.status.ahead, s.status.behind))
     }
 
     /// Commit-box draft for a repo (Suggest UI tests).

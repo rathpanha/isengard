@@ -491,7 +491,9 @@ src/
   that chat, else `Load(id)` (agent replays it as updates, user chunks
   merged into one bubble; **N Files** cards are not in ACP history — they
   live on `AgentChat.file_changes` and are spliced in after Load), else
-  `New`. One open chat per connection
+  `New`. Turn end always emits `WorkspaceTouched` → `GitPanel::refresh`
+  (push/fetch only touch `.git`, which FS watch ignores). One open chat per
+  connection
   (`session/close` the previous); updates are filtered by session id;
   `opens_in_flight` ignores answers to superseded opens. Roots: the
   connection gets every workspace folder (`roots[0]` = session cwd, rest =

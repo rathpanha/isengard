@@ -677,6 +677,72 @@ fn agent_edit_tool_without_write_rpc_shows_file_summary(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn agent_turn_end_refreshes_stale_push_badge(cx: &mut TestAppContext) {
+    // `git push` only updates `.git` (ignored by FS watch) and leaves no
+    // worktree file delta — turn-end must still refresh so Push(N) clears.
+    let h = Harness::new(cx);
+    let root = h.dir.path().to_path_buf();
+    assert!(
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.email", "test@example.com"])
+        .current_dir(&root)
+        .status();
+    let _ = std::process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&root)
+        .status();
+    h.file("tracked.txt", "ok\n");
+    assert!(
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    h.open_folder(&root, cx);
+    h.press("secondary-shift-b", cx);
+    h.with_app(cx, |app, window, cx| {
+        app.sidebar_view = super::SidebarView::Git;
+        app.sidebar_visible = true;
+        app.git.update(cx, |git, cx| {
+            git.seed_repo_status_for_test(root.clone(), "proj", "main", 2, 0, &[], window, cx);
+        });
+        cx.notify();
+    });
+    assert_eq!(
+        cx.read(|cx| h.app.read(cx).git.read(cx).ahead_behind_for_test()),
+        Some((2, 0)),
+        "stale Push(2) seeded"
+    );
+
+    let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
+    panel.update(cx, |panel, cx| {
+        panel.begin_turn_file_tracking_for_test();
+        panel.flush_file_changes_for_test(cx);
+    });
+    h.wait_for(cx, "Push badge cleared by turn-end refresh", |cx| {
+        cx.read(|cx| h.app.read(cx).git.read(cx).ahead_behind_for_test() == Some((0, 0)))
+    });
+}
+
+#[gpui_kit::test]
 fn agent_shell_style_git_edits_show_file_summary(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let root = h.dir.path().to_path_buf();
@@ -1415,13 +1481,25 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
         let panel = h.app.read(cx).agent.clone().unwrap();
         panel.update(cx, |panel, cx| {
             panel.set_model_context_for_test("1M", cx);
-            panel.set_fast_mode_for_test(true, cx);
         });
     });
-    h.wait_for(cx, "context 1M + fast on", |_cx| {
-        let calls = agent.calls();
-        calls.iter().any(|c| c == "set_config model=sonnet-4-6[1m]")
-            && calls.iter().any(|c| c == "set_config fast_mode=on")
+    // A model change drops Fast until the agent's reply restores it, so Fast
+    // can only be toggled once the new model's options have arrived.
+    h.wait_for(cx, "context 1M + fast option back", |cx| {
+        cx.read(|cx| {
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                let a = a.read(cx);
+                a.current_model_id().as_deref() == Some("sonnet-4-6[1m]")
+                    && a.fast_mode_on().is_some()
+            })
+        })
+    });
+    cx.update(|cx| {
+        let panel = h.app.read(cx).agent.clone().unwrap();
+        panel.update(cx, |panel, cx| panel.set_fast_mode_for_test(true, cx));
+    });
+    h.wait_for(cx, "fast on", |_cx| {
+        agent.calls().iter().any(|c| c == "set_config fast_mode=on")
     });
     h.wait_for(cx, "1M + fast applied", |cx| {
         cx.read(|cx| {

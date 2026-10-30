@@ -121,7 +121,8 @@ What works today:
   Open File + discard;
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
-  dirty); refreshes when the agent touches the worktree (no manual
+  dirty); refreshes when the agent touches the worktree **or** a turn
+  ends (covers `git push` / fetch — `.git` is not FS-watched; no manual
   Refresh). Merge/rebase/cherry-pick surfaced as a status line + `U` rows
   first (red while conflicts remain, yellow when cleared); conflict opens
   Current | Incoming tab (locked scroll; Accept chip on each hunk +
