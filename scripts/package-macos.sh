@@ -72,10 +72,27 @@ NAME="isengard-${VERSION}-macos-${ARCH}"
 COPYFILE_DISABLE=1 tar -C "$TMP/stage" -czf "$DIST/$NAME.tar.gz" Isengard.app
 
 # DMG: drag-to-Applications image for people who download from a browser.
+# No `-quiet`: GHA runners sometimes fail hdiutil with no message (and leave a
+# `diskimages-helper` orphan). Retry a few times — same flake hit v0.2.0 CI.
 mkdir -p "$TMP/dmg"
 cp -R "$APP" "$TMP/dmg/Isengard.app"
 ln -s /Applications "$TMP/dmg/Applications"
-hdiutil create -quiet -volname "Isengard" -srcfolder "$TMP/dmg" -ov -format UDZO "$DIST/$NAME.dmg"
+dmg_ok=0
+for attempt in 1 2 3; do
+  echo "hdiutil create (attempt $attempt)…"
+  if hdiutil create -volname "Isengard" -srcfolder "$TMP/dmg" -ov -format UDZO \
+    "$DIST/$NAME.dmg"; then
+    dmg_ok=1
+    break
+  fi
+  echo "hdiutil failed (attempt $attempt); sleeping before retry…" >&2
+  rm -f "$DIST/$NAME.dmg"
+  sleep $((attempt * 5))
+done
+if [[ "$dmg_ok" -ne 1 ]]; then
+  echo "error: hdiutil create failed after retries" >&2
+  exit 1
+fi
 
 (
   cd "$DIST"
