@@ -3,6 +3,10 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Release prep v0.2.3 (v0.2.2 CI failed on flaky tests, never
+  published): terminal reader task now polls on the scheduler clock under
+  `cfg(test)` (cross-thread wakeup panic in `ui_tests`); version bump, notes
+  moved to `docs/releases/v0.2.3.md`.
 - **2026-10-30** — Release prep v0.2.2 (diff scroll fix, agent subagent-model /
   reject-plan fixes): version bump, `docs/releases/v0.2.2.md`, status release lines.
 - **2026-10-30** — Agent: changing the subagent model no longer restarts the

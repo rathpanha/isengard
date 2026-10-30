@@ -539,7 +539,7 @@ impl TerminalView {
         let reader_task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             loop {
                 // Wait for bytes from the background reader (blocks until data arrives)
-                match bytes_rx.recv_async().await {
+                match next_bytes(&bytes_rx, cx).await {
                     Ok(bytes) => {
                         // Process bytes and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
@@ -1346,3 +1346,31 @@ impl Render for TerminalView {
 
 // Tests are omitted due to macro expansion issues with the test attribute
 // in this configuration. Integration tests can be added separately.
+
+#[cfg(not(test))]
+async fn next_bytes(
+    rx: &flume::Receiver<Vec<u8>>,
+    _: &mut AsyncApp,
+) -> Result<Vec<u8>, flume::RecvError> {
+    rx.recv_async().await
+}
+
+/// GPUI's test scheduler rejects wakeups from other threads (the PTY reader
+/// thread), so tests poll on the scheduler's own clock instead.
+#[cfg(test)]
+async fn next_bytes(
+    rx: &flume::Receiver<Vec<u8>>,
+    cx: &mut AsyncApp,
+) -> Result<Vec<u8>, flume::RecvError> {
+    loop {
+        match rx.try_recv() {
+            Ok(bytes) => return Ok(bytes),
+            Err(flume::TryRecvError::Disconnected) => return Err(flume::RecvError::Disconnected),
+            Err(flume::TryRecvError::Empty) => {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(5))
+                    .await
+            }
+        }
+    }
+}
