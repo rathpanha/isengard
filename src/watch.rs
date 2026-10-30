@@ -11,6 +11,10 @@
 //! ReadDirectoryChangesW). No tree walk — those backends do not pay the
 //! Linux per-directory watch cost.
 //!
+//! `.git` is skipped like other VCS dirs, except a whitelist of repo-state
+//! paths ([`is_git_state`]: `HEAD`, `index`, refs, merge / rebase markers) so
+//! Source Control notices commits, pulls and rebases made outside the app.
+//!
 //! A dedicated thread creates and owns the `notify` watcher (moving a macOS
 //! FSEvents watcher across threads after `watch()` is unreliable). The app
 //! still debounces in `app/watch.rs`.
@@ -73,6 +77,10 @@ impl FsWatcher {
                 // the top level already covered. Linux still walks descendants
                 // after ready (that walk used to beachball the UI).
                 watch_roots_shallow(&mut watcher, &roots);
+                #[cfg(target_os = "linux")]
+                for root in &roots {
+                    watch_git_state(&mut watcher, root);
+                }
                 let _ = ready_tx.send(Ok(()));
                 #[cfg(target_os = "linux")]
                 for root in &roots {
@@ -141,6 +149,18 @@ fn apply_raw_event(
             | EventKind::Modify(notify::event::ModifyKind::Name(_))
     );
     for path in event.paths {
+        if is_git_state(&path) {
+            // New ref dirs (`refs/remotes/<new remote>`) need their own watch.
+            #[cfg(target_os = "linux")]
+            if matches!(event.kind, EventKind::Create(_)) && path.is_dir() {
+                watch_ref_tree(watcher, &path);
+            }
+            let _ = event_tx.send(FsChange {
+                path,
+                structural: false,
+            });
+            continue;
+        }
         if is_ignored(&path) {
             continue;
         }
@@ -177,6 +197,62 @@ fn watch_dir_tree(watcher: &mut RecommendedWatcher, dir: &Path) {
     }
 }
 
+/// Linux only: non-recursive watch on `<root>/.git` (HEAD, index, markers) and
+/// every dir under its `refs/`. `.git/objects` is never watched.
+#[cfg(target_os = "linux")]
+fn watch_git_state(watcher: &mut RecommendedWatcher, root: &Path) {
+    let git = root.join(".git");
+    if !git.is_dir() {
+        return;
+    }
+    if let Err(err) = watcher.watch(&git, RecursiveMode::NonRecursive) {
+        log::warn!("watch {}: {err}", git.display());
+        return;
+    }
+    watch_ref_tree(watcher, &git.join("refs"));
+}
+
+#[cfg(target_os = "linux")]
+fn watch_ref_tree(watcher: &mut RecommendedWatcher, dir: &Path) {
+    if watcher.watch(dir, RecursiveMode::NonRecursive).is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|ft| ft.is_dir() && !ft.is_symlink()) {
+            watch_ref_tree(watcher, &entry.path());
+        }
+    }
+}
+
+/// Repo-state paths inside a `.git` dir that Source Control cares about.
+/// Everything else under `.git` (objects, logs, `*.lock`, `FETCH_HEAD`) is noise.
+fn is_git_state(path: &Path) -> bool {
+    use std::path::Component;
+    let comps: Vec<Component> = path.components().collect();
+    let Some(i) = comps
+        .iter()
+        .position(|c| c.as_os_str() == std::ffi::OsStr::new(".git"))
+    else {
+        return false;
+    };
+    let rest = &comps[i + 1..];
+    let Some(first) = rest.first().and_then(|c| c.as_os_str().to_str()) else {
+        return false;
+    };
+    match first {
+        "HEAD" | "index" | "packed-refs" | "MERGE_HEAD" | "CHERRY_PICK_HEAD"
+        | "REVERT_HEAD" | "REBASE_HEAD" | "rebase-merge" | "rebase-apply" => rest.len() == 1,
+        "refs" => !rest
+            .last()
+            .and_then(|c| c.as_os_str().to_str())
+            .is_some_and(|n| n.ends_with(".lock")),
+        _ => false,
+    }
+}
+
 fn is_ignored(path: &Path) -> bool {
     path.components().any(|c| {
         SKIP_COMPONENTS
@@ -187,7 +263,7 @@ fn is_ignored(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{FsWatcher, is_ignored};
+    use super::{FsWatcher, is_git_state, is_ignored};
     use std::path::Path;
     use std::time::{Duration, Instant};
 
@@ -206,6 +282,94 @@ mod tests {
         assert!(is_ignored(Path::new("/p/app/.next/cache")));
         assert!(is_ignored(Path::new("/p/.venv/lib/x")));
         assert!(!is_ignored(Path::new("/p/src/main.rs")));
+    }
+
+    #[test]
+    fn git_state_whitelist() {
+        for yes in [
+            "/p/.git/HEAD",
+            "/p/.git/index",
+            "/p/.git/MERGE_HEAD",
+            "/p/.git/rebase-merge",
+            "/p/.git/refs/heads/master",
+            "/p/.git/refs/remotes/origin/master",
+            "/p/.git/packed-refs",
+        ] {
+            assert!(is_git_state(Path::new(yes)), "{yes}");
+        }
+        for no in [
+            "/p/.git/index.lock",
+            "/p/.git/HEAD.lock",
+            "/p/.git/refs/heads/master.lock",
+            "/p/.git/objects/ab/cdef",
+            "/p/.git/logs/HEAD",
+            "/p/.git/FETCH_HEAD",
+            "/p/.git/rebase-merge/git-rebase-todo",
+            "/p/src/main.rs",
+        ] {
+            assert!(!is_git_state(Path::new(no)), "{no}");
+        }
+    }
+
+    #[test]
+    fn reports_git_state_but_not_objects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let git = root.join(".git");
+        std::fs::create_dir_all(git.join("refs/heads")).unwrap();
+        std::fs::create_dir_all(git.join("objects")).unwrap();
+        let watcher = FsWatcher::new(std::slice::from_ref(&root)).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+
+        std::fs::write(git.join("objects/junk"), "x").unwrap();
+        std::fs::write(git.join("index.lock"), "x").unwrap();
+        assert!(
+            watcher.events().recv_timeout(Duration::from_millis(600)).is_err(),
+            "objects / lock files must stay silent"
+        );
+
+        std::fs::create_dir_all(git.join("rebase-merge")).unwrap();
+        let got = watcher.events().recv_timeout(Duration::from_secs(5));
+        assert!(got.is_ok(), "rebase-merge should be reported");
+        std::fs::write(git.join("refs/heads/topic"), "abc").unwrap();
+        let mut seen = false;
+        while let Ok(c) = watcher.events().recv_timeout(Duration::from_secs(5)) {
+            if c.path.ends_with("refs/heads/topic") {
+                seen = true;
+                break;
+            }
+        }
+        assert!(seen, "ref update should be reported");
+    }
+
+    /// A status read must not touch `.git/index`, or the watcher would loop.
+    #[test]
+    fn status_read_does_not_trigger_git_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        run(&["init", "-q"]);
+        std::fs::write(root.join("a.txt"), "hi").unwrap();
+        run(&["add", "a.txt"]);
+        // Make the index's cached stat data stale so a plain `status` would rewrite it.
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(root.join("a.txt"), "hi").unwrap();
+        let watcher = FsWatcher::new(std::slice::from_ref(&root)).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        while watcher.events().try_recv().is_ok() {}
+
+        crate::git::load_workspace_status(std::slice::from_ref(&root));
+        assert!(
+            watcher.events().recv_timeout(Duration::from_millis(800)).is_err(),
+            "status refresh must not produce watcher events"
+        );
     }
 
     #[test]

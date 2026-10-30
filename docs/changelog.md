@@ -3,7 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
-- **2026-10-30** — Release prep v0.2.1 (Windows console-window fix): version
+- **2026-10-30** — Source Control refreshes on `.git` state changes (HEAD,
+  index, refs, merge / rebase markers) so terminal commits, pulls and rebases
+  no longer leave a stale "Rebase in progress"; git calls use
+  `--no-optional-locks` to avoid a watcher feedback loop.
+- **2026-10-30** — Release prep v0.2.1 (Windows console-window fix, `.git`
+  state refresh): version
   bump, `docs/releases/v0.2.1.md`, status release lines.
 - **2026-10-30** — Windows: subprocesses (git, Bun, LSP servers, `go`) spawn
   via `process::command` with `CREATE_NO_WINDOW`, so release builds no longer

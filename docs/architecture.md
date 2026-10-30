@@ -494,7 +494,8 @@ src/
   merged into one bubble; **N Files** cards are not in ACP history — they
   live on `AgentChat.file_changes` and are spliced in after Load), else
   `New`. Turn end always emits `WorkspaceTouched` → `GitPanel::refresh`
-  (push/fetch only touch `.git`, which FS watch ignores). One open chat per
+  (fetch may only touch `.git/FETCH_HEAD`, which FS watch ignores; ref and
+  HEAD changes are picked up by the watcher). One open chat per
   connection
   (`session/close` the previous); updates are filtered by session id;
   `opens_in_flight` ignores answers to superseded opens. Roots: the

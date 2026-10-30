@@ -121,7 +121,10 @@ fn git_blob(cwd: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_inner(cwd: &Path, args: &[&str], trim_stdout: bool) -> Result<String, String> {
+    // No optional locks: a status read must not rewrite `.git/index`, or the
+    // `.git` watcher (`watch.rs`) would re-trigger itself.
     let output = crate::process::command("git")
+        .arg("--no-optional-locks")
         .arg("-C")
         .arg(cwd)
         .args(args)

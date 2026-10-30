@@ -122,8 +122,8 @@ What works today:
   Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
   dirty); refreshes when the agent touches the worktree **or** a turn
-  ends (covers `git push` / fetch — `.git` is not FS-watched; no manual
-  Refresh). Merge/rebase/cherry-pick surfaced as a status line + `U` rows
+  ends, and when `.git` repo state changes (HEAD, index, refs, merge / rebase
+  markers — commits, pulls, rebases from a terminal); no manual Refresh). Merge/rebase/cherry-pick surfaced as a status line + `U` rows
   first (red while conflicts remain, yellow when cleared); conflict opens
   Current | Incoming tab (locked scroll; Accept chip on each hunk +
   whole-file Accept); Commit refuses leftover markers
@@ -136,7 +136,9 @@ What works today:
   **clean** open tabs, refresh loaded tree directories on create/remove/rename
   (expand state kept), and refresh Source Control. A tab with unsaved edits is
   never overwritten: one warning toast per divergence, and Save still writes
-  the buffer.
+  the buffer. `.git` is otherwise ignored; only repo-state paths are reported
+  (`watch::is_git_state`), and every git call uses `--no-optional-locks` so
+  a status read cannot rewrite `.git/index` and re-trigger the watcher.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
   dir / root) or while an agent turn or a terminal foreground process (Unix) is running
