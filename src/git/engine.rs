@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// One dirty / untracked / renamed path in a repo.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,7 +121,7 @@ fn git_blob(cwd: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_inner(cwd: &Path, args: &[&str], trim_stdout: bool) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = crate::process::command("git")
         .arg("-C")
         .arg(cwd)
         .args(args)

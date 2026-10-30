@@ -6,7 +6,7 @@
 use std::fs;
 use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// `bun`, if installed anywhere we look.
 pub fn bun_path() -> Option<PathBuf> {
@@ -91,7 +91,7 @@ pub fn bun_fmt(path: &Path, text: &str, tab_size: usize) -> Result<Option<String
     let Some(bun) = bun_path() else {
         return Ok(None);
     };
-    let mut cmd = Command::new(bun);
+    let mut cmd = crate::process::command(bun);
     cmd.args(["fmt", "--no-script", "--config-precedence=prefer-file"])
         .arg("--stdin-filepath")
         .arg(path)

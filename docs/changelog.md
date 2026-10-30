@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Windows: subprocesses (git, Bun, LSP servers, `go`) spawn
+  via `process::command` with `CREATE_NO_WINDOW`, so release builds no longer
+  flash console windows on Open Folder / LSP install.
 - **2026-10-30** — macOS package script: drop `hdiutil -quiet`, retry DMG
   create (v0.2.0 Release CI failed silently after a green universal build).
 - **2026-10-30** — README: Claude + Cursor as built-in ACP agents (picker,

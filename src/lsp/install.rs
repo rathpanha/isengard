@@ -7,7 +7,6 @@
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use flate2::read::GzDecoder;
 use tar::Archive;
@@ -587,7 +586,7 @@ pub fn is_server_ready(command: &str) -> bool {
     // rustup ships a PATH shim that exists before `rustup component add`.
     // App-local downloads are real binaries — skip the shim check for those.
     if name == "rust-analyzer" && !is_app_local(command) {
-        return Command::new(&path)
+        return crate::process::command(&path)
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -737,7 +736,7 @@ fn find_member(root: &Path, member: &str) -> Option<PathBuf> {
 fn install_go(module: &str, version: &str, root: &Path) -> Result<(), String> {
     let bin = bin_dir(root);
     fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
-    let status = Command::new("go")
+    let status = crate::process::command("go")
         .args(["install", &format!("{module}@{version}")])
         .env("GOBIN", &bin)
         .stdout(std::process::Stdio::piped())
@@ -807,7 +806,7 @@ pub fn bun_install(pkg: &Path, specs: &[String]) -> Result<(), String> {
     let _ = fs::remove_dir_all(pkg);
     fs::create_dir_all(pkg).map_err(|e| e.to_string())?;
 
-    let output = Command::new(bun)
+    let output = crate::process::command(bun)
         .args(["add", "--cwd"])
         .arg(pkg)
         .args(specs)
@@ -995,7 +994,7 @@ mod tests {
         run_install_in(&recipe_for_command("bun").unwrap(), tmp.path()).unwrap();
         let bun = resolve_command_in("bun", tmp.path()).unwrap();
         assert!(bun.starts_with(tmp.path()), "app-local, not PATH: {bun:?}");
-        let out = Command::new(bun).arg("--version").output().unwrap();
+        let out = std::process::Command::new(bun).arg("--version").output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1.4.4");
     }
 

@@ -312,6 +312,8 @@ What works today:
   servers are untested there. Windows `.cmd` shims are not rewritten to Bun
   yet. `bun fmt` has no timeout.
 - Agent OS notification + sound: no Windows yet.
+- Windows: the agent (ACP) subprocess is spawned inside the SDK, not via
+  `process::command`; unverified whether it flashes a console window.
 - Terminal scrollback UI is still minimal.
 - Windows installer / updater: not yet smoke-tested on a clean PC (needs a
   second release to exercise update-to).

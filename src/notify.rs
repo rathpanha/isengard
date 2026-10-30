@@ -2,7 +2,7 @@
 //! (`notify-send` / `paplay` on Linux, `osascript` / `afplay` on macOS).
 //! Best effort: a missing tool is silently skipped.
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Mixkit "Long pop" (see docs/credits.md).
 const DONE_SOUND: &[u8] = include_bytes!("../assets/sounds/agent-done.wav");
@@ -28,7 +28,7 @@ pub fn alert(title: &str, body: &str) {
 }
 
 fn run(program: &str, args: &[&str]) -> bool {
-    Command::new(program)
+    crate::process::command(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

@@ -12,6 +12,7 @@ mod git;
 mod lsp;
 mod menus;
 mod notify;
+mod process;
 mod runtime;
 mod search;
 mod shell_env;

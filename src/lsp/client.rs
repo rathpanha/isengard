@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::BufReader;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -57,7 +57,7 @@ impl LspClient {
         // npm-packaged servers are `#!/usr/bin/env node` scripts: run them on Bun.
         let (program, args) =
             crate::runtime::run_on_bun(command.clone().into(), spec.args.clone());
-        let mut child = Command::new(&program)
+        let mut child = crate::process::command(&program)
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -238,7 +238,7 @@ fn preflight(command: &str) -> anyhow::Result<()> {
         .and_then(|n| n.to_str())
         .unwrap_or(command);
     if basename == "rust-analyzer" && !super::install::is_app_local("rust-analyzer") {
-        let status = Command::new(command)
+        let status = crate::process::command(command)
             .arg("--version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
