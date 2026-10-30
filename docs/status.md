@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.2.0): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.2.1): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude + Cursor Agent panel (ACP), and in-app updates on Linux /
 macOS / Windows. Early phased plan (egui → Kit → Agent v1) is finished — do
@@ -325,7 +325,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.2.0 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.2.1 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -342,7 +342,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.2.0.md](releases/v0.2.0.md). Human install:
+- Notes: [docs/releases/v0.2.1.md](releases/v0.2.1.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

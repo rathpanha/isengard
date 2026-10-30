@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — Release prep v0.2.1 (Windows console-window fix): version
+  bump, `docs/releases/v0.2.1.md`, status release lines.
 - **2026-10-30** — Windows: subprocesses (git, Bun, LSP servers, `go`) spawn
   via `process::command` with `CREATE_NO_WINDOW`, so release builds no longer
   flash console windows on Open Folder / LSP install.
