@@ -319,14 +319,19 @@ mod tests {
         std::fs::create_dir_all(git.join("refs/heads")).unwrap();
         std::fs::create_dir_all(git.join("objects")).unwrap();
         let watcher = FsWatcher::new(std::slice::from_ref(&root)).unwrap();
-        std::thread::sleep(Duration::from_millis(200));
+        // FSEvents (macOS) also replays the setup above; let it settle and drop it.
+        std::thread::sleep(Duration::from_millis(500));
+        while watcher.events().try_recv().is_ok() {}
 
         std::fs::write(git.join("objects/junk"), "x").unwrap();
         std::fs::write(git.join("index.lock"), "x").unwrap();
-        assert!(
-            watcher.events().recv_timeout(Duration::from_millis(600)).is_err(),
-            "objects / lock files must stay silent"
-        );
+        while let Ok(c) = watcher.events().recv_timeout(Duration::from_millis(800)) {
+            let p = c.path.to_string_lossy();
+            assert!(
+                !p.contains("objects") && !p.ends_with(".lock"),
+                "objects / lock files must stay silent, got {p}"
+            );
+        }
 
         std::fs::create_dir_all(git.join("rebase-merge")).unwrap();
         let got = watcher.events().recv_timeout(Duration::from_secs(5));
