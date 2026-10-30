@@ -13,15 +13,19 @@ Ships for **Linux** (`.deb`, `.rpm`, and a binary tarball), **macOS** (universal
   when you want to change a default.
 - **Workspaces that remember** — multi-root folders; tabs, sidebar, terminal
   layout, and agent chats restore per workspace.
-- **Claude Agent built in** — Agent panel over ACP. Install from the panel,
-  sign in with your Claude Code login (no API key stored in Isengard). `@`
-  files, permissions, plan usage, and tool runs live in the UI.
+- **Claude and Cursor Agents built in** — Agent panel over ACP. Pick Claude
+  or Cursor per workspace (remembered on restart); Install from the panel.
+  Claude uses your Claude Code login; Cursor uses your Cursor login /
+  subscription (no API keys stored in Isengard). `@` files, permissions,
+  and tool runs live in the UI; Claude also shows plan usage and Opus Plan.
 - **Model controls that matter** — pick the chat model, a separate utility
-  model for quiet jobs (titles, Improve, Git Suggest), and a Fast / Opus Plan
-  switch without digging through Claude’s own settings.
-- **Tools stay in the app** — Bun, language servers, and the agent adapter
-  install under Isengard’s data folder — not `npm -g` / brew into your
-  toolchain. Bun also formats JS/TS/JSON/CSS/HTML/YAML/Markdown on save.
+  model for quiet jobs (titles, Improve, Git Suggest), and Fast / Context /
+  Effort (plus Opus Plan on Claude) without digging through the agent’s own
+  settings.
+- **Tools stay in the app** — Bun, language servers, and agent adapters
+  (Claude + Cursor CLI) install under Isengard’s data folder — not
+  `npm -g` / brew / Cursor.app into your toolchain. Bun also formats
+  JS/TS/JSON/CSS/HTML/YAML/Markdown on save.
 - **Linux, macOS, and Windows** — Check for Updates… where the install allows.
 
 What works and what is still rough: [docs/status.md](docs/status.md).
@@ -100,8 +104,10 @@ built.
   `~/.local/share/isengard/lsp/`, macOS
   `~/Library/Application Support/isengard/lsp/` — never into your system
   toolchain).
-- **Claude Agent** is optional: Install / Login from the Agent panel. No API
-  key is stored in Isengard; you sign in with the agent’s own flow.
+- **Agents** are optional: first open asks **Claude or Cursor**; Install /
+  Login from the Agent panel. No API key is stored in Isengard — you sign in
+  with that agent’s own flow (Claude Code or Cursor). Cursor.app is not
+  required; the Cursor CLI installs app-locally like Claude.
 
 ## Build from source
 
@@ -138,10 +144,10 @@ and fill in the template. Isengard is maintained best-effort, so an issue
 ## Architecture
 
 Rust desktop app on **GPUI Kit** (Zed’s GPUI). The binary is the editor shell;
-**Bun**, language servers, and the Claude Agent adapter install on demand into
-the app data folder and run as separate processes (LSP / ACP / PTY). No Tokio
-— threads + `flume`. Full stack, process map, on-disk layout, and `src/` map:
-[docs/architecture.md](docs/architecture.md).
+**Bun**, language servers, and the Claude / Cursor Agent adapters install on
+demand into the app data folder and run as separate processes (LSP / ACP /
+PTY). No Tokio — threads + `flume`. Full stack, process map, on-disk layout,
+and `src/` map: [docs/architecture.md](docs/architecture.md).
 
 ## Docs
 

@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-10-30** — README: Claude + Cursor as built-in ACP agents (picker,
+  app-local Install, Cursor.app not required).
 - **2026-10-30** — Release prep v0.2.0 (Cursor ACP built-in + Source Control
   polish): version bump, `docs/releases/v0.2.0.md`, status release lines.
 - **2026-10-30** — Source Control refreshes after every agent turn end (not
