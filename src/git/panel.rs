@@ -465,6 +465,20 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.seed_repo_for_test(root, "proj", "main", rel_paths, window, cx);
+    }
+
+    /// Seed a repo section with an explicit label/branch (header layout tests).
+    #[cfg(test)]
+    pub fn seed_repo_for_test(
+        &mut self,
+        root: PathBuf,
+        label: &str,
+        branch: &str,
+        rel_paths: &[&str],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let changes: Vec<GitChange> = rel_paths
             .iter()
             .map(|rel| GitChange {
@@ -477,7 +491,7 @@ impl GitPanel {
         let selected: HashSet<String> = rel_paths.iter().map(|r| (*r).to_owned()).collect();
         let status = RepoStatus {
             root: root.clone(),
-            branch: "main".into(),
+            branch: branch.into(),
             changes,
             ahead: 0,
             behind: 0,
@@ -485,7 +499,7 @@ impl GitPanel {
             error: None,
         };
         let mut labels = HashMap::new();
-        labels.insert(root.clone(), "proj".into());
+        labels.insert(root.clone(), label.into());
         self.apply_statuses(vec![status], labels, window, cx);
         if let Some(section) = self.section_mut(&root) {
             section.selected = selected;
@@ -501,6 +515,15 @@ impl GitPanel {
             .find(|s| s.status.root == root)
             .map(|s| s.message.read(cx).value().to_string())
             .unwrap_or_default()
+    }
+
+    /// `(label, branch)` per section (header layout UI tests).
+    #[cfg(test)]
+    pub fn sections_for_test(&self) -> Vec<(String, String)> {
+        self.sections
+            .iter()
+            .map(|s| (s.label.clone(), s.status.branch.clone()))
+            .collect()
     }
 
     pub(crate) fn toggle_repo(&mut self, root: &Path, cx: &mut Context<Self>) {
@@ -1018,10 +1041,12 @@ impl Render for GitPanel {
                             .child(if repo_collapsed { "▸" } else { "▾" }),
                     )
                     .child(
+                        // Repo name stays fully visible; the branch ellipsizes.
                         div()
-                            .min_w_0()
-                            .flex_1()
-                            .truncate()
+                            .id(ElementId::Name(SharedString::from(format!(
+                                "git-repo-label-{si}"
+                            ))))
+                            .flex_shrink_0()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .child(label),
@@ -1041,7 +1066,13 @@ impl Render for GitPanel {
                     })
                     .child(
                         div()
-                            .flex_shrink_0()
+                            .id(ElementId::Name(SharedString::from(format!(
+                                "git-repo-branch-{si}"
+                            ))))
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_right()
                             .text_xs()
                             .text_color(muted)
                             .child(branch),

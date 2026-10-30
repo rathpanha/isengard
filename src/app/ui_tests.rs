@@ -3394,6 +3394,42 @@ fn git_repo_sections_collapse_independently(cx: &mut TestAppContext) {
     assert!(!a_again, "second toggle expands again");
 }
 
+#[gpui_kit::test]
+fn git_repo_header_shows_label_and_branch(cx: &mut TestAppContext) {
+    // Header keeps repo label + long branch (layout: branch truncates first).
+    let h = Harness::new(cx);
+    let folder = h.folder("craftbox");
+    h.open_folder(&folder, cx);
+    h.with_app(cx, |app, window, cx| {
+        app.sidebar_view = super::SidebarView::Git;
+        app.sidebar_visible = true;
+        let root = folder.clone();
+        app.git.update(cx, |git, cx| {
+            git.seed_repo_for_test(
+                root,
+                "craftbox",
+                "feature/screen-capture-multiple-source",
+                &["src/a.rs"],
+                window,
+                cx,
+            );
+        });
+        cx.notify();
+    });
+    cx.run_until_parked();
+    // Suggest trigger proves the section chrome painted (header is non-Button).
+    assert!(h.has("git-suggest-0", cx), "section chrome is painted");
+    let sections = cx.read(|cx| h.app.read(cx).git.read(cx).sections_for_test());
+    assert_eq!(
+        sections,
+        vec![(
+            "craftbox".into(),
+            "feature/screen-capture-multiple-source".into()
+        )],
+        "header keeps full repo label + long branch (branch truncates in layout)"
+    );
+}
+
 fn fake_release(version: &str) -> crate::update::Release {
     crate::update::Release {
         tag: format!("v{version}"),

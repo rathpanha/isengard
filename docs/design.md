@@ -499,7 +499,8 @@ Add a row here whenever a new shared component is created.
   Search. Stacked flush sections (no cards) — one per unique Git worktree
   (shared `.git` → one section); bottom-border separators only *between*
   repos (none for a single repo or under the last). Per
-  section: repo name + branch, outlined Pull / Push (`Pull (N)` /
+  section: repo name + branch (narrow width: branch ellipsizes first,
+  repo name stays full), outlined Pull / Push (`Pull (N)` /
   `Push (N)` when behind / ahead of upstream), commit `Textarea` in a
   pixel-height box (one line idle; auto height from content up to 6
   rows; bottom drag grip raises a floor through 20 rows — past the auto
