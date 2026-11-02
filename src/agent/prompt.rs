@@ -169,7 +169,7 @@ pub fn attachment_from_path(path: &Path) -> Option<Attachment> {
     }
 }
 
-fn attachment_path(a: &Attachment) -> Option<&Path> {
+pub fn attachment_path(a: &Attachment) -> Option<&Path> {
     match a {
         Attachment::File { path, .. } => Some(path),
         Attachment::Image { path, .. } => path.as_deref(),
@@ -192,17 +192,36 @@ pub fn merge_attachments(chips: Vec<Attachment>, mentioned: Vec<Attachment>) -> 
     out
 }
 
-/// Assemble prompt blocks: attachments first (context), then the user text.
+/// One ordered piece of a prompt: typed text, or an attachment at the spot
+/// the user placed it (inline `@` token).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Piece {
+    Text(String),
+    Attach(Attachment),
+}
+
+/// Attachments first, then the text (tests; `send` uses `build_blocks_ordered`).
+#[cfg(test)]
 pub fn build_blocks(text: &str, attachments: &[Attachment], caps: PromptCaps) -> Vec<ContentBlock> {
-    let mut blocks = Vec::with_capacity(attachments.len() + 1);
-    for attachment in attachments {
-        if let Some(block) = attachment_block(attachment, caps) {
-            blocks.push(block);
+    let mut pieces: Vec<Piece> = attachments.iter().cloned().map(Piece::Attach).collect();
+    pieces.push(Piece::Text(text.to_owned()));
+    build_blocks_ordered(&pieces, caps)
+}
+
+/// Assemble prompt blocks in `pieces` order, so an `@file` typed mid-sentence
+/// stays mid-sentence for the agent.
+pub fn build_blocks_ordered(pieces: &[Piece], caps: PromptCaps) -> Vec<ContentBlock> {
+    let mut blocks = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        match piece {
+            Piece::Attach(a) => blocks.extend(attachment_block(a, caps)),
+            Piece::Text(t) => {
+                let trimmed = t.trim();
+                if !trimmed.is_empty() {
+                    blocks.push(ContentBlock::Text(TextContent::new(trimmed)));
+                }
+            }
         }
-    }
-    let trimmed = text.trim();
-    if !trimmed.is_empty() {
-        blocks.push(ContentBlock::Text(TextContent::new(trimmed)));
     }
     blocks
 }
@@ -321,6 +340,30 @@ mod tests {
         let merged = merge_attachments(vec![chip.clone()], vec![mention]);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0], chip);
+    }
+
+    #[test]
+    fn ordered_pieces_keep_attachment_position() {
+        let file = Attachment::File {
+            path: PathBuf::from("/w/a.rs"),
+            text: Some("body".into()),
+            selection: None,
+        };
+        let blocks = build_blocks_ordered(
+            &[
+                Piece::Text("look at ".into()),
+                Piece::Attach(file),
+                Piece::Text(" and fix".into()),
+            ],
+            PromptCaps {
+                image: false,
+                embedded_context: true,
+            },
+        );
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(&blocks[0], ContentBlock::Text(t) if t.text == "look at"));
+        assert!(matches!(blocks[1], ContentBlock::Resource(_)));
+        assert!(matches!(&blocks[2], ContentBlock::Text(t) if t.text == "and fix"));
     }
 
     #[test]

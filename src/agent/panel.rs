@@ -213,6 +213,9 @@ struct UserRef {
     snippet: bool,
     /// When set, render a small preview instead of a file/folder icon.
     thumb: Option<ImageThumb>,
+    /// Byte offset in the bubble text where the user typed this ref (inline
+    /// `@` token); `None` → shown after the text.
+    at: Option<usize>,
 }
 
 enum Entry {
@@ -289,6 +292,7 @@ fn user_refs_from(
                         is_dir,
                         snippet: false,
                         thumb,
+                        at: None,
                     }
                 }
                 Attachment::Snippet { label, .. } => UserRef {
@@ -297,6 +301,7 @@ fn user_refs_from(
                     is_dir: false,
                     snippet: true,
                     thumb,
+                    at: None,
                 },
                 Attachment::Image { label, path, .. } => UserRef {
                     name: label.clone().into(),
@@ -304,28 +309,50 @@ fn user_refs_from(
                     is_dir: false,
                     snippet: false,
                     thumb,
+                    at: None,
                 },
             }
         })
         .collect()
 }
 
-fn user_refs_from_mention_tokens(tokens: &[InlineTokenSpan]) -> Vec<UserRef> {
-    tokens
-        .iter()
-        .map(|span| {
-            let path = PathBuf::from(span.token().id().as_ref());
-            let is_dir = path.is_dir();
-            let thumb = document::is_image(&path).then(|| ImageThumb::Path(path.clone()));
-            UserRef {
-                name: span.token().label().clone(),
-                path,
-                is_dir,
-                snippet: false,
-                thumb,
+/// Bubble chips for inline `@` tokens, each tagged with where it sits in
+/// [`text_without_tokens`]'s output.
+fn user_refs_from_mention_tokens(raw: &str, tokens: &[InlineTokenSpan]) -> Vec<UserRef> {
+    let mut spans: Vec<_> = tokens.iter().collect();
+    spans.sort_by_key(|s| s.range().start);
+    let mut joined = String::new();
+    let mut cursor = 0;
+    let mut out = Vec::new();
+    for span in spans {
+        let range = span.range();
+        if range.start < cursor || range.end > raw.len() {
+            continue;
+        }
+        let seg = raw[cursor..range.start]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !seg.is_empty() {
+            if !joined.is_empty() {
+                joined.push(' ');
             }
-        })
-        .collect()
+            joined.push_str(&seg);
+        }
+        cursor = range.end;
+        let path = PathBuf::from(span.token().id().as_ref());
+        let is_dir = path.is_dir();
+        let thumb = document::is_image(&path).then(|| ImageThumb::Path(path.clone()));
+        out.push(UserRef {
+            name: span.token().label().clone(),
+            path,
+            is_dir,
+            snippet: false,
+            thumb,
+            at: Some(joined.len()),
+        });
+    }
+    out
 }
 
 /// Prompt text with inline-token backing strings removed (attachments carry them).
@@ -338,6 +365,43 @@ fn text_without_tokens(text: &str, tokens: &[InlineTokenSpan]) -> String {
         }
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// One file/folder/image/snippet chip inside a user bubble.
+fn render_user_ref(ix: usize, rix: usize, r: &UserRef, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    // Images: thumb only (no Lucide, no "@name").
+    if let Some(thumb) = &r.thumb {
+        // Typed inline → same line-height square as in the composer.
+        let size = if r.at.is_some() { px(20.) } else { px(40.) };
+        return render_image_thumb(
+            thumb,
+            SharedString::from(format!("agent-ref-img-{ix}-{rix}")),
+            theme.border,
+            size,
+            r.at.is_some().then_some(theme.radius),
+        );
+    }
+    // Files/folders: Material icon + basename; snippets (terminal): Lucide terminal.
+    let icon = if r.snippet {
+        Icon::new(LucideIcon::SquareTerminal)
+            .text_color(theme.muted_foreground)
+            .into_any_element()
+    } else {
+        material_path_icon(&r.path, r.is_dir, false, cx)
+    };
+    h_flex()
+        .items_center()
+        .gap_1()
+        .px_1p5()
+        .py_0p5()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.muted.opacity(0.35))
+        .text_xs()
+        .child(icon)
+        .child(div().min_w_0().truncate().child(r.name.clone()))
+        .into_any_element()
 }
 
 /// Inline `@` chip inside the composer Textarea (Material icon or image thumb).
@@ -433,18 +497,25 @@ fn thumb_for_attachment(attachment: &Attachment) -> Option<ImageThumb> {
 }
 
 /// Small square preview for an attached image (composer chips + user bubble).
-fn render_image_thumb(thumb: &ImageThumb, id: SharedString, border: Hsla) -> AnyElement {
+fn render_image_thumb(
+    thumb: &ImageThumb,
+    id: SharedString,
+    border: Hsla,
+    size: Pixels,
+    radius: Option<Pixels>,
+) -> AnyElement {
     let img_el = match thumb {
         ImageThumb::Path(path) => img(path.clone()),
         ImageThumb::Memory(image) => img(image.clone()),
     };
     div()
-        .w(px(40.))
-        .h(px(40.))
-        .min_w(px(40.))
-        .min_h(px(40.))
+        .w(size)
+        .h(size)
+        .min_w(size)
+        .min_h(size)
         .flex_shrink_0()
         .overflow_hidden()
+        .when_some(radius, |this, r| this.rounded(r))
         .border_1()
         .border_color(border)
         .child(
@@ -1455,6 +1526,23 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn roots_for_test(&self) -> &[PathBuf] {
         &self.roots
+    }
+
+    /// `(name, offset in bubble text)` of the last user bubble's refs (tests).
+    #[cfg(test)]
+    pub fn last_user_refs_for_test(&self) -> Vec<(String, Option<usize>)> {
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                Entry::User { refs, .. } => Some(
+                    refs.iter()
+                        .map(|r| (r.name.to_string(), r.at))
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     /// Labels of inline `@` tokens in the composer (tests).
@@ -3524,19 +3612,56 @@ impl AgentPanel {
         self.mention = None;
         self.slash = None;
         let caps = self.prompt_caps();
-        // Inline `@` tokens in the prompt → ACP blocks. Paperclip chips stay
-        // on the attach strip. Also honor any leftover typed `@rel`.
-        let mut mentioned: Vec<_> = tokens
+        // Inline `@` tokens in the prompt → ACP blocks, kept at the spot the
+        // user typed them. Paperclip chips and leftover typed `@rel` paths
+        // have no spot, so they lead.
+        let raw = content.text();
+        let mut spans: Vec<_> = tokens.iter().collect();
+        spans.sort_by_key(|s| s.range().start);
+        let mut inline = Vec::new();
+        let mut cursor = 0;
+        for span in spans {
+            let range = span.range();
+            if range.start < cursor || range.end > raw.len() {
+                continue;
+            }
+            inline.push(prompt::Piece::Text(raw[cursor..range.start].to_owned()));
+            if let Some(a) =
+                prompt::attachment_from_path(Path::new(span.token().id().as_ref()))
+            {
+                inline.push(prompt::Piece::Attach(a));
+            }
+            cursor = range.end;
+        }
+        inline.push(prompt::Piece::Text(raw[cursor..].to_owned()));
+        let inline_att = |p: &Path| {
+            inline.iter().any(|piece| {
+                matches!(piece, prompt::Piece::Attach(a) if prompt::attachment_path(a) == Some(p))
+            })
+        };
+        let mut leading: Vec<_> = attachments
             .iter()
-            .filter_map(|s| prompt::attachment_from_path(Path::new(s.token().id().as_ref())))
+            .filter(|a| prompt::attachment_path(a).is_none_or(|p| !inline_att(p)))
+            .cloned()
             .collect();
-        for path in mention::paths_in_text(&self.roots, content.text()) {
+        let mut typed = Vec::new();
+        for path in mention::paths_in_text(&self.roots, raw) {
             if let Some(a) = prompt::attachment_from_path(&path) {
-                mentioned.push(a);
+                typed.push(a);
             }
         }
-        let for_wire = prompt::merge_attachments(attachments.clone(), mentioned);
-        let blocks = prompt::build_blocks(&text, &for_wire, caps);
+        leading = prompt::merge_attachments(leading, typed);
+        leading.retain(|a| prompt::attachment_path(a).is_none_or(|p| !inline_att(p)));
+        let mut pieces: Vec<_> = leading.iter().cloned().map(prompt::Piece::Attach).collect();
+        pieces.extend(inline);
+        let for_wire: Vec<_> = pieces
+            .iter()
+            .filter_map(|p| match p {
+                prompt::Piece::Attach(a) => Some(a.clone()),
+                prompt::Piece::Text(_) => None,
+            })
+            .collect();
+        let blocks = prompt::build_blocks_ordered(&pieces, caps);
         if blocks.is_empty() {
             self.attachments = attachments;
             self.attachment_thumbs = thumbs;
@@ -3547,7 +3672,7 @@ impl AgentPanel {
         } else {
             text.clone()
         };
-        let mut refs = user_refs_from_mention_tokens(&tokens);
+        let mut refs = user_refs_from_mention_tokens(content.text(), &tokens);
         refs.extend(user_refs_from(&attachments, &thumbs));
         self.input.update(cx, |input, cx| input.set_value("", window, cx));
 
@@ -5728,77 +5853,73 @@ fn render_entry(
     let theme = cx.theme();
     let body: AnyElement = match entry {
         Entry::User { text, refs } => {
-            let has_text = !text.trim().is_empty();
+            let text_view = |id: String, body: SharedString| -> AnyElement {
+                // Same selectable TextView as agent replies (plain `div`
+                // text is not mouse-selectable in GPUI).
+                div()
+                    .text_sm()
+                    .child(
+                        TextView::markdown(SharedString::from(id), body)
+                            .selectable(true)
+                            .style(crate::theme::text_view_style(cx)),
+                    )
+                    .into_any_element()
+            };
+            let inline = refs.iter().any(|r| r.at.is_some());
+            let body: AnyElement = if inline {
+                // Refs typed mid-sentence keep their place: text, chip, text, …
+                // Refs without a spot (paperclip / paste) trail the text.
+                let mut row = h_flex().gap_1().flex_wrap().items_center();
+                let mut cursor = 0;
+                for (rix, r) in refs.iter().enumerate() {
+                    let Some(at) = r.at else { continue };
+                    let at = at.min(text.len());
+                    if at > cursor
+                        && let Some(seg) = text.get(cursor..at)
+                        && !seg.trim().is_empty()
+                    {
+                        row = row.child(text_view(
+                            format!("agent-user-{ix}-{cursor}"),
+                            seg.trim().to_owned().into(),
+                        ));
+                    }
+                    cursor = cursor.max(at);
+                    row = row.child(render_user_ref(ix, rix, r, cx));
+                }
+                if let Some(rest) = text.get(cursor..)
+                    && !rest.trim().is_empty()
+                {
+                    row = row.child(text_view(
+                        format!("agent-user-{ix}-{cursor}"),
+                        rest.trim().to_owned().into(),
+                    ));
+                }
+                for (rix, r) in refs.iter().enumerate().filter(|(_, r)| r.at.is_none()) {
+                    row = row.child(render_user_ref(ix, rix, r, cx));
+                }
+                row.into_any_element()
+            } else {
+                v_flex()
+                    .gap_1()
+                    .when(!text.trim().is_empty(), |col| {
+                        col.child(text_view(format!("agent-user-{ix}"), text.clone()))
+                    })
+                    .when(!refs.is_empty(), |col| {
+                        col.child(h_flex().gap_1().flex_wrap().children(
+                            refs.iter()
+                                .enumerate()
+                                .map(|(rix, r)| render_user_ref(ix, rix, r, cx)),
+                        ))
+                    })
+                    .into_any_element()
+            };
             Message::new()
                 .alignment(MessageAlignment::End)
                 .content(
                     MessageContent::new().bubble(
                         Bubble::new()
                             .with_variant(BubbleVariant::Secondary)
-                            .child(
-                                v_flex()
-                                    .gap_1()
-                                    .when(has_text, |col| {
-                                        // Same selectable TextView as agent replies (plain `div`
-                                        // text is not mouse-selectable in GPUI).
-                                        col.child(
-                                            div().text_sm().child(
-                                                TextView::markdown(
-                                                    SharedString::from(format!("agent-user-{ix}")),
-                                                    text.clone(),
-                                                )
-                                                .selectable(true)
-                                                .style(crate::theme::text_view_style(cx)),
-                                            ),
-                                        )
-                                    })
-                                    .when(!refs.is_empty(), |col| {
-                                        col.child(
-                                            h_flex().gap_1().flex_wrap().children(
-                                                refs.iter().enumerate().map(|(rix, r)| {
-                                                    // Images: thumb only (no Lucide, no "@name").
-                                                    if let Some(thumb) = &r.thumb {
-                                                        return render_image_thumb(
-                                                            thumb,
-                                                            SharedString::from(format!(
-                                                                "agent-ref-img-{ix}-{rix}"
-                                                            )),
-                                                            theme.border,
-                                                        );
-                                                    }
-                                                    // Files/folders: Material icon + basename;
-                                                    // snippets (terminal): Lucide terminal.
-                                                    let icon = if r.snippet {
-                                                        Icon::new(LucideIcon::SquareTerminal)
-                                                            .text_color(theme.muted_foreground)
-                                                            .into_any_element()
-                                                    } else {
-                                                        material_path_icon(
-                                                            &r.path, r.is_dir, false, cx,
-                                                        )
-                                                    };
-                                                    h_flex()
-                                                        .items_center()
-                                                        .gap_1()
-                                                        .px_1p5()
-                                                        .py_0p5()
-                                                        .border_1()
-                                                        .border_color(theme.border)
-                                                        .bg(theme.muted.opacity(0.35))
-                                                        .text_xs()
-                                                        .child(icon)
-                                                        .child(
-                                                            div()
-                                                                .min_w_0()
-                                                                .truncate()
-                                                                .child(r.name.clone()),
-                                                        )
-                                                        .into_any_element()
-                                                }),
-                                            ),
-                                        )
-                                    }),
-                            ),
+                            .child(body),
                     ),
                 )
                 .into_any_element()
@@ -8641,6 +8762,8 @@ impl AgentPanel {
                         thumb,
                         SharedString::from(format!("agent-attach-img-{ix}")),
                         theme.border,
+                        px(40.),
+                        None,
                     )
                 } else {
                     let label = attachment.label();

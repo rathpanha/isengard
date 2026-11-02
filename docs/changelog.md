@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-02** — Agent composer: inline `@file` / folder / image tokens now
+  reach the agent at the position they were typed (text, attachment, text, …)
+  instead of all attachments being hoisted ahead of the text. Paperclip chips
+  and leftover typed `@rel` paths still lead. The user bubble follows the same
+  order (text, chip, text, …); paperclip / paste refs trail the text. Inline image refs render as the
+  composer's small rounded line-height thumb instead of the 40px attach thumb.
 - **2026-10-30** — Release prep v0.2.4 (diff / conflict scroll jitter, stale
   `REBASE_HEAD` banner): version bump, `docs/releases/v0.2.4.md`, status
   release lines.

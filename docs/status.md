@@ -192,7 +192,7 @@ What works today:
   message so the end is not glued to the composer.   Composer: type `@` for a
   slim file/folder picker (filter; click/Enter
   inserts an inline token in the prompt Textarea — Material folder/file
-  icon + basename, or image thumb; send resolves to ACP blocks; →/Tab
+  icon + basename, or image thumb; send resolves to ACP blocks in typed order (mid-sentence stays mid-sentence; chips lead); →/Tab
   dives; empty `@` / filters see workspace roots + nested folders via a
   plain FS walk); type `/` for agent slash commands from ACP
   `available_commands_update` (filter; Enter inserts `/name`). Chip row is
@@ -202,7 +202,7 @@ What works today:
   terminal selection → `Terminal` chip) only — bottom-aligned;
   raster paths and pastes show thumbnails; Paperclip opens the OS
   multi-file picker. Mention tokens and paperclip chips also show as
-  icon/name or thumbs in the user bubble.
+  icon/name or thumbs in the user bubble (tokens at their typed spot, chips after).
   Composer is shown while history loads / session opens (Send disabled
   until Ready) to avoid layout jump. Files embed when allowed; folders are
   resource links;

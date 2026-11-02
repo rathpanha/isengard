@@ -974,6 +974,39 @@ fn agent_at_mention_is_visual_token_not_path_or_attach_chip(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn agent_user_bubble_keeps_inline_mention_position(cx: &mut TestAppContext) {
+    let agent = FakeAgent::new();
+    crate::acp::testing::install(&agent);
+    let h = Harness::new(cx);
+    h.file("note.rs", "fn main() {}\n");
+    h.open_folder(h.dir.path(), cx);
+    h.press("secondary-shift-b", cx);
+    h.wait_ready(cx);
+
+    h.agent_composer("see @note", cx);
+    h.with_app(cx, |app, window, cx| {
+        let panel = app.agent.clone().expect("agent");
+        panel.update(cx, |panel, cx| panel.confirm_mention_for_test(window, cx));
+    });
+    h.press("enter", cx);
+    let app = h.app.clone();
+    h.wait_for(cx, "user bubble", move |cx| {
+        cx.read(|cx| {
+            app.read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| !a.read(cx).last_user_refs_for_test().is_empty())
+        })
+    });
+    let refs = cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).last_user_refs_for_test());
+    assert_eq!(
+        refs,
+        [("note.rs".to_owned(), Some(3))],
+        "chip sits after \"see\", not trailing"
+    );
+}
+
+#[gpui_kit::test]
 fn agent_attach_path_adds_chip_and_picker_button_exists(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();
     crate::acp::testing::install(&agent);
