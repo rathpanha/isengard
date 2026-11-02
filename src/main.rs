@@ -12,6 +12,8 @@ mod git;
 mod lsp;
 mod menus;
 mod notify;
+#[cfg(target_os = "linux")]
+mod notify_linux;
 mod process;
 mod runtime;
 mod search;

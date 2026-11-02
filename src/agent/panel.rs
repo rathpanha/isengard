@@ -9150,7 +9150,24 @@ mod improve_prompt_tests {
 
 /// OS notification + sound, only when Isengard is not the focused app.
 fn alert_if_in_background(title: &str, body: &str, cx: &App) {
-    if cx.active_window().is_none() {
-        crate::notify::alert(title, body);
+    if cx.active_window().is_some() {
+        return;
     }
+    // Clicking the notification brings the app back to the front.
+    let (tx, rx) = futures::channel::oneshot::channel::<Option<String>>();
+    crate::notify::alert(title, body, move |token| {
+        let _ = tx.send(token);
+    });
+    cx.spawn(async move |cx| {
+        if let Ok(token) = rx.await {
+            cx.update(|cx| {
+                if let Some(window) = cx.windows().first() {
+                    let _ = window.update(cx, |_, window, _| {
+                        crate::notify::raise(window, token.as_deref());
+                    });
+                }
+            });
+        }
+    })
+    .detach();
 }

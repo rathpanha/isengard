@@ -3,6 +3,15 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-02** — Linux: clicking the agent-finished notification raises the
+  window. The notification is posted over D-Bus (`src/notify_linux.rs`, zbus;
+  `notify-send` stays as fallback) with a `default` action; on click the
+  daemon's `ActivationToken` is handed to the compositor via `xdg_activation_v1`
+  on GPUI's own `wl_display` / `wl_surface` (GPUI's `activate_window` has no
+  valid token and only made GNOME post an "is ready" notification — two
+  clicks). Non-Wayland falls back to `activate_window`; macOS / Windows
+  untouched. New Linux deps: `zbus`, `wayland-client`, `wayland-backend`,
+  `wayland-protocols`, `raw-window-handle` (all already in the tree via GPUI).
 - **2026-11-02** — Agent composer: inline `@file` / folder / image tokens now
   reach the agent at the position they were typed (text, attachment, text, …)
   instead of all attachments being hoisted ahead of the text. Paperclip chips

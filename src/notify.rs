@@ -19,12 +19,27 @@ fn sound_file() -> Option<PathBuf> {
 }
 
 /// Show `title` / `body` and play the "complete" sound. Never blocks.
-pub fn alert(title: &str, body: &str) {
+/// `on_click` runs off the UI thread when the user clicks the notification,
+/// with the compositor's activation token where there is one (Linux).
+pub fn alert(title: &str, body: &str, on_click: impl FnOnce(Option<String>) + Send + 'static) {
     if cfg!(test) {
         return;
     }
     let (title, body) = (title.to_string(), body.to_string());
-    std::thread::spawn(move || platform(&title, &body));
+    std::thread::spawn(move || platform(&title, &body, Box::new(on_click)));
+}
+
+type OnClick = Box<dyn FnOnce(Option<String>) + Send>;
+
+/// Bring `window` to the front after a notification click.
+pub fn raise(window: &crate::gpui::Window, token: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    crate::notify_linux::raise(window, token);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = token;
+        window.activate_window();
+    }
 }
 
 fn run(program: &str, args: &[&str]) -> bool {
@@ -38,16 +53,23 @@ fn run(program: &str, args: &[&str]) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn platform(title: &str, body: &str) {
-    // Icon name of the installed app (hicolor theme); the logo, not a stock icon.
-    run("notify-send", &["-a", "Isengard", "-i", "app.isengard.edtir", title, body]);
+fn platform(title: &str, body: &str, on_click: OnClick) {
+    // The chime must not wait for the click, so the D-Bus listener gets its own thread.
+    let (t, b) = (title.to_string(), body.to_string());
+    std::thread::spawn(move || {
+        if !crate::notify_linux::show(&t, &b, on_click) {
+            // No usable notification service over D-Bus: plain notify-send.
+            // Icon name of the installed app (hicolor theme); the logo, not a stock icon.
+            run("notify-send", &["-a", "Isengard", "-i", "app.isengard.edtir", &t, &b]);
+        }
+    });
     if let Some(file) = sound_file().as_deref().and_then(|p| p.to_str()) {
         let _ = run("paplay", &[file]) || run("pw-play", &[file]) || run("aplay", &["-q", file]);
     }
 }
 
 #[cfg(target_os = "macos")]
-fn platform(title: &str, body: &str) {
+fn platform(title: &str, body: &str, _on_click: OnClick) {
     // Bundled app: a system notification from Isengard itself (app icon,
     // listed under Isengard in System Settings > Notifications).
     // `cargo run` has no bundle, so it falls back to osascript.
@@ -115,7 +137,7 @@ mod native {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn platform(_: &str, _: &str) {}
+fn platform(_: &str, _: &str, _: OnClick) {}
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {

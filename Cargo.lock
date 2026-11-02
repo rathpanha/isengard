@@ -3895,6 +3895,7 @@ dependencies = [
  "open",
  "parking_lot",
  "portable-pty",
+ "raw-window-handle",
  "regex",
  "ropey 1.6.1",
  "rust-embed",
@@ -3907,7 +3908,11 @@ dependencies = [
  "trash",
  "ureq",
  "url",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "xz2",
+ "zbus",
  "zip",
 ]
 

@@ -152,6 +152,7 @@ What works today:
   `⌘⇧B` / `Ctrl+Shift+B` / status-bar `Bot`) chatting with an external agent.
   over the Agent Client Protocol, like Zed's external agents. A finished or failed
   run raises an OS notification + sound when the app is in the background
+  (Linux: posted over D-Bus; clicking raises the window with the daemon's activation token)
   (`src/notify.rs`; Mixkit pop sound, logo icon; Linux `notify-send`+`paplay`; macOS
   native `UNUserNotificationCenter` from the app bundle — app icon, listed under
   Isengard in System Settings > Notifications, asks permission on first use — with
