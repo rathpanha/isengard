@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-02** — Release prep v0.2.5 (SSH agent for git from desktop launch,
+  inline `@file` order, Linux notification raise): version bump,
+  `docs/releases/v0.2.5.md`, status release lines.
 - **2026-11-02** — Git push/pull over SSH now works when launched from the
   desktop: `process::git_command` sets `SSH_AUTH_SOCK` from the user's
   interactive shell (network subcommands only; looked up once on a startup thread; unix only), since GUI launches don't see
