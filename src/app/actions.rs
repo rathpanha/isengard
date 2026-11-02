@@ -121,11 +121,19 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-shift-f", FindInFiles, None),
         // Root binds Tab to focus traversal; the shell needs it for completion.
         KeyBinding::new("tab", crate::terminal::view::SendTab, Some("Terminal")),
-        KeyBinding::new("shift-tab", crate::terminal::view::SendBackTab, Some("Terminal")),
+        KeyBinding::new(
+            "shift-tab",
+            crate::terminal::view::SendBackTab,
+            Some("Terminal"),
+        ),
         // Root binds Ctrl+C to Copy (non-macOS), which swallowed the interrupt.
         // Copy in the terminal is Ctrl+Shift+C.
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-c", crate::terminal::view::SendInterrupt, Some("Terminal")),
+        KeyBinding::new(
+            "ctrl-c",
+            crate::terminal::view::SendInterrupt,
+            Some("Terminal"),
+        ),
         KeyBinding::new("ctrl-`", ToggleTerminal, None),
         KeyBinding::new("ctrl-shift-`", NewTerminal, None),
         // Agent panel: `Ctrl+Shift+B` / `⌘⇧B` (Ctrl+Alt+B is unreliable on Linux).
@@ -164,7 +172,9 @@ pub fn init(cx: &mut App) {
         });
     });
     cx.on_action(|_: &OpenFile, cx| {
-        with_active_app(cx, |app, window, cx| app.on_open_file(&OpenFile, window, cx));
+        with_active_app(cx, |app, window, cx| {
+            app.on_open_file(&OpenFile, window, cx)
+        });
     });
     cx.on_action(|_: &OpenWorkspace, cx| {
         with_active_app(cx, |app, window, cx| {
@@ -191,7 +201,9 @@ pub fn init(cx: &mut App) {
         with_active_app(cx, |app, window, cx| app.on_save_all(&SaveAll, window, cx));
     });
     cx.on_action(|_: &CloseTab, cx| {
-        with_active_app(cx, |app, window, cx| app.on_close_tab(&CloseTab, window, cx));
+        with_active_app(cx, |app, window, cx| {
+            app.on_close_tab(&CloseTab, window, cx)
+        });
     });
     cx.on_action(|_: &FindInFiles, cx| {
         with_active_app(cx, |app, window, cx| {
@@ -275,4 +287,3 @@ pub fn init(cx: &mut App) {
         });
     });
 }
-

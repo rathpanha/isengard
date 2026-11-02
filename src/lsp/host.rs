@@ -4,8 +4,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use anyhow::Context as _;
 use gpui_kit::base::input::Diagnostic;
@@ -16,16 +16,15 @@ use lsp_types::notification::{
     Notification as _, PublishDiagnostics,
 };
 use lsp_types::{
-    ApplyWorkspaceEditParams, CodeActionClientCapabilities, CodeActionKind,
-    CodeActionKindLiteralSupport, CodeActionLiteralSupport, ClientCapabilities,
-    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
-    CompletionItemKindCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
-    ExecuteCommandClientCapabilities, FormattingOptions, GeneralClientCapabilities,
-    HoverClientCapabilities, InitializeParams, MarkupKind, PositionEncodingKind,
-    PublishDiagnosticsParams, RenameClientCapabilities, TextDocumentClientCapabilities,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextDocumentSyncClientCapabilities, TextEdit,
+    ApplyWorkspaceEditParams, ClientCapabilities, CodeActionClientCapabilities, CodeActionKind,
+    CodeActionKindLiteralSupport, CodeActionLiteralSupport, CompletionClientCapabilities,
+    CompletionItemCapability, CompletionItemCapabilityResolveSupport, CompletionItemKindCapability,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentFormattingParams, ExecuteCommandClientCapabilities,
+    FormattingOptions, GeneralClientCapabilities, HoverClientCapabilities, InitializeParams,
+    MarkupKind, PositionEncodingKind, PublishDiagnosticsParams, RenameClientCapabilities,
+    TextDocumentClientCapabilities, TextDocumentContentChangeEvent, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextDocumentSyncClientCapabilities, TextEdit,
     WorkspaceClientCapabilities, WorkspaceEditClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
@@ -99,8 +98,7 @@ struct RunningServer {
 }
 
 /// Apply a [`lsp_types::WorkspaceEdit`] on the UI thread (open tabs + disk).
-pub type WorkspaceEditHandler =
-    Rc<dyn Fn(lsp_types::WorkspaceEdit, &mut Window, &mut App)>;
+pub type WorkspaceEditHandler = Rc<dyn Fn(lsp_types::WorkspaceEdit, &mut Window, &mut App)>;
 
 /// Owns language servers for the current window workspace.
 pub struct LspHost {
@@ -179,9 +177,7 @@ impl LspHost {
             return v;
         }
         let v = is_server_ready(command);
-        self.ready_cache
-            .borrow_mut()
-            .insert(command.to_string(), v);
+        self.ready_cache.borrow_mut().insert(command.to_string(), v);
         v
     }
 
@@ -273,12 +269,7 @@ impl LspHost {
 
     /// Remember a server as installed (persisted via [`Self::settings`]).
     pub fn remember_known(&mut self, process_key: &str) {
-        if !self
-            .settings
-            .known
-            .iter()
-            .any(|k| k == process_key)
-        {
+        if !self.settings.known.iter().any(|k| k == process_key) {
             self.settings.known.push(process_key.to_string());
         }
     }
@@ -293,8 +284,8 @@ impl LspHost {
     pub fn remove_server(&mut self, process_key: &str) -> (Vec<PathBuf>, Option<InstallRecipe>) {
         let paths = self.stop_server(process_key);
         // Capture recipe while the app-local bin still exists.
-        let recipe = recipe_for_command(process_key)
-            .filter(|_| super::install::is_app_local(process_key));
+        let recipe =
+            recipe_for_command(process_key).filter(|_| super::install::is_app_local(process_key));
         self.forget_known(process_key);
         self.lifecycle.remove(process_key);
         // Files may still be on disk until async uninstall finishes — pin false
@@ -337,8 +328,7 @@ impl LspHost {
         text: &str,
         state: &Entity<EditorState>,
         app: WeakEntity<A>,
-        open_location: impl Fn(&mut A, &Path, lsp_types::Range, &mut Window, &mut Context<A>)
-        + 'static,
+        open_location: impl Fn(&mut A, &Path, lsp_types::Range, &mut Window, &mut Context<A>) + 'static,
         _window: &mut Window,
         cx: &mut Context<A>,
     ) -> AttachOutcome {
@@ -466,8 +456,7 @@ impl LspHost {
         text: &str,
         state: &Entity<EditorState>,
         app: WeakEntity<A>,
-        open_location: impl Fn(&mut A, &Path, lsp_types::Range, &mut Window, &mut Context<A>)
-        + 'static,
+        open_location: impl Fn(&mut A, &Path, lsp_types::Range, &mut Window, &mut Context<A>) + 'static,
         cx: &mut Context<A>,
     ) {
         let Some(spec) = registry::resolve(language, &self.settings) else {
@@ -510,8 +499,7 @@ impl LspHost {
         client: &Arc<LspClient>,
         state: &Entity<EditorState>,
         app: WeakEntity<A>,
-        open_location: impl Fn(&mut A, &Path, lsp_types::Range, &mut Window, &mut Context<A>)
-        + 'static,
+        open_location: impl Fn(&mut A, &Path, lsp_types::Range, &mut Window, &mut Context<A>) + 'static,
         cx: &mut Context<A>,
     ) {
         let server = match self.servers.get_mut(process_key) {
@@ -636,11 +624,9 @@ impl LspHost {
 
     /// Client attached to `path`, if any.
     pub fn client_for_path(&self, path: &Path) -> Option<Arc<LspClient>> {
-        self.servers.values().find_map(|s| {
-            s.versions
-                .contains_key(path)
-                .then(|| s.client.clone())
-        })
+        self.servers
+            .values()
+            .find_map(|s| s.versions.contains_key(path).then(|| s.client.clone()))
     }
 
     /// Version clock for `path` (shared with [`DocBridge`]).
@@ -786,9 +772,9 @@ impl LspHost {
         )?;
         Ok(match result {
             Some(lsp_types::PrepareRenameResponse::Range(_)) => None,
-            Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder { placeholder, .. }) => {
-                Some(placeholder)
-            }
+            Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                placeholder, ..
+            }) => Some(placeholder),
             Some(lsp_types::PrepareRenameResponse::DefaultBehavior { .. }) => None,
             None => None,
         })
@@ -880,9 +866,8 @@ impl LspHost {
                                 }
                                 "workspace/workspaceFolders" => json!(folders_for_config),
                                 "workspace/applyEdit" => {
-                                    if let Ok(p) = serde_json::from_value::<
-                                        ApplyWorkspaceEditParams,
-                                    >(params)
+                                    if let Ok(p) =
+                                        serde_json::from_value::<ApplyWorkspaceEditParams>(params)
                                     {
                                         let _ = events_tx.send(LspEvent::ApplyEdit(p.edit));
                                     }
@@ -893,10 +878,8 @@ impl LspHost {
                                 }
                                 "window/workDoneProgress/create" => Value::Null,
                                 _ => {
-                                    let _ = client_for_events.respond_error(
-                                        id,
-                                        &format!("Method Not Found: {method}"),
-                                    );
+                                    let _ = client_for_events
+                                        .respond_error(id, &format!("Method Not Found: {method}"));
                                     continue;
                                 }
                             };
@@ -961,10 +944,7 @@ fn client_capabilities() -> ClientCapabilities {
                 completion_item: Some(CompletionItemCapability {
                     snippet_support: Some(true),
                     commit_characters_support: Some(true),
-                    documentation_format: Some(vec![
-                        MarkupKind::Markdown,
-                        MarkupKind::PlainText,
-                    ]),
+                    documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                     deprecated_support: Some(true),
                     preselect_support: Some(true),
                     insert_replace_support: Some(true),
@@ -983,9 +963,7 @@ fn client_capabilities() -> ClientCapabilities {
                     label_details_support: Some(true),
                     ..Default::default()
                 }),
-                completion_item_kind: Some(CompletionItemKindCapability {
-                    value_set: None,
-                }),
+                completion_item_kind: Some(CompletionItemKindCapability { value_set: None }),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {

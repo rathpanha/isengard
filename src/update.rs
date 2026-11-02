@@ -155,7 +155,11 @@ pub fn detect_install_kind() -> InstallKind {
 /// Pure decision behind [`detect_install_kind`] on Windows (unit-tested).
 pub fn classify_windows(exe: &Path, dir_writable: bool) -> InstallKind {
     // `cargo run` / `target\release` builds are never updated in place.
-    if exe.ancestors().any(|a| a.file_name().is_some_and(|n| n == "target")) || !dir_writable {
+    if exe
+        .ancestors()
+        .any(|a| a.file_name().is_some_and(|n| n == "target"))
+        || !dir_writable
+    {
         return InstallKind::Manual;
     }
     InstallKind::WinExe {
@@ -188,7 +192,10 @@ pub fn classify_macos(exe: &Path, parent_writable: bool) -> InstallKind {
 /// Pure decision behind [`detect_install_kind`] (unit-tested).
 pub fn classify(exe: &Path, dir_writable: bool, has: impl Fn(&str) -> bool) -> InstallKind {
     // `cargo run` / `target/release` builds are never updated in place.
-    if exe.ancestors().any(|a| a.file_name().is_some_and(|n| n == "target")) {
+    if exe
+        .ancestors()
+        .any(|a| a.file_name().is_some_and(|n| n == "target"))
+    {
         return InstallKind::Manual;
     }
     if exe.starts_with("/usr/bin") || exe.starts_with("/bin") {
@@ -321,8 +328,14 @@ pub fn install_package(
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let mut readers = Vec::new();
     for stream in [
-        child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
-        child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child
+            .stdout
+            .take()
+            .map(|s| Box::new(s) as Box<dyn Read + Send>),
+        child
+            .stderr
+            .take()
+            .map(|s| Box::new(s) as Box<dyn Read + Send>),
     ]
     .into_iter()
     .flatten()
@@ -578,7 +591,10 @@ pub fn install_in_place(tarball: &Path, exe: &Path) -> Result<()> {
         let mut entry = entry.context("archive entry")?;
         let path = entry.path().context("entry path")?.into_owned();
         let is_binary = path.file_name().is_some_and(|n| n == "isengard")
-            && path.parent().and_then(Path::file_name).is_some_and(|n| n == "bin");
+            && path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|n| n == "bin");
         if !is_binary {
             continue;
         }
@@ -617,8 +633,7 @@ fn old_exe_path(exe: &Path) -> PathBuf {
 /// overwrite a running executable but does allow renaming it, so the old file
 /// moves to `isengard.exe.old` (restored if the swap fails).
 pub fn install_windows_exe(zip_path: &Path, exe: &Path) -> Result<()> {
-    let file =
-        fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let file = fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(file).context("read zip")?;
     let mut name = exe.file_name().unwrap_or_default().to_os_string();
     name.push(".update");
@@ -627,9 +642,10 @@ pub fn install_windows_exe(zip_path: &Path, exe: &Path) -> Result<()> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).context("zip entry")?;
         let is_exe = entry.is_file()
-            && entry
-                .enclosed_name()
-                .is_some_and(|p| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("isengard.exe")));
+            && entry.enclosed_name().is_some_and(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.eq_ignore_ascii_case("isengard.exe"))
+            });
         if !is_exe {
             continue;
         }
@@ -793,18 +809,26 @@ mod tests {
         let exe = Path::new("/usr/bin/isengard");
         assert_eq!(
             classify(exe, false, dnf),
-            InstallKind::Package { kind: PackageKind::Rpm, manager: "dnf" }
+            InstallKind::Package {
+                kind: PackageKind::Rpm,
+                manager: "dnf"
+            }
         );
         assert_eq!(
             classify(exe, true, apt),
-            InstallKind::Package { kind: PackageKind::Deb, manager: "apt" },
+            InstallKind::Package {
+                kind: PackageKind::Deb,
+                manager: "apt"
+            },
             "root-writable /usr/bin is still package-managed"
         );
         assert_eq!(classify(exe, false, none), InstallKind::Manual);
         let home = Path::new("/home/u/.local/bin/isengard");
         assert_eq!(
             classify(home, true, none),
-            InstallKind::InPlace { exe: home.to_path_buf() }
+            InstallKind::InPlace {
+                exe: home.to_path_buf()
+            }
         );
         assert_eq!(classify(home, false, none), InstallKind::Manual);
         assert_eq!(
@@ -812,7 +836,11 @@ mod tests {
             InstallKind::Manual
         );
         assert_eq!(
-            classify(Path::new("/home/u/isengard/target/release/isengard"), true, dnf),
+            classify(
+                Path::new("/home/u/isengard/target/release/isengard"),
+                true,
+                dnf
+            ),
             InstallKind::Manual,
             "cargo builds are never updated"
         );
@@ -830,11 +858,17 @@ mod tests {
             Some("isengard-0.2.0-linux-x86_64.tar.gz")
         );
         assert_eq!(
-            name(InstallKind::Package { kind: PackageKind::Rpm, manager: "dnf" }),
+            name(InstallKind::Package {
+                kind: PackageKind::Rpm,
+                manager: "dnf"
+            }),
             Some("isengard-0.2.0-1.x86_64.rpm")
         );
         assert_eq!(
-            name(InstallKind::Package { kind: PackageKind::Deb, manager: "apt" }),
+            name(InstallKind::Package {
+                kind: PackageKind::Deb,
+                manager: "apt"
+            }),
             Some("isengard_0.2.0_amd64.deb")
         );
         assert_eq!(name(InstallKind::Manual), None);
@@ -851,7 +885,10 @@ mod tests {
     #[test]
     fn builds_noninteractive_install_argv() {
         let rpm = Path::new("/tmp/a.rpm");
-        assert_eq!(install_argv("dnf", rpm), ["dnf", "install", "-y", "/tmp/a.rpm"]);
+        assert_eq!(
+            install_argv("dnf", rpm),
+            ["dnf", "install", "-y", "/tmp/a.rpm"]
+        );
         assert_eq!(
             install_argv("apt", Path::new("/tmp/a.deb")),
             ["apt-get", "install", "-y", "/tmp/a.deb"]
@@ -933,8 +970,12 @@ mod tests {
             header.set_size(body.len() as u64);
             header.set_mode(0o644);
             header.set_cksum();
-            tar.append_data(&mut header, "isengard-0.2.0-linux-x86_64/bin/isengard", &body[..])
-                .unwrap();
+            tar.append_data(
+                &mut header,
+                "isengard-0.2.0-linux-x86_64/bin/isengard",
+                &body[..],
+            )
+            .unwrap();
             tar.into_inner().unwrap().finish().unwrap();
         }
         let exe = dir.path().join("isengard");
@@ -951,7 +992,9 @@ mod tests {
         let bundle = PathBuf::from("/Applications/Isengard.app");
         assert_eq!(
             classify_macos(exe, true),
-            InstallKind::MacApp { bundle: bundle.clone() }
+            InstallKind::MacApp {
+                bundle: bundle.clone()
+            }
         );
         assert_eq!(classify_macos(exe, false), InstallKind::Manual);
         assert_eq!(
@@ -969,8 +1012,17 @@ mod tests {
     #[test]
     fn classifies_windows_installs() {
         let exe = Path::new(r"C:\Users\u\AppData\Local\Programs\Isengard\isengard.exe");
-        assert_eq!(classify_windows(exe, true), InstallKind::WinExe { exe: exe.to_path_buf() });
-        assert_eq!(classify_windows(exe, false), InstallKind::Manual, "read-only folder");
+        assert_eq!(
+            classify_windows(exe, true),
+            InstallKind::WinExe {
+                exe: exe.to_path_buf()
+            }
+        );
+        assert_eq!(
+            classify_windows(exe, false),
+            InstallKind::Manual,
+            "read-only folder"
+        );
         assert_eq!(
             classify_windows(Path::new("/src/isengard/target/release/isengard.exe"), true),
             InstallKind::Manual,
@@ -983,7 +1035,10 @@ mod tests {
         if std::env::consts::ARCH != "x86_64" {
             return;
         }
-        let asset = |name: &str| Asset { name: name.into(), url: format!("https://x/{name}") };
+        let asset = |name: &str| Asset {
+            name: name.into(),
+            url: format!("https://x/{name}"),
+        };
         let release = Release {
             tag: "v0.2.0".into(),
             version: "0.2.0".into(),
@@ -994,7 +1049,9 @@ mod tests {
                 asset("isengard-0.2.0-windows-x86_64.zip"),
             ],
         };
-        let kind = InstallKind::WinExe { exe: "/x/isengard.exe".into() };
+        let kind = InstallKind::WinExe {
+            exe: "/x/isengard.exe".into(),
+        };
         assert_eq!(
             pick_asset(&release, &kind).map(|a| a.name.as_str()),
             Some("isengard-0.2.0-windows-x86_64.zip")
@@ -1005,7 +1062,8 @@ mod tests {
     fn windows_zip(path: &Path, entries: &[(&str, &[u8])]) {
         let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
         for (name, body) in entries {
-            zip.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(body).unwrap();
         }
         zip.finish().unwrap();
@@ -1023,7 +1081,10 @@ mod tests {
         install_windows_exe(&zip, &exe).unwrap();
 
         assert_eq!(fs::read(&exe).unwrap(), b"new");
-        assert_eq!(fs::read(dir.path().join("isengard.exe.old")).unwrap(), b"old");
+        assert_eq!(
+            fs::read(dir.path().join("isengard.exe.old")).unwrap(),
+            b"old"
+        );
         assert!(!dir.path().join("isengard.exe.update").exists());
         assert!(!zip.exists(), "zip removed after install");
     }
@@ -1043,7 +1104,10 @@ mod tests {
 
     #[test]
     fn picks_macos_tarball() {
-        let asset = |name: &str| Asset { name: name.into(), url: format!("https://x/{name}") };
+        let asset = |name: &str| Asset {
+            name: name.into(),
+            url: format!("https://x/{name}"),
+        };
         let release = Release {
             tag: "v0.2.0".into(),
             version: "0.2.0".into(),
@@ -1055,7 +1119,9 @@ mod tests {
                 asset("isengard-0.2.0-macos-universal.dmg"),
             ],
         };
-        let kind = InstallKind::MacApp { bundle: "/Applications/Isengard.app".into() };
+        let kind = InstallKind::MacApp {
+            bundle: "/Applications/Isengard.app".into(),
+        };
         assert_eq!(
             pick_asset(&release, &kind).map(|a| a.name.as_str()),
             Some("isengard-0.2.0-macos-universal.tar.gz")
@@ -1095,13 +1161,20 @@ mod tests {
         let new = stage_app_bundle(&tarball, &bundle).unwrap();
         swap_app_bundle(&new, &bundle).unwrap();
 
-        assert_eq!(fs::read(bundle.join("Contents/MacOS/isengard")).unwrap(), b"new");
+        assert_eq!(
+            fs::read(bundle.join("Contents/MacOS/isengard")).unwrap(),
+            b"new"
+        );
         assert!(!bundle.join("Contents/stale").exists());
         let leftovers: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(leftovers.len(), 2, "only app + tarball remain: {leftovers:?}");
+        assert_eq!(
+            leftovers.len(),
+            2,
+            "only app + tarball remain: {leftovers:?}"
+        );
     }
 
     #[test]
@@ -1114,8 +1187,14 @@ mod tests {
         mac_tarball(&tarball, b"x", false);
 
         assert!(stage_app_bundle(&tarball, &bundle).is_err());
-        assert_eq!(fs::read(bundle.join("Contents/MacOS/isengard")).unwrap(), b"old");
-        assert!(!dir.path().join(".isengard-update").exists(), "staging cleaned up");
+        assert_eq!(
+            fs::read(bundle.join("Contents/MacOS/isengard")).unwrap(),
+            b"old"
+        );
+        assert!(
+            !dir.path().join(".isengard-update").exists(),
+            "staging cleaned up"
+        );
     }
 
     #[test]
@@ -1127,7 +1206,11 @@ mod tests {
                 fs::File::create(&tarball).unwrap(),
                 flate2::Compression::fast(),
             );
-            tar::Builder::new(gz).into_inner().unwrap().finish().unwrap();
+            tar::Builder::new(gz)
+                .into_inner()
+                .unwrap()
+                .finish()
+                .unwrap();
         }
         let exe = dir.path().join("isengard");
         fs::write(&exe, b"old binary").unwrap();

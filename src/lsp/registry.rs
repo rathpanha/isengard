@@ -251,10 +251,9 @@ pub fn default_server(language: Language) -> Option<&'static ServerSpec> {
 pub fn catalog_commands() -> Vec<&'static str> {
     use Language::*;
     let languages = [
-        Astro, Bash, C, CMake, CSharp, Cpp, Css, Diff, Dockerfile, Ejs, Elixir, Erb, Go,
-        GraphQL, Html, Java, JavaScript, Json, Kotlin, Lua, Make, Markdown, Svg, Php, Proto,
-        Python, Ruby, Rust, Scala, Sql, Svelte, Swift, Toml, Tsx, TypeScript, Yaml, Zig,
-        PlainText,
+        Astro, Bash, C, CMake, CSharp, Cpp, Css, Diff, Dockerfile, Ejs, Elixir, Erb, Go, GraphQL,
+        Html, Java, JavaScript, Json, Kotlin, Lua, Make, Markdown, Svg, Php, Proto, Python, Ruby,
+        Rust, Scala, Sql, Svelte, Swift, Toml, Tsx, TypeScript, Yaml, Zig, PlainText,
     ];
     let mut set = std::collections::BTreeSet::new();
     for language in languages {
@@ -409,7 +408,9 @@ mod tests {
         assert!(cmds.contains(&"rust-analyzer"));
         // JS/TS/TSX share one command — only once.
         assert_eq!(
-            cmds.iter().filter(|c| **c == "typescript-language-server").count(),
+            cmds.iter()
+                .filter(|c| **c == "typescript-language-server")
+                .count(),
             1
         );
     }

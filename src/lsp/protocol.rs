@@ -18,7 +18,9 @@ pub fn read_message(reader: &mut impl BufRead) -> anyhow::Result<Option<Vec<u8>>
     let mut content_length: Option<usize> = None;
     loop {
         let mut line = String::new();
-        let n = reader.read_line(&mut line).context("read LSP header line")?;
+        let n = reader
+            .read_line(&mut line)
+            .context("read LSP header line")?;
         if n == 0 {
             return if content_length.is_some() {
                 bail!("EOF mid LSP headers")
@@ -77,7 +79,8 @@ mod tests {
 
     #[test]
     fn rejects_missing_content_length() {
-        let mut cursor = Cursor::new(b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}");
+        let mut cursor =
+            Cursor::new(b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}");
         assert!(read_message(&mut cursor).is_err());
     }
 }

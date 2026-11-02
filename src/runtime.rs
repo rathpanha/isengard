@@ -75,8 +75,20 @@ pub fn fmt_supported(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
         Some(
-            "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc"
-                | "css" | "html" | "yaml" | "yml" | "md"
+            "js" | "jsx"
+                | "mjs"
+                | "cjs"
+                | "ts"
+                | "tsx"
+                | "mts"
+                | "cts"
+                | "json"
+                | "jsonc"
+                | "css"
+                | "html"
+                | "yaml"
+                | "yml"
+                | "md"
         )
     )
 }
@@ -128,7 +140,11 @@ mod tests {
         let native = tmp.path().join("native");
         fs::write(&native, [0x7f, b'E', b'L', b'F']).unwrap();
         let wrapper = tmp.path().join("wrap");
-        fs::write(&wrapper, format!("#!/bin/sh\nexec \"{}\" \"$@\"\n", script.display())).unwrap();
+        fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nexec \"{}\" \"$@\"\n", script.display()),
+        )
+        .unwrap();
 
         assert!(has_node_shebang(&script));
         assert!(!has_node_shebang(&native));

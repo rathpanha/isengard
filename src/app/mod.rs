@@ -48,8 +48,8 @@ pub(super) use std::cell::Cell;
 pub(super) use std::collections::HashMap;
 pub(super) use std::path::{Path, PathBuf};
 pub(super) use std::rc::Rc;
-pub(super) use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) use std::sync::Arc;
+pub(super) use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) use std::time::Duration;
 
 pub(super) use gpui_kit::assets::IconName as LucideIcon;
@@ -79,8 +79,8 @@ pub(super) use serde::Deserialize;
 pub(super) use crate::agent::{AgentPanel, AgentPanelEvent};
 pub(super) use crate::config::{
     AppConfig, DEFAULT_AGENT_WIDTH, DEFAULT_EDITOR_FONT_SIZE, DEFAULT_SIDEBAR_WIDTH,
-    DEFAULT_TERMINAL_HEIGHT, FileViewState, MAX_SESSION_UNSAVED_BYTES, OpenFileEntry,
-    SidebarPanel, WorkspaceSession,
+    DEFAULT_TERMINAL_HEIGHT, FileViewState, MAX_SESSION_UNSAVED_BYTES, OpenFileEntry, SidebarPanel,
+    WorkspaceSession,
 };
 pub(super) use crate::editor::document;
 pub(super) use crate::editor::language::Language;
@@ -103,10 +103,12 @@ pub(super) use crate::search::{
 };
 pub(super) use crate::terminal::TerminalPanel;
 pub(super) use crate::theme;
-pub(super) use crate::ui::components::{center_dialog, notify_error, notify_success, notify_warning};
+pub(super) use crate::ui::components::{
+    center_dialog, notify_error, notify_success, notify_warning,
+};
 pub(super) use crate::ui::file_tree::{
-    DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn, RemoveWorkspaceFolder,
-    RenamePath, ReorderRoot, RevealPath, ToggleDir, TreeEditTarget,
+    DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
+    ReorderRoot, RevealPath, ToggleDir, TreeEditTarget,
 };
 pub(super) use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
 pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
@@ -114,7 +116,8 @@ pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
 use tab::EditorTab;
 
 /// Callback after a single tab save (path may change when materializing untitled).
-pub(super) type AfterSave = Rc<dyn Fn(&mut IsengardApp, PathBuf, &mut Window, &mut Context<IsengardApp>)>;
+pub(super) type AfterSave =
+    Rc<dyn Fn(&mut IsengardApp, PathBuf, &mut Window, &mut Context<IsengardApp>)>;
 /// Write failed after the user picked a path for an untitled tab (Save All queue).
 pub(super) type AfterSaveFail =
     Rc<dyn Fn(&mut IsengardApp, anyhow::Error, &mut Window, &mut Context<IsengardApp>)>;
@@ -124,13 +127,13 @@ pub(super) type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Con
 // Action types live in `actions` but must stay at `crate::app::*` for menus/UI.
 pub use actions::init;
 pub use actions::{
-    About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseAllTabs, CloseOtherTabs, CloseTab,
-    CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles,
-    IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, OpenFile,
-    FormatDocument, OpenFolder, OpenWorkspace, Quit, RenameSelectedTreeItem, RenameSymbol,
-    ResetFontSize, Save, SaveAll, SaveAs,
-    SaveWorkspaceAs, NextTab, PrevTab, ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel,
-    TogglePreview, ToggleSidebar, ToggleTerminal,
+    About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseAllTabs,
+    CloseOtherTabs, CloseTab, CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem,
+    FindInFiles, FormatDocument, IncreaseFontSize, NewAgentChat, NewFile, NewTerminal,
+    NewWorkspace, NextTab, OpenFile, OpenFolder, OpenWorkspace, PrevTab, Quit,
+    RenameSelectedTreeItem, RenameSymbol, ResetFontSize, Save, SaveAll, SaveAs, SaveWorkspaceAs,
+    ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel, TogglePreview, ToggleSidebar,
+    ToggleTerminal,
 };
 
 #[derive(Clone, Copy)]
@@ -142,7 +145,6 @@ pub(super) struct WindowGeometrySnapshot {
     maximized: bool,
     fullscreen: bool,
 }
-
 
 pub(super) fn window_geometry_snapshot(window: &Window) -> WindowGeometrySnapshot {
     let wb = window.window_bounds();
@@ -283,7 +285,6 @@ pub struct IsengardApp {
     _subscriptions: Vec<Subscription>,
 }
 
-
 impl IsengardApp {
     pub fn new(
         config: AppConfig,
@@ -300,127 +301,123 @@ impl IsengardApp {
             });
 
         let search = cx.new(|cx| SearchPanel::new(window, cx));
-        let search_subscription =
-            cx.subscribe_in(&search, window, |this, _, event: &SearchPanelEvent, window, cx| {
-                match event {
-                    SearchPanelEvent::QueryChanged(query) => {
-                        this.schedule_search(query.clone(), cx);
-                        this.schedule_persist_session(cx);
-                    }
-                    SearchPanelEvent::OpenMatch(hit) => {
-                        this.open_search_match(hit, window, cx);
-                    }
-                    SearchPanelEvent::ReplaceInFile(path) => {
-                        this.replace_in_file(path.clone(), window, cx);
-                    }
-                    SearchPanelEvent::ReplaceAll => {
-                        this.confirm_replace_all(window, cx);
-                    }
+        let search_subscription = cx.subscribe_in(
+            &search,
+            window,
+            |this, _, event: &SearchPanelEvent, window, cx| match event {
+                SearchPanelEvent::QueryChanged(query) => {
+                    this.schedule_search(query.clone(), cx);
+                    this.schedule_persist_session(cx);
                 }
-            });
+                SearchPanelEvent::OpenMatch(hit) => {
+                    this.open_search_match(hit, window, cx);
+                }
+                SearchPanelEvent::ReplaceInFile(path) => {
+                    this.replace_in_file(path.clone(), window, cx);
+                }
+                SearchPanelEvent::ReplaceAll => {
+                    this.confirm_replace_all(window, cx);
+                }
+            },
+        );
 
         let git = cx.new(|cx| GitPanel::new(window, cx));
-        let git_subscription =
-            cx.subscribe_in(&git, window, |this, _, event: &GitPanelEvent, window, cx| {
-                match event {
-                    GitPanelEvent::OpenDiff {
-                        repo,
-                        path,
-                        rel_path,
-                        status,
-                        old_rel_path,
-                    } => {
-                        this.open_git_diff(
-                            repo.clone(),
-                            path.clone(),
-                            rel_path.clone(),
-                            *status,
-                            old_rel_path.clone(),
-                            true,
-                            window,
-                            cx,
-                        );
-                    }
-                    GitPanelEvent::OpenConflict {
-                        repo,
-                        path,
-                        rel_path,
-                    } => {
-                        this.open_git_conflict(
-                            repo.clone(),
-                            path.clone(),
-                            rel_path.clone(),
-                            true,
-                            window,
-                            cx,
-                        );
-                    }
-                    GitPanelEvent::OpenFile { path } => {
-                        this.open_file(path, true, window, cx);
-                    }
-                    GitPanelEvent::ReloadFile { path } => {
-                        this.reload_open_file_from_disk(path, window, cx);
-                    }
-                    GitPanelEvent::CloseConflictPreview { path } => {
-                        this.close_conflict_preview(path, cx);
-                    }
-                    GitPanelEvent::ConfirmDiscardFile {
-                        repo,
-                        rel_path,
-                        status,
-                        old_rel_path,
-                    } => {
-                        this.confirm_git_discard_file(
-                            repo.clone(),
-                            rel_path.clone(),
-                            *status,
-                            old_rel_path.clone(),
-                            window,
-                            cx,
-                        );
-                    }
-                    GitPanelEvent::ConfirmDiscardAll { repo, count } => {
-                        this.confirm_git_discard_all(repo.clone(), *count, window, cx);
-                    }
-                    GitPanelEvent::SuggestCommitAi { root, paths, agent } => {
-                        this.suggest_git_commit_ai(
-                            root.clone(),
-                            paths.clone(),
-                            *agent,
-                            window,
-                            cx,
-                        );
-                    }
-                    GitPanelEvent::ToastError(msg) => {
-                        notify_error(msg.clone(), window, cx);
-                    }
-                    GitPanelEvent::ToastSuccess(msg) => {
-                        notify_success(msg.clone(), window, cx);
-                    }
-                    GitPanelEvent::DiscardedPaths { paths } => {
-                        if let Some(agent) = this.agent.clone() {
-                            agent.update(cx, |agent, cx| {
-                                agent.note_discarded_paths(paths, cx);
-                            });
-                        }
-                    }
-                    GitPanelEvent::DiscardedRepo { root } => {
-                        if let Some(agent) = this.agent.clone() {
-                            agent.update(cx, |agent, cx| {
-                                agent.note_discarded_repo(root, cx);
-                            });
-                        }
-                    }
-                    GitPanelEvent::StatusUpdated => {
-                        let dirty = this.git.read(cx).dirty_paths();
-                        this.file_tree.set_git_dirty(dirty, cx);
-                        cx.notify();
-                    }
-                    GitPanelEvent::UiChanged => {
-                        this.schedule_persist_session(cx);
+        let git_subscription = cx.subscribe_in(
+            &git,
+            window,
+            |this, _, event: &GitPanelEvent, window, cx| match event {
+                GitPanelEvent::OpenDiff {
+                    repo,
+                    path,
+                    rel_path,
+                    status,
+                    old_rel_path,
+                } => {
+                    this.open_git_diff(
+                        repo.clone(),
+                        path.clone(),
+                        rel_path.clone(),
+                        *status,
+                        old_rel_path.clone(),
+                        true,
+                        window,
+                        cx,
+                    );
+                }
+                GitPanelEvent::OpenConflict {
+                    repo,
+                    path,
+                    rel_path,
+                } => {
+                    this.open_git_conflict(
+                        repo.clone(),
+                        path.clone(),
+                        rel_path.clone(),
+                        true,
+                        window,
+                        cx,
+                    );
+                }
+                GitPanelEvent::OpenFile { path } => {
+                    this.open_file(path, true, window, cx);
+                }
+                GitPanelEvent::ReloadFile { path } => {
+                    this.reload_open_file_from_disk(path, window, cx);
+                }
+                GitPanelEvent::CloseConflictPreview { path } => {
+                    this.close_conflict_preview(path, cx);
+                }
+                GitPanelEvent::ConfirmDiscardFile {
+                    repo,
+                    rel_path,
+                    status,
+                    old_rel_path,
+                } => {
+                    this.confirm_git_discard_file(
+                        repo.clone(),
+                        rel_path.clone(),
+                        *status,
+                        old_rel_path.clone(),
+                        window,
+                        cx,
+                    );
+                }
+                GitPanelEvent::ConfirmDiscardAll { repo, count } => {
+                    this.confirm_git_discard_all(repo.clone(), *count, window, cx);
+                }
+                GitPanelEvent::SuggestCommitAi { root, paths, agent } => {
+                    this.suggest_git_commit_ai(root.clone(), paths.clone(), *agent, window, cx);
+                }
+                GitPanelEvent::ToastError(msg) => {
+                    notify_error(msg.clone(), window, cx);
+                }
+                GitPanelEvent::ToastSuccess(msg) => {
+                    notify_success(msg.clone(), window, cx);
+                }
+                GitPanelEvent::DiscardedPaths { paths } => {
+                    if let Some(agent) = this.agent.clone() {
+                        agent.update(cx, |agent, cx| {
+                            agent.note_discarded_paths(paths, cx);
+                        });
                     }
                 }
-            });
+                GitPanelEvent::DiscardedRepo { root } => {
+                    if let Some(agent) = this.agent.clone() {
+                        agent.update(cx, |agent, cx| {
+                            agent.note_discarded_repo(root, cx);
+                        });
+                    }
+                }
+                GitPanelEvent::StatusUpdated => {
+                    let dirty = this.git.read(cx).dirty_paths();
+                    this.file_tree.set_git_dirty(dirty, cx);
+                    cx.notify();
+                }
+                GitPanelEvent::UiChanged => {
+                    this.schedule_persist_session(cx);
+                }
+            },
+        );
 
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -449,7 +446,6 @@ impl IsengardApp {
         cx.set_global(actions::ActiveIsengard(cx.weak_entity()));
 
         let terminal = cx.new(|_| TerminalPanel::new(&[]));
-
 
         let mut app = Self {
             config,
@@ -505,11 +501,12 @@ impl IsengardApp {
 
         app.lsp.set_settings(app.config.lsp.clone());
         let app_weak = cx.weak_entity();
-        app.lsp.set_workspace_edit_handler(Rc::new(move |edit, window, cx| {
-            let _ = app_weak.update(cx, |this, cx| {
-                this.apply_workspace_edit(edit, window, cx);
-            });
-        }));
+        app.lsp
+            .set_workspace_edit_handler(Rc::new(move |edit, window, cx| {
+                let _ = app_weak.update(cx, |this, cx| {
+                    this.apply_workspace_edit(edit, window, cx);
+                });
+            }));
         app.start_lsp_event_pump(cx);
 
         // Otherwise start on the welcome screen.
@@ -532,6 +529,4 @@ impl IsengardApp {
         app.check_bun_on_start(window, cx);
         app
     }
-
-
 }

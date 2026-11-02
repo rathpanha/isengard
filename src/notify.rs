@@ -60,7 +60,10 @@ fn platform(title: &str, body: &str, on_click: OnClick) {
         if !crate::notify_linux::show(&t, &b, on_click) {
             // No usable notification service over D-Bus: plain notify-send.
             // Icon name of the installed app (hicolor theme); the logo, not a stock icon.
-            run("notify-send", &["-a", "Isengard", "-i", "app.isengard.edtir", &t, &b]);
+            run(
+                "notify-send",
+                &["-a", "Isengard", "-i", "app.isengard.edtir", &t, &b],
+            );
         }
     });
     if let Some(file) = sound_file().as_deref().and_then(|p| p.to_str()) {
@@ -125,7 +128,9 @@ mod native {
                 log::info!("notifications are not allowed for Isengard");
             } else {
                 // SAFETY: non-null NSError handed to the completion handler.
-                log::warn!("notification authorization failed: {:?}", unsafe { &*error });
+                log::warn!("notification authorization failed: {:?}", unsafe {
+                    &*error
+                });
             }
         });
         center.requestAuthorizationWithOptions_completionHandler(

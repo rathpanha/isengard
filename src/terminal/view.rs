@@ -56,7 +56,9 @@ use crate::terminal::render::TerminalRenderer;
 use crate::terminal::state::TerminalState;
 use alacritty_terminal::grid::{Dimensions as _, Scroll};
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
-use alacritty_terminal::selection::{Selection as AlacSelection, SelectionType as AlacSelectionType};
+use alacritty_terminal::selection::{
+    Selection as AlacSelection, SelectionType as AlacSelectionType,
+};
 use alacritty_terminal::term::TermMode;
 use gpui_kit::component::input::{Copy as EditCopy, Paste as EditPaste};
 use gpui_kit::component::menu::ContextMenuExt as _;
@@ -797,7 +799,11 @@ impl TerminalView {
             && matches!(key, "pageup" | "pagedown")
             && !self.state.mode().contains(TermMode::ALT_SCREEN)
         {
-            let scroll = if key == "pageup" { Scroll::PageUp } else { Scroll::PageDown };
+            let scroll = if key == "pageup" {
+                Scroll::PageUp
+            } else {
+                Scroll::PageDown
+            };
             self.state.with_term_mut(|term| term.scroll_display(scroll));
             cx.notify();
             return;
@@ -860,12 +866,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn on_mouse_up(
-        &mut self,
-        event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.selecting {
             return;
         }
@@ -1054,7 +1055,12 @@ impl TerminalView {
     /// Apps that grab the mouse or use the alternate screen (vim, less, htop)
     /// get wheel reports / arrow keys; otherwise the view scrolls the
     /// scrollback history.
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_scroll(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(layout) = *self.hit_layout.lock() else {
             return;
         };
@@ -1223,9 +1229,10 @@ impl Render for TerminalView {
         let resize_callback = self.resize_callback.clone();
         let padding = self.config.padding;
         let hit_layout = self.hit_layout.clone();
-        let hovered_link = self.hovered_link.as_ref().map(|link| {
-            (link.line, link.start_col, link.end_col)
-        });
+        let hovered_link = self
+            .hovered_link
+            .as_ref()
+            .map(|link| (link.line, link.start_col, link.end_col));
         let over_link = self.hovered_link.is_some();
 
         div()
@@ -1329,14 +1336,7 @@ impl Render for TerminalView {
                         }
 
                         // Paint the terminal with measured dimensions
-                        measured_renderer.paint(
-                            bounds,
-                            padding,
-                            &term,
-                            hovered_link,
-                            window,
-                            cx,
-                        );
+                        measured_renderer.paint(bounds, padding, &term, hovered_link, window, cx);
                     },
                 )
                 .size_full(),

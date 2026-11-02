@@ -165,10 +165,7 @@ fn download_and_extract_tarball(url: &str, dest: &Path) -> Result<(), String> {
         .call()
         .map_err(|e| format!("Cursor Agent download failed: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "Cursor Agent download HTTP {}",
-            response.status()
-        ));
+        return Err(format!("Cursor Agent download HTTP {}", response.status()));
     }
     // Stream gzip+tar — the package is ~600 MB; do not buffer the whole body.
     let reader = response.into_body().into_reader();
@@ -208,8 +205,7 @@ fn download_and_extract_tarball(url: &str, dest: &Path) -> Result<(), String> {
             }
             let mut file =
                 File::create(&out).map_err(|e| format!("create {}: {e}", out.display()))?;
-            io::copy(&mut entry, &mut file)
-                .map_err(|e| format!("write {}: {e}", out.display()))?;
+            io::copy(&mut entry, &mut file).map_err(|e| format!("write {}: {e}", out.display()))?;
             file.flush()
                 .map_err(|e| format!("flush {}: {e}", out.display()))?;
             #[cfg(unix)]
@@ -264,10 +260,7 @@ mod tests {
         let url = cursor_download_url().expect("unix host");
         assert!(url.contains(CURSOR_VERSION), "{url}");
         assert!(url.ends_with("/agent-cli-package.tar.gz"), "{url}");
-        assert!(
-            url.contains("/darwin/") || url.contains("/linux/"),
-            "{url}"
-        );
+        assert!(url.contains("/darwin/") || url.contains("/linux/"), "{url}");
     }
 
     #[test]

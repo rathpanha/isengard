@@ -1,6 +1,6 @@
 //! Bottom integrated terminal: show/hide, create, multi-root cwd.
-use super::*;
 use super::terminal_cwd::TerminalCwdPicker;
+use super::*;
 
 impl IsengardApp {
     pub(super) fn on_toggle_terminal(
@@ -42,14 +42,9 @@ impl IsengardApp {
     }
 
     /// Show the panel: restore existing sessions without asking, or create the first.
-    /// No-op on the welcome screen (needs at least one workspace folder).
     pub(super) fn open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspace.folders().is_empty() {
-            return notify_error("Open a folder before starting a terminal", window, cx);
-        }
         if self.terminal.read(cx).has_sessions() {
-            self.terminal
-                .update(cx, |term, cx| term.show(window, cx));
+            self.terminal.update(cx, |term, cx| term.show(window, cx));
             self.persist_session(cx);
             cx.notify();
             return;
@@ -59,10 +54,7 @@ impl IsengardApp {
 
     /// Always spawn a new terminal tab (asks for root when multi-root).
     pub(super) fn create_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let folders = self.workspace.folders().to_vec();
-        if folders.is_empty() {
-            return notify_error("Open a folder before starting a terminal", window, cx);
-        }
+        let folders = self.panel_roots();
         if folders.len() > 1 {
             self.pick_terminal_cwd(folders, false, window, cx);
             return;
@@ -99,9 +91,7 @@ impl IsengardApp {
         let app = cx.entity().downgrade();
         let muted = cx.theme().muted_foreground;
         // Create once — the dialog builder may run every paint.
-        let picker = cx.new(|cx| {
-            TerminalCwdPicker::new(folders, hide_on_cancel, app, cx)
-        });
+        let picker = cx.new(|cx| TerminalCwdPicker::new(folders, hide_on_cancel, app, cx));
         let picker_for_dialog = picker.clone();
         window.open_dialog(cx, move |dialog, window, _cx| {
             let picker_cancel = picker_for_dialog.clone();

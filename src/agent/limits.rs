@@ -6,13 +6,13 @@
 //! rotated pair back so Claude Code keeps working. Best effort — any failure
 //! just hides the bars.
 
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
-use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 /// Claude Code's public OAuth client (same id the CLI uses).
@@ -355,11 +355,7 @@ fn persist_credentials(root: &Value, source: CredSource) -> Result<(), String> {
         CredSource::Keychain => {
             // Delete + add keeps the same service name Claude Code reads.
             let _ = Command::new("security")
-                .args([
-                    "delete-generic-password",
-                    "-s",
-                    "Claude Code-credentials",
-                ])
+                .args(["delete-generic-password", "-s", "Claude Code-credentials"])
                 .output();
             let status = Command::new("security")
                 .args([
@@ -497,7 +493,12 @@ fn parse(body: &Value) -> PlanLimits {
 #[cfg(target_os = "macos")]
 fn keychain_credentials() -> Option<String> {
     let out = Command::new("security")
-        .args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            "Claude Code-credentials",
+            "-w",
+        ])
         .output()
         .ok()?;
     out.status
@@ -560,7 +561,10 @@ mod tests {
         // Everything has reset: nothing to show.
         let much_later = Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).unwrap();
         assert_eq!(super::load_snapshot_from(&path, much_later), None);
-        assert_eq!(super::load_snapshot_from(&dir.path().join("missing"), early), None);
+        assert_eq!(
+            super::load_snapshot_from(&dir.path().join("missing"), early),
+            None
+        );
     }
 
     #[test]
@@ -571,7 +575,11 @@ mod tests {
         assert_eq!(retry_delay(Some(60), false), 60, "transient cap is 60s");
         assert_eq!(retry_delay(None, true), 60);
         assert_eq!(retry_delay(Some(60), true), 120);
-        assert_eq!(retry_delay(Some(600), true), 900, "rate-limit cap is 15 min");
+        assert_eq!(
+            retry_delay(Some(600), true),
+            900,
+            "rate-limit cap is 15 min"
+        );
         assert_eq!(retry_delay(Some(900), true), 900);
     }
 

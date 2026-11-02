@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::{
-    AppContext as _, Bounds, Entity, TestAppContext, WindowBounds, WindowHandle, WindowOptions,
-    InputEvent as _, base::Root, px, size, test::TestWindowExt as _,
+    AppContext as _, Bounds, Entity, InputEvent as _, TestAppContext, WindowBounds, WindowHandle,
+    WindowOptions, base::Root, px, size, test::TestWindowExt as _,
 };
 
 use super::{AgentPanelEvent, IsengardApp};
@@ -101,7 +101,11 @@ impl Harness {
     fn with_app<R>(
         &self,
         cx: &mut TestAppContext,
-        f: impl FnOnce(&mut IsengardApp, &mut gpui_kit::Window, &mut gpui_kit::Context<IsengardApp>) -> R,
+        f: impl FnOnce(
+            &mut IsengardApp,
+            &mut gpui_kit::Window,
+            &mut gpui_kit::Context<IsengardApp>,
+        ) -> R,
     ) -> R {
         let app = self.app.clone();
         let out = cx
@@ -202,10 +206,21 @@ fn save_all_saves_the_rest_when_one_file_fails(cx: &mut TestAppContext) {
         app.request_save_all(move |_, _, _| flag.set(true), None, window, cx);
     });
 
-    assert_eq!(std::fs::read_to_string(&b).unwrap(), "2b", "b saved past a's failure");
+    assert_eq!(
+        std::fs::read_to_string(&b).unwrap(),
+        "2b",
+        "b saved past a's failure"
+    );
     assert_eq!(h.tab(&b, cx).map(|t| t.0), Some(false));
-    assert_eq!(h.tab(&a, cx).map(|t| t.0), Some(true), "failed file stays dirty");
-    assert!(!after_ran.get(), "close/quit/switch must not run after a failure");
+    assert_eq!(
+        h.tab(&a, cx).map(|t| t.0),
+        Some(true),
+        "failed file stays dirty"
+    );
+    assert!(
+        !after_ran.get(),
+        "close/quit/switch must not run after a failure"
+    );
 }
 
 #[gpui_kit::test]
@@ -219,7 +234,10 @@ fn save_all_continues_when_untitled_write_fails_after_dialog(cx: &mut TestAppCon
 
     let untitled = h.with_app(cx, |app, window, cx| {
         app.open_untitled(Some(root.clone()), window, cx);
-        app.tabs.active().map(|t| t.path.clone()).expect("untitled tab")
+        app.tabs
+            .active()
+            .map(|t| t.path.clone())
+            .expect("untitled tab")
     });
     h.input("scratch", cx);
     assert!(h.tab(&untitled, cx).is_some_and(|(dirty, _)| dirty));
@@ -252,7 +270,8 @@ fn save_all_continues_when_untitled_write_fails_after_dialog(cx: &mut TestAppCon
     );
     assert_eq!(h.tab(&disk, cx).map(|t| t.0), Some(false));
     assert!(
-        h.tab(&untitled, cx).is_some_and(|(dirty, text)| dirty && text.contains("scratch")),
+        h.tab(&untitled, cx)
+            .is_some_and(|(dirty, text)| dirty && text.contains("scratch")),
         "untitled stays open and dirty"
     );
     assert!(!after_ran.get(), "after must not run when any save failed");
@@ -277,12 +296,19 @@ fn closing_a_dirty_tab_asks_and_dont_save_discards(cx: &mut TestAppContext) {
     h.input("X", cx);
 
     h.press("secondary-w", cx);
-    assert!(h.has("dialog-secondary", cx), "unsaved-changes dialog is open");
+    assert!(
+        h.has("dialog-secondary", cx),
+        "unsaved-changes dialog is open"
+    );
     assert!(h.tab(&path, cx).is_some(), "tab stays open until answered");
 
     h.click("dialog-secondary", cx);
     assert_eq!(h.tab(&path, cx), None);
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello", "nothing written");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "hello",
+        "nothing written"
+    );
 }
 
 #[gpui_kit::test]
@@ -323,19 +349,28 @@ impl Harness {
     fn transcript(&self, cx: &mut TestAppContext) -> Vec<String> {
         cx.read(|cx| {
             let app = self.app.read(cx);
-            app.agent.as_ref().map(|a| a.read(cx).transcript(cx)).unwrap_or_default()
+            app.agent
+                .as_ref()
+                .map(|a| a.read(cx).transcript(cx))
+                .unwrap_or_default()
         })
     }
 
     /// Pump GPUI until `done` holds; the fake agent answers from its own thread.
-    fn wait_for(&self, cx: &mut TestAppContext, what: &str, done: impl Fn(&mut TestAppContext) -> bool) {
+    fn wait_for(
+        &self,
+        cx: &mut TestAppContext,
+        what: &str,
+        done: impl Fn(&mut TestAppContext) -> bool,
+    ) {
         for _ in 0..500 {
             cx.run_until_parked();
             if done(cx) {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
-            cx.executor().advance_clock(std::time::Duration::from_millis(10));
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(10));
         }
         panic!("timed out waiting for {what}");
     }
@@ -343,7 +378,12 @@ impl Harness {
     fn wait_ready(&self, cx: &mut TestAppContext) {
         let app = self.app.clone();
         self.wait_for(cx, "agent ready", move |cx| {
-            cx.read(|cx| app.read(cx).agent.as_ref().is_some_and(|a| a.read(cx).is_ready()))
+            cx.read(|cx| {
+                app.read(cx)
+                    .agent
+                    .as_ref()
+                    .is_some_and(|a| a.read(cx).is_ready())
+            })
         });
     }
 
@@ -432,7 +472,9 @@ fn tree_move_relocates_files_and_remaps_open_tabs(cx: &mut TestAppContext) {
     assert!(r.is_err());
     h.file("collide/a.txt", "x");
     let collide = h.dir.path().join("collide");
-    let r = h.with_app(cx, |app, w, cx| app.move_path(&collide.join("a.txt"), &dst, w, cx));
+    let r = h.with_app(cx, |app, w, cx| {
+        app.move_path(&collide.join("a.txt"), &dst, w, cx)
+    });
     assert!(r.is_err());
     let root = h.dir.path().to_path_buf();
     let r = h.with_app(cx, |app, w, cx| app.move_path(&root, &dst, w, cx));
@@ -444,11 +486,23 @@ fn reorder_allowed_skips_noop_drops() {
     use crate::ui::file_tree::reorder_allowed;
     use std::path::{Path, PathBuf};
     let roots: Vec<PathBuf> = ["/a", "/b", "/c"].iter().map(PathBuf::from).collect();
-    assert!(reorder_allowed(&roots, Path::new("/c"), Some(Path::new("/a"))));
+    assert!(reorder_allowed(
+        &roots,
+        Path::new("/c"),
+        Some(Path::new("/a"))
+    ));
     assert!(reorder_allowed(&roots, Path::new("/a"), None));
     assert!(!reorder_allowed(&roots, Path::new("/c"), None));
-    assert!(!reorder_allowed(&roots, Path::new("/a"), Some(Path::new("/b"))));
-    assert!(!reorder_allowed(&roots, Path::new("/a"), Some(Path::new("/a"))));
+    assert!(!reorder_allowed(
+        &roots,
+        Path::new("/a"),
+        Some(Path::new("/b"))
+    ));
+    assert!(!reorder_allowed(
+        &roots,
+        Path::new("/a"),
+        Some(Path::new("/a"))
+    ));
 }
 
 #[test]
@@ -479,7 +533,11 @@ fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext)
         }),
         cx,
     );
-    assert_eq!(answer.try_recv().unwrap(), Ok("Xone\n".into()), "open buffer wins over disk");
+    assert_eq!(
+        answer.try_recv().unwrap(),
+        Ok("Xone\n".into()),
+        "open buffer wins over disk"
+    );
 
     let (reply, answer) = flume::bounded(1);
     h.agent_event(
@@ -492,7 +550,11 @@ fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext)
     );
     assert_eq!(answer.try_recv().unwrap(), Ok(()));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "agent\n");
-    assert_eq!(h.tab(&path, cx), Some((false, "agent\n".into())), "tab shows saved agent text");
+    assert_eq!(
+        h.tab(&path, cx),
+        Some((false, "agent\n".into())),
+        "tab shows saved agent text"
+    );
 
     let (reply, answer) = flume::bounded(1);
     h.agent_event(
@@ -504,7 +566,10 @@ fn agent_reads_unsaved_buffer_and_writes_reload_the_tab(cx: &mut TestAppContext)
         }),
         cx,
     );
-    assert!(answer.try_recv().unwrap().is_err(), "relative paths are rejected");
+    assert!(
+        answer.try_recv().unwrap().is_err(),
+        "relative paths are rejected"
+    );
 }
 
 #[gpui_kit::test]
@@ -539,7 +604,8 @@ fn agent_tool_runs_collapse_into_one_card(cx: &mut TestAppContext) {
     h.open_folder(h.dir.path(), cx);
     h.press("secondary-shift-b", cx);
     let panel = cx.read(|cx| h.app.read(cx).agent.clone()).unwrap();
-    let tool = |id: &str| SessionUpdate::ToolCall(ToolCall::new(id.to_string(), format!("run {id}")));
+    let tool =
+        |id: &str| SessionUpdate::ToolCall(ToolCall::new(id.to_string(), format!("run {id}")));
 
     panel.update(cx, |panel, cx| {
         panel.seed_chat_session_for_test("chat-1");
@@ -599,7 +665,10 @@ fn agent_file_change_cards_survive_transcript_reload(cx: &mut TestAppContext) {
         panel.push_user_for_test("please edit", cx);
         panel.restore_file_change_cards_for_test(cx);
     });
-    assert_eq!(cx.read(|cx| panel.read(cx).file_change_card_count_for_test()), 1);
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).file_change_card_count_for_test()),
+        1
+    );
     assert_eq!(
         cx.read(|cx| panel.read(cx).file_change_summaries_for_test()),
         vec![("notes.txt".into(), 2, 1, false)]
@@ -638,13 +707,17 @@ fn agent_file_change_card_drops_discarded_paths(cx: &mut TestAppContext) {
     );
     assert_eq!(answer.try_recv().unwrap(), Ok(()));
     panel.update(cx, |panel, cx| panel.flush_file_changes_for_test(cx));
-    assert!(!cx.read(|cx| panel.read(cx).file_change_summaries_for_test()).is_empty());
+    assert!(
+        !cx.read(|cx| panel.read(cx).file_change_summaries_for_test())
+            .is_empty()
+    );
 
     panel.update(cx, |panel, cx| {
         panel.note_discarded_paths(std::slice::from_ref(&path), cx);
     });
     assert!(
-        cx.read(|cx| panel.read(cx).file_change_summaries_for_test()).is_empty(),
+        cx.read(|cx| panel.read(cx).file_change_summaries_for_test())
+            .is_empty(),
         "discard should clear the card rows"
     );
     assert!(
@@ -817,10 +890,15 @@ fn agent_at_mention_shows_workspace_files(cx: &mut TestAppContext) {
         "mention menu populated on @: {labels:?}"
     );
     assert!(
-        labels.iter().any(|l| l == "alpha.rs" || l.ends_with("alpha.rs")),
+        labels
+            .iter()
+            .any(|l| l == "alpha.rs" || l.ends_with("alpha.rs")),
         "root files listed: {labels:?}"
     );
-    assert!(h.has("agent-mention-menu", cx) || h.has("agent-mention-0", cx), "menu in tree");
+    assert!(
+        h.has("agent-mention-menu", cx) || h.has("agent-mention-0", cx),
+        "menu in tree"
+    );
 
     h.agent_composer("@alp", cx);
     let labels = h.agent_mention_labels(cx);
@@ -854,14 +932,18 @@ fn agent_at_mention_finds_nested_folders(cx: &mut TestAppContext) {
         "root folder src: {labels:?}"
     );
     assert!(
-        labels.iter().any(|l| l == "src/agent" || l.ends_with("/src/agent")),
+        labels
+            .iter()
+            .any(|l| l == "src/agent" || l.ends_with("/src/agent")),
         "nested folder src/agent on empty @: {labels:?}"
     );
 
     h.agent_composer("@agent", cx);
     let labels = h.agent_mention_labels(cx);
     assert!(
-        labels.iter().any(|l| l.contains("src/agent") || l.ends_with("agent")),
+        labels
+            .iter()
+            .any(|l| l.contains("src/agent") || l.ends_with("agent")),
         "filter 'agent' must hit nested folder, got {labels:?}"
     );
 
@@ -928,14 +1010,24 @@ fn reordering_roots_changes_the_agents_primary_folder(cx: &mut TestAppContext) {
     let agent_roots = |h: &Harness, cx: &mut TestAppContext| -> Vec<PathBuf> {
         cx.read(|cx| {
             let app = h.app.read(cx);
-            app.agent.as_ref().unwrap().read(cx).roots_for_test().to_vec()
+            app.agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .roots_for_test()
+                .to_vec()
         })
     };
     assert_eq!(agent_roots(&h, cx), [first.clone(), second.clone()]);
 
     // Drag `second` onto `first` → it becomes the primary folder.
-    let action = crate::ui::file_tree::ReorderRoot { folder: second.clone(), before: Some(first.clone()) };
-    h.with_app(cx, |app, window, cx| app.on_reorder_root(&action, window, cx));
+    let action = crate::ui::file_tree::ReorderRoot {
+        folder: second.clone(),
+        before: Some(first.clone()),
+    };
+    h.with_app(cx, |app, window, cx| {
+        app.on_reorder_root(&action, window, cx)
+    });
     assert_eq!(agent_roots(&h, cx), [second.clone(), first.clone()]);
     let ws = cx.read(|cx| h.app.read(cx).workspace.folders().to_vec());
     assert_eq!(ws, [second, first]);
@@ -968,7 +1060,8 @@ fn agent_at_mention_is_visual_token_not_path_or_attach_chip(cx: &mut TestAppCont
         "paperclip chip row stays empty, got {attach:?}"
     );
     assert_eq!(
-        mentions, ["note.rs"],
+        mentions,
+        ["note.rs"],
         "mention is an inline token inside the prompt"
     );
 }
@@ -998,7 +1091,15 @@ fn agent_user_bubble_keeps_inline_mention_position(cx: &mut TestAppContext) {
                 .is_some_and(|a| !a.read(cx).last_user_refs_for_test().is_empty())
         })
     });
-    let refs = cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).last_user_refs_for_test());
+    let refs = cx.read(|cx| {
+        h.app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .last_user_refs_for_test()
+    });
     assert_eq!(
         refs,
         [("note.rs".to_owned(), Some(3))],
@@ -1060,11 +1161,7 @@ fn agent_ctrl_l_attaches_editor_selection(cx: &mut TestAppContext) {
     let labels = cx.read(|cx| {
         let app = h.app.read(cx);
         assert!(app.agent_visible, "agent panel opens");
-        app.agent
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .attachment_labels()
+        app.agent.as_ref().unwrap().read(cx).attachment_labels()
     });
     assert_eq!(labels, ["note.rs:2"]);
 }
@@ -1118,7 +1215,9 @@ fn agent_ctrl_n_starts_new_chat(cx: &mut TestAppContext) {
     h.with_app(cx, |app, window, cx| {
         let panel = app.agent.clone().expect("agent");
         panel.update(cx, |panel, cx| {
-            panel.input().update(cx, |input, cx| input.focus(window, cx));
+            panel
+                .input()
+                .update(cx, |input, cx| input.focus(window, cx));
         });
     });
     h.press("secondary-n", cx);
@@ -1185,9 +1284,11 @@ fn agent_shows_context_placeholder_before_prompt(cx: &mut TestAppContext) {
     // No turn yet — Claude would not have sent usage_update; we seed size.
     h.wait_for(cx, "context placeholder", |cx| {
         cx.read(|cx| {
-            h.app.read(cx).agent.as_ref().is_some_and(|a| {
-                a.read(cx).context_usage_label().as_deref() == Some("— / 200K")
-            })
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).context_usage_label().as_deref() == Some("— / 200K"))
         })
     });
 }
@@ -1259,9 +1360,11 @@ fn agent_shows_context_usage_after_prompt(cx: &mut TestAppContext) {
     // Fake agent: 10K + 2 msgs × 5K = 20K of 200K after one turn.
     h.wait_for(cx, "context usage", |cx| {
         cx.read(|cx| {
-            h.app.read(cx).agent.as_ref().is_some_and(|a| {
-                a.read(cx).context_usage_label().as_deref() == Some("20K / 200K")
-            })
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).context_usage_label().as_deref() == Some("20K / 200K"))
         })
     });
 }
@@ -1290,7 +1393,10 @@ fn agent_chats_belong_to_their_folder_and_survive_switching(cx: &mut TestAppCont
             })
         })
     });
-    assert_eq!(h.saved_chats(&a, cx), (vec!["s1".into()], Some("s1".into())));
+    assert_eq!(
+        h.saved_chats(&a, cx),
+        (vec!["s1".into()], Some("s1".into()))
+    );
 
     // Folder B gets its own, empty chat.
     h.open_folder(&b, cx);
@@ -1338,7 +1444,15 @@ fn rename_dialog_generate_fills_input_and_saves_only_on_rename(cx: &mut TestAppC
         })
     });
     let title = |cx: &mut TestAppContext| {
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_title())
+        cx.read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .active_chat_title()
+        })
     };
     type PanelFn<'a> = &'a dyn Fn(
         &mut crate::agent::AgentPanel,
@@ -1347,29 +1461,54 @@ fn rename_dialog_generate_fills_input_and_saves_only_on_rename(cx: &mut TestAppC
     );
     let panel_update = |cx: &mut TestAppContext, f: PanelFn| {
         h.with_app(cx, |app, window, cx| {
-            app.agent.clone().unwrap().update(cx, |panel, cx| f(panel, window, cx));
+            app.agent
+                .clone()
+                .unwrap()
+                .update(cx, |panel, cx| f(panel, window, cx));
         });
     };
     panel_update(cx, &|panel, _, cx| panel.rename_chat("s1", "Old name", cx));
 
-    panel_update(cx, &|panel, window, cx| panel.confirm_rename_chat("s1".into(), window, cx));
+    panel_update(cx, &|panel, window, cx| {
+        panel.confirm_rename_chat("s1".into(), window, cx)
+    });
     assert!(h.has("dialog-generate", cx), "Rename dialog is open");
     h.click("dialog-generate", cx);
 
     // Generating keeps the dialog open and does not rename anything yet.
-    assert!(h.has("dialog-generate", cx), "dialog stays open while generating");
+    assert!(
+        h.has("dialog-generate", cx),
+        "dialog stays open while generating"
+    );
     h.wait_for(cx, "title generated", |cx| {
         cx.read(|cx| {
-            h.app.read(cx).agent.as_ref().unwrap().read(cx).rename_dialog_generating()
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .rename_dialog_generating()
                 == Some(false)
         })
     });
-    assert!(h.has("dialog-primary", cx), "dialog still open with the result");
-    assert_eq!(title(cx).as_deref(), Some("Old name"), "Generate alone never renames");
+    assert!(
+        h.has("dialog-primary", cx),
+        "dialog still open with the result"
+    );
+    assert_eq!(
+        title(cx).as_deref(),
+        Some("Old name"),
+        "Generate alone never renames"
+    );
 
     h.click("dialog-primary", cx);
     assert!(!h.has("dialog-primary", cx), "Rename closes the dialog");
-    assert_eq!(title(cx).as_deref(), Some("Generated Title"), "Rename saves the generated title");
+    assert_eq!(
+        title(cx).as_deref(),
+        Some("Generated Title"),
+        "Rename saves the generated title"
+    );
 }
 
 #[gpui_kit::test]
@@ -1398,7 +1537,14 @@ fn agent_auto_titles_after_first_turn(cx: &mut TestAppContext) {
     });
     h.ask("follow up", cx);
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_title()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .active_chat_title()),
         Some("Keep me".into()),
         "user rename must not be overwritten on later turns"
     );
@@ -1449,11 +1595,25 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
 
     // Fake agent: Auto, Sonnet 4.5 (+ 4.6 / 1M / Opus), Fast Off.
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_mode_id()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .current_mode_id()),
         Some("auto".into())
     );
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_model_id()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .current_model_id()),
         Some("sonnet-4-5".into())
     );
     assert_eq!(
@@ -1481,7 +1641,14 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
         Some("4.5".into())
     );
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).fast_mode_on()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .fast_mode_on()),
         Some(false)
     );
     cx.update(|cx| {
@@ -1497,7 +1664,14 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
             && calls.iter().any(|c| c == "set_config model=sonnet-4-6")
     });
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_mode_id()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .current_mode_id()),
         Some("code".into())
     );
     h.wait_for(cx, "sonnet 4.6 selected", |cx| {
@@ -1570,11 +1744,9 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     });
     h.wait_for(cx, "AI chat title", |cx| {
         cx.read(|cx| {
-            h.app
-                .read(cx)
-                .agent
-                .as_ref()
-                .is_some_and(|a| a.read(cx).active_chat_title().as_deref() == Some("Generated Title"))
+            h.app.read(cx).agent.as_ref().is_some_and(|a| {
+                a.read(cx).active_chat_title().as_deref() == Some("Generated Title")
+            })
         })
     });
 
@@ -1627,7 +1799,14 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
         panel_get(&h, cx, |p, _| p.silent_idle_for_test())
     });
     assert_ne!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_id()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .active_chat_id()),
         Some(first_id.clone())
     );
     cx.update(|cx| {
@@ -1642,10 +1821,7 @@ fn agent_rename_and_mode_model_switch(cx: &mut TestAppContext) {
     h.wait_for(cx, "AI title for background chat", |cx| {
         cx.read(|cx| {
             h.app.read(cx).agent.as_ref().is_some_and(|a| {
-                a.read(cx)
-                    .chat_title(&first_id)
-                    .as_deref()
-                    == Some("Generated Title")
+                a.read(cx).chat_title(&first_id).as_deref() == Some("Generated Title")
             })
         })
     });
@@ -1674,7 +1850,14 @@ fn agent_opusplan_switch_hides_model_pickers(cx: &mut TestAppContext) {
             .composer_model_pickers_visible()
     }));
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).current_model_id()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .current_model_id()),
         Some("sonnet-4-5".into())
     );
 
@@ -1688,9 +1871,11 @@ fn agent_opusplan_switch_hides_model_pickers(cx: &mut TestAppContext) {
     });
     h.wait_for(cx, "sonnet 1M before opusplan", |cx| {
         cx.read(|cx| {
-            h.app.read(cx).agent.as_ref().is_some_and(|a| {
-                a.read(cx).current_model_id().as_deref() == Some("sonnet-4-6[1m]")
-            })
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).current_model_id().as_deref() == Some("sonnet-4-6[1m]"))
         })
     });
 
@@ -1907,13 +2092,25 @@ fn remember_workspace_agent(h: &Harness, folder: &Path, slot: &str, cx: &mut Tes
 
 #[gpui_kit::test]
 fn agent_opusplan_switch_starts_off_even_when_the_agent_runs_the_alias(cx: &mut TestAppContext) {
-    let (h, agent) =
-        opusplan_running_harness("opusplan-default-off", crate::config::AgentPrefs::default(), cx);
-    assert!(panel_get(&h, cx, |p, _| p.opusplan_available()), "Switch is offered");
+    let (h, agent) = opusplan_running_harness(
+        "opusplan-default-off",
+        crate::config::AgentPrefs::default(),
+        cx,
+    );
+    assert!(
+        panel_get(&h, cx, |p, _| p.opusplan_available()),
+        "Switch is offered"
+    );
     h.wait_for(cx, "alias replaced by a concrete model", |_| {
-        agent.calls().iter().any(|c| c.starts_with("set_config model=") && !c.contains("opusplan"))
+        agent
+            .calls()
+            .iter()
+            .any(|c| c.starts_with("set_config model=") && !c.contains("opusplan"))
     });
-    assert!(!panel_get(&h, cx, |p, _| p.opusplan_on()), "Switch starts off");
+    assert!(
+        !panel_get(&h, cx, |p, _| p.opusplan_on()),
+        "Switch starts off"
+    );
     assert!(panel_get(&h, cx, |p, _| p.composer_model_pickers_visible()));
 }
 
@@ -1926,7 +2123,10 @@ fn agent_opusplan_switch_stays_on_when_the_user_turned_it_on(cx: &mut TestAppCon
         .insert("model".into(), AgentPrefValue::Value("opusplan".into()));
     let (h, agent) = opusplan_running_harness("opusplan-stays-on", prefs, cx);
     h.wait_for(cx, "alias pinned", |_| {
-        agent.calls().iter().any(|c| c == "set_config model=opusplan")
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config model=opusplan")
     });
     assert!(panel_get(&h, cx, |p, _| p.opusplan_on()));
 }
@@ -1942,7 +2142,10 @@ fn agent_opusplan_mode_picker_path_repins_alias(cx: &mut TestAppContext) {
     // Plain (non-1M) alias, remembered previous model.
     panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(true, cx));
     h.wait_for(cx, "opusplan set", |_| {
-        agent.calls().iter().any(|c| c == "set_config model=opusplan")
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config model=opusplan")
     });
     assert_eq!(
         panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()),
@@ -1967,9 +2170,15 @@ fn agent_opusplan_mode_picker_path_repins_alias(cx: &mut TestAppContext) {
     // Off restores the model used before turning it on.
     panel_do(&h, cx, |p, cx| p.set_opusplan_for_test(false, cx));
     h.wait_for(cx, "previous model restored", |_| {
-        agent.calls().iter().any(|c| c == "set_config model=sonnet-4-5")
+        agent
+            .calls()
+            .iter()
+            .any(|c| c == "set_config model=sonnet-4-5")
     });
-    assert_eq!(panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()), None);
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()),
+        None
+    );
     assert!(!panel_get(&h, cx, |p, _| p.opusplan_on()));
 }
 
@@ -2001,7 +2210,10 @@ fn agent_opusplan_remembers_previous_model_across_restart(cx: &mut TestAppContex
             .iter()
             .any(|c| c == "set_config model=opus-5")
     });
-    assert_eq!(panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()), None);
+    assert_eq!(
+        panel_get(&h, cx, |p, _| p.model_before_opusplan_for_test()),
+        None
+    );
     let saved = cx.read(|cx| h.app.read(cx).config.agent_prefs.clone());
     assert_eq!(saved.model_before_opusplan, None);
 }
@@ -2075,13 +2287,19 @@ fn agent_opusplan_agent_mode_update_repins_but_config_update_does_not(cx: &mut T
         0,
         "ConfigOptionUpdate must not re-assert the model"
     );
-    assert!(panel_get(&h, cx, |p, _| p.opusplan_on()), "Switch stays on from prefs");
+    assert!(
+        panel_get(&h, cx, |p, _| p.opusplan_on()),
+        "Switch stays on from prefs"
+    );
 }
 
 #[gpui_kit::test]
 fn agent_opusplan_switch_click_toggles_and_locks_during_turn(cx: &mut TestAppContext) {
     let (h, agent) = opusplan_harness("opusplan-click", cx);
-    assert!(h.has("agent-opusplan", cx), "Switch mounted when advertised");
+    assert!(
+        h.has("agent-opusplan", cx),
+        "Switch mounted when advertised"
+    );
 
     // Locked while a chat turn runs (start it first: clicking the Switch
     // moves focus off the composer).
@@ -2096,7 +2314,9 @@ fn agent_opusplan_switch_click_toggles_and_locks_during_turn(cx: &mut TestAppCon
     let before = agent.calls().len();
     h.click("agent-opusplan", cx);
     assert!(
-        !calls_since(&agent, before).iter().any(|c| c.starts_with("set_config")),
+        !calls_since(&agent, before)
+            .iter()
+            .any(|c| c.starts_with("set_config")),
         "disabled Switch must not change the model mid-turn"
     );
     agent.release_hold(release);
@@ -2104,11 +2324,15 @@ fn agent_opusplan_switch_click_toggles_and_locks_during_turn(cx: &mut TestAppCon
 
     h.click("agent-opusplan", cx);
     h.wait_for(cx, "switch on via click", |cx| {
-        panel_get(&h, cx, |p, _| p.opusplan_on() && !p.composer_model_pickers_visible())
+        panel_get(&h, cx, |p, _| {
+            p.opusplan_on() && !p.composer_model_pickers_visible()
+        })
     });
     h.click("agent-opusplan", cx);
     h.wait_for(cx, "switch off via click", |cx| {
-        panel_get(&h, cx, |p, _| !p.opusplan_on() && p.composer_model_pickers_visible())
+        panel_get(&h, cx, |p, _| {
+            !p.opusplan_on() && p.composer_model_pickers_visible()
+        })
     });
 }
 
@@ -2261,7 +2485,9 @@ fn cursor_parameterized_config_shows_model_fast_context_effort(cx: &mut TestAppC
     // Switching Model paints cached Fast/Context immediately (no wait for
     // Cursor's catalog re-fetch). Seed cache via the current snapshot, then
     // pick the other model once so its reply would normally clear toggles.
-    panel_do(&h, cx, |p, cx| p.set_config_for_test("model", "claude-4.5-sonnet", cx));
+    panel_do(&h, cx, |p, cx| {
+        p.set_config_for_test("model", "claude-4.5-sonnet", cx)
+    });
     assert!(
         !panel_get(&h, cx, |p, _| p.fast_mode_on().is_some()),
         "unknown model clears Fast until Cursor replies"
@@ -2311,7 +2537,9 @@ fn cursor_parameterized_config_shows_model_fast_context_effort(cx: &mut TestAppC
     });
     assert_eq!(panel_get(&h, cx, |p, _| p.fast_mode_on()), Some(false));
     // Switch back — cache should restore Grok's Fast=true without a round trip.
-    panel_do(&h, cx, |p, cx| p.set_config_for_test("model", "grok-4.7", cx));
+    panel_do(&h, cx, |p, cx| {
+        p.set_config_for_test("model", "grok-4.7", cx)
+    });
     assert_eq!(
         panel_get(&h, cx, |p, _| p.fast_mode_on()),
         Some(true),
@@ -2389,7 +2617,11 @@ fn quitting_while_the_agent_runs_asks_first(cx: &mut TestAppContext) {
     h.press("enter", cx);
     h.wait_for(cx, "turn running", |cx| {
         cx.read(|cx| {
-            h.app.read(cx).agent.as_ref().is_some_and(|a| a.read(cx).is_turn_running())
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.read(cx).is_turn_running())
         })
     });
     h.with_app(cx, |app, window, cx| {
@@ -2427,12 +2659,26 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
     h.input("next", cx);
     h.press("enter", cx);
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_queue_len()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .outbound_queue_len()),
         1,
         "follow-up should be queued while hold runs"
     );
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_previews()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .outbound_previews()),
         ["next"]
     );
     let t = h.transcript(cx);
@@ -2446,7 +2692,14 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
     h.input("skip-me", cx);
     h.press("enter", cx);
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_previews()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .outbound_previews()),
         ["next", "skip-me"]
     );
     cx.update(|cx| {
@@ -2454,7 +2707,14 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
         panel.update(cx, |panel, cx| panel.remove_outbound_for_test(1, cx));
     });
     assert_eq!(
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_previews()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .outbound_previews()),
         ["next"]
     );
 
@@ -2476,18 +2736,33 @@ fn agent_queues_follow_up_while_a_turn_runs(cx: &mut TestAppContext) {
                 "{lines:?}"
             );
             assert_eq!(
-                cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_queue_len()),
+                cx.read(|cx| h
+                    .app
+                    .read(cx)
+                    .agent
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .outbound_queue_len()),
                 0
             );
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
-        cx.executor().advance_clock(std::time::Duration::from_millis(10));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
     }
     panic!(
         "queued follow-up never drained; transcript={:?} queue={}",
         h.transcript(cx),
-        cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).outbound_queue_len()),
+        cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .outbound_queue_len()),
     );
 }
 
@@ -2518,9 +2793,17 @@ fn silent_jobs_run_while_a_user_turn_runs(cx: &mut TestAppContext) {
     let release = agent.arm_hold();
     h.input("hold", cx);
     h.press("enter", cx);
-    h.wait_for(cx, "turn running", |cx| panel_read(cx, &|p| p.is_turn_running()));
-    assert!(panel_read(cx, &|p| p.can_suggest_commit()), "Git Suggest allowed during a turn");
-    assert!(panel_read(cx, &|p| p.can_silent_prompt()), "silent jobs allowed during a turn");
+    h.wait_for(cx, "turn running", |cx| {
+        panel_read(cx, &|p| p.is_turn_running())
+    });
+    assert!(
+        panel_read(cx, &|p| p.can_suggest_commit()),
+        "Git Suggest allowed during a turn"
+    );
+    assert!(
+        panel_read(cx, &|p| p.can_silent_prompt()),
+        "silent jobs allowed during a turn"
+    );
 
     // Improve beside the turn: the draft is rewritten, the turn keeps running.
     h.agent_composer("fix the flaky overlay", cx);
@@ -2531,15 +2814,23 @@ fn silent_jobs_run_while_a_user_turn_runs(cx: &mut TestAppContext) {
         }),
         "Improve starts while a turn runs"
     );
-    h.wait_for(cx, "improve finished", |cx| panel_read(cx, &|p| !p.is_improving_for_test()));
-    assert!(panel_read(cx, &|p| p.is_turn_running()), "Improve leaves the user turn running");
+    h.wait_for(cx, "improve finished", |cx| {
+        panel_read(cx, &|p| !p.is_improving_for_test())
+    });
+    assert!(
+        panel_read(cx, &|p| p.is_turn_running()),
+        "Improve leaves the user turn running"
+    );
 
     // A title for the open chat beside the turn.
     cx.update(|cx| {
         let panel = h.app.read(cx).agent.clone().unwrap();
         panel.update(cx, |panel, cx| {
             panel.rename_chat("s1", "Old name", cx);
-            assert!(panel.request_chat_title("s1".into(), cx), "title starts while a turn runs");
+            assert!(
+                panel.request_chat_title("s1".into(), cx),
+                "title starts while a turn runs"
+            );
         });
     });
     h.wait_for(cx, "title beside the turn", |cx| {
@@ -2549,7 +2840,10 @@ fn silent_jobs_run_while_a_user_turn_runs(cx: &mut TestAppContext) {
             })
         })
     });
-    assert!(panel_read(cx, &|p| p.is_turn_running()), "title leaves the user turn running");
+    assert!(
+        panel_read(cx, &|p| p.is_turn_running()),
+        "title leaves the user turn running"
+    );
 
     // The turn's own reply is intact: nothing was swallowed by the silent jobs.
     agent.release_hold(release);
@@ -2559,7 +2853,12 @@ fn silent_jobs_run_while_a_user_turn_runs(cx: &mut TestAppContext) {
     let lines = h.transcript(cx);
     assert_eq!(
         lines,
-        ["you: first question", "agent: echo: first question", "you: hold", "agent: echo: hold"],
+        [
+            "you: first question",
+            "agent: echo: first question",
+            "you: hold",
+            "agent: echo: hold"
+        ],
         "{lines:?}"
     );
 }
@@ -2603,7 +2902,14 @@ fn agent_improve_cancel_does_not_show_chat_stop(cx: &mut TestAppContext) {
         "Improve control stays mounted as cancel ×"
     );
     assert!(
-        !cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).is_turn_running()),
+        !cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .is_turn_running()),
         "Improve is silent — open chat must stay idle"
     );
 
@@ -2626,13 +2932,28 @@ fn agent_improve_cancel_does_not_show_chat_stop(cx: &mut TestAppContext) {
         "cancelling Improve must not leave Stop visible"
     );
     assert!(
-        !cx.read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).is_turn_running()),
+        !cx.read(|cx| h
+            .app
+            .read(cx)
+            .agent
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .is_turn_running()),
         "Improve cancel must not touch the open chat turn"
     );
     // Wire level: only the throwaway Improve session is cancelled — never the
     // open chat's session (the old `cancel()` hit both).
     let home = cx
-        .read(|cx| h.app.read(cx).agent.as_ref().unwrap().read(cx).active_chat_id())
+        .read(|cx| {
+            h.app
+                .read(cx)
+                .agent
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .active_chat_id()
+        })
         .expect("open chat");
     // The fake agent is single-threaded and blocked on the hold, so it only
     // reads the cancel notification once released; the late reply must then be
@@ -2826,10 +3147,7 @@ fn cursor_create_plan_build_switches_to_agent(cx: &mut TestAppContext) {
         previews[0]
     );
     h.wait_for(cx, "set_config mode=agent", |_| {
-        agent
-            .calls()
-            .iter()
-            .any(|c| c == "set_config mode=agent")
+        agent.calls().iter().any(|c| c == "set_config mode=agent")
     });
 }
 
@@ -2887,7 +3205,10 @@ fn agent_deletes_chat(cx: &mut TestAppContext) {
     });
 
     let ids = h.saved_chats(&folder, cx).0;
-    assert!(!ids.contains(&"s1".to_string()), "s1 removed from index: {ids:?}");
+    assert!(
+        !ids.contains(&"s1".to_string()),
+        "s1 removed from index: {ids:?}"
+    );
     // The agent runs on its own thread — wait for the request to land.
     h.wait_for(cx, "agent got delete", |_| {
         agent.calls().iter().any(|c| c == "delete s1")
@@ -2933,9 +3254,7 @@ fn agent_pick_cursor_remembers_on_workspace_not_config(cx: &mut TestAppContext) 
         let key = folder.to_string_lossy().into_owned();
         (
             app.config.agent.command.clone(),
-            app.config
-                .session(&key)
-                .and_then(|s| s.agent.clone()),
+            app.config.session(&key).and_then(|s| s.agent.clone()),
         )
     });
     assert!(
@@ -2999,7 +3318,10 @@ fn agent_header_shows_brand_and_switch_when_ready(cx: &mut TestAppContext) {
             panel.force_ready_chrome_for_test(cx);
         });
     });
-    assert!(h.has("agent-switch-button", cx), "logo+chevron Switch Agent");
+    assert!(
+        h.has("agent-switch-button", cx),
+        "logo+chevron Switch Agent"
+    );
 }
 
 #[gpui_kit::test]
@@ -3075,17 +3397,23 @@ fn tree_create_file_and_folder_land_on_disk(cx: &mut TestAppContext) {
     h.open_folder(&root, cx);
 
     let file = root.join("fresh.txt");
-    let r = h.with_app(cx, |app, w, cx| app.create_file_in(&root, "fresh.txt", w, cx));
+    let r = h.with_app(cx, |app, w, cx| {
+        app.create_file_in(&root, "fresh.txt", w, cx)
+    });
     assert!(r.is_ok(), "{r:?}");
     assert!(file.is_file());
     assert!(h.tab(&file, cx).is_some(), "new file opens as a tab");
 
     let dir = root.join("nested");
-    let r = h.with_app(cx, |app, w, cx| app.create_folder_in(&root, "nested", w, cx));
+    let r = h.with_app(cx, |app, w, cx| {
+        app.create_folder_in(&root, "nested", w, cx)
+    });
     assert!(r.is_ok(), "{r:?}");
     assert!(dir.is_dir());
 
-    let r = h.with_app(cx, |app, w, cx| app.create_file_in(&root, "fresh.txt", w, cx));
+    let r = h.with_app(cx, |app, w, cx| {
+        app.create_file_in(&root, "fresh.txt", w, cx)
+    });
     assert!(r.is_err(), "duplicate name refused");
 }
 
@@ -3133,12 +3461,19 @@ fn terminal_toggle_spawns_session_and_hides(cx: &mut TestAppContext) {
         app.on_toggle_terminal(&crate::app::ToggleTerminal, w, cx);
     });
     assert!(h.terminal_visible(cx), "toggle opens the panel");
-    assert_eq!(h.terminal_session_count(cx), 1, "first toggle creates a shell");
+    assert_eq!(
+        h.terminal_session_count(cx),
+        1,
+        "first toggle creates a shell"
+    );
 
     h.with_app(cx, |app, w, cx| {
         app.on_toggle_terminal(&crate::app::ToggleTerminal, w, cx);
     });
-    assert!(!h.terminal_visible(cx), "toggle hides without dropping the session");
+    assert!(
+        !h.terminal_visible(cx),
+        "toggle hides without dropping the session"
+    );
     assert_eq!(h.terminal_session_count(cx), 1);
 
     h.with_app(cx, |app, w, cx| {
@@ -3174,10 +3509,16 @@ fn save_as_writes_new_path_and_leaves_original(cx: &mut TestAppContext) {
     assert_eq!(h.tab(&path, cx), Some((true, "Xhello".into())));
 
     let as_path = h.dir.path().join("a-copy.txt");
-    let r = h.with_app(cx, |app, w, cx| app.save_as_to(&path, as_path.clone(), w, cx));
+    let r = h.with_app(cx, |app, w, cx| {
+        app.save_as_to(&path, as_path.clone(), w, cx)
+    });
     assert!(r.is_ok(), "{r:?}");
 
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello", "original untouched");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "hello",
+        "original untouched"
+    );
     assert_eq!(std::fs::read_to_string(&as_path).unwrap(), "Xhello");
     assert!(h.tab(&path, cx).is_none(), "tab left the old path");
     assert_eq!(h.tab(&as_path, cx), Some((false, "Xhello".into())));
@@ -3198,7 +3539,10 @@ fn dirty_buffer_text_restores_with_the_folder_session(cx: &mut TestAppContext) {
 
     // Switch away: Don't Save still persist_session (with unsaved_text) first.
     h.open_folder(&b, cx);
-    assert!(h.has("dialog-secondary", cx), "unsaved-changes before switch");
+    assert!(
+        h.has("dialog-secondary", cx),
+        "unsaved-changes before switch"
+    );
     h.click("dialog-secondary", cx);
     assert!(h.tab(&path, cx).is_none());
 
@@ -3208,7 +3552,11 @@ fn dirty_buffer_text_restores_with_the_folder_session(cx: &mut TestAppContext) {
         Some((true, "EDIT-base".into())),
         "unsaved text + dirty mark come back with the folder"
     );
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "base", "disk unchanged");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "base",
+        "disk unchanged"
+    );
 }
 
 #[gpui_kit::test]
@@ -3262,7 +3610,10 @@ fn disk_reload_keeps_selection(cx: &mut TestAppContext) {
         let tab = app.tabs.iter().find(|t| t.path == path).expect("tab");
         let state = tab.editor_state().expect("editor");
         let range = state.read(cx).selected_range();
-        (tab.editor_state().unwrap().read(cx).value().to_string(), range)
+        (
+            tab.editor_state().unwrap().read(cx).value().to_string(),
+            range,
+        )
     });
     assert_eq!(text, "abcdefghijXXX");
     assert_eq!(range, 3..7, "selection survives clean reload");
@@ -3322,7 +3673,10 @@ fn reconcile_reloads_clean_tab_after_external_write(cx: &mut TestAppContext) {
 fn workspace_settings_overlay_font_tab_and_format(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     let root = h.folder("proj");
-    let ws = h.dir.path().join(format!("proj.{}", crate::workspace::WORKSPACE_EXTENSION));
+    let ws = h
+        .dir
+        .path()
+        .join(format!("proj.{}", crate::workspace::WORKSPACE_EXTENSION));
     std::fs::write(
         &ws,
         r#"{
@@ -3344,7 +3698,11 @@ fn workspace_settings_overlay_font_tab_and_format(cx: &mut TestAppContext) {
         assert_eq!(eff.font_size, 20.0);
         assert_eq!(eff.tab_size, 4);
         assert!(!eff.lsp.format_on_save);
-        assert_eq!(app.config.font_size, AppConfig::default().font_size, "user config untouched");
+        assert_eq!(
+            app.config.font_size,
+            AppConfig::default().font_size,
+            "user config untouched"
+        );
     });
 }
 
@@ -3358,10 +3716,23 @@ fn tab_indent_is_detected_per_file_else_config(cx: &mut TestAppContext) {
         h.open(p, cx);
     }
     h.with_app(cx, |app, _, _| {
-        let indent = |p: &Path| app.tabs.iter().find(|t| t.path == p).unwrap().indent().unwrap();
-        assert_eq!((indent(&four).tab_size, indent(&four).hard_tabs), (4, false));
+        let indent = |p: &Path| {
+            app.tabs
+                .iter()
+                .find(|t| t.path == p)
+                .unwrap()
+                .indent()
+                .unwrap()
+        };
+        assert_eq!(
+            (indent(&four).tab_size, indent(&four).hard_tabs),
+            (4, false)
+        );
         assert!(indent(&tabs).hard_tabs);
-        assert_eq!((indent(&flat).tab_size, indent(&flat).hard_tabs), (2, false));
+        assert_eq!(
+            (indent(&flat).tab_size, indent(&flat).hard_tabs),
+            (2, false)
+        );
     });
 }
 
@@ -3437,10 +3808,7 @@ fn git_suggest_menu_lists_generate_and_agents(cx: &mut TestAppContext) {
     h.click("git-suggest-0", cx);
     assert!(h.has("git-suggest-generate-0", cx), "Generate in menu");
     assert!(h.has("git-suggest-ai-claude-0", cx), "Claude in menu");
-    assert!(
-        h.has("git-suggest-ai-cursor-agent-0", cx),
-        "Cursor in menu"
-    );
+    assert!(h.has("git-suggest-ai-cursor-agent-0", cx), "Cursor in menu");
     h.click("git-suggest-generate-0", cx);
     let msg = cx.read(|cx| {
         h.app
@@ -3467,7 +3835,11 @@ fn git_suggest_ai_runs_for_ready_claude_slot(cx: &mut TestAppContext) {
     h.press("secondary-shift-b", cx);
     h.wait_ready(cx);
 
-    let news_before = agent.calls().iter().filter(|c| c.starts_with("new ")).count();
+    let news_before = agent
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("new "))
+        .count();
     h.with_app(cx, |app, window, cx| {
         app.suggest_git_commit_ai(
             folder.clone(),
@@ -3478,7 +3850,12 @@ fn git_suggest_ai_runs_for_ready_claude_slot(cx: &mut TestAppContext) {
         );
     });
     h.wait_for(cx, "commit suggest opened a throwaway session", |_| {
-        agent.calls().iter().filter(|c| c.starts_with("new ")).count() > news_before
+        agent
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("new "))
+            .count()
+            > news_before
     });
     assert!(
         cx.read(|cx| h.app.read(cx).pending_commit_suggest.is_none()),
@@ -3599,13 +3976,18 @@ fn update_dialog_offers_mac_app_update(cx: &mut TestAppContext) {
     h.with_app(cx, |app, window, cx| {
         app.show_update_available(
             release,
-            crate::update::InstallKind::MacApp { bundle: "/Applications/Isengard.app".into() },
+            crate::update::InstallKind::MacApp {
+                bundle: "/Applications/Isengard.app".into(),
+            },
             true,
             window,
             cx,
         );
     });
-    assert!(h.has("update-primary", cx), "macOS app copies get an update prompt");
+    assert!(
+        h.has("update-primary", cx),
+        "macOS app copies get an update prompt"
+    );
     h.click("update-later", cx);
     assert!(!h.has("update-primary", cx));
 }
@@ -3621,13 +4003,18 @@ fn update_dialog_offers_windows_exe_update(cx: &mut TestAppContext) {
     h.with_app(cx, |app, window, cx| {
         app.show_update_available(
             release,
-            crate::update::InstallKind::WinExe { exe: "C:/Isengard/isengard.exe".into() },
+            crate::update::InstallKind::WinExe {
+                exe: "C:/Isengard/isengard.exe".into(),
+            },
             true,
             window,
             cx,
         );
     });
-    assert!(h.has("update-primary", cx), "Windows installs get an update prompt");
+    assert!(
+        h.has("update-primary", cx),
+        "Windows installs get an update prompt"
+    );
     h.click("update-later", cx);
     assert!(!h.has("update-primary", cx));
 }
@@ -3637,7 +4024,12 @@ fn update_check_result_decides_whether_to_prompt(cx: &mut TestAppContext) {
     let h = Harness::new(cx);
     // Same version: silent on startup checks, no dialog, check time recorded.
     h.with_app(cx, |app, window, cx| {
-        app.finish_update_check(Ok(fake_release(crate::update::current_version())), false, window, cx);
+        app.finish_update_check(
+            Ok(fake_release(crate::update::current_version())),
+            false,
+            window,
+            cx,
+        );
     });
     assert!(!h.has("update-primary", cx));
     assert!(cx.read(|cx| h.app.read(cx).config.updates.last_check.is_some()));
@@ -3647,7 +4039,10 @@ fn update_check_result_decides_whether_to_prompt(cx: &mut TestAppContext) {
         app.config.updates.skipped_version = Some("9.9.9".into());
         app.finish_update_check(Ok(fake_release("9.9.9")), false, window, cx);
     });
-    assert!(!h.has("update-primary", cx), "skipped version is not offered");
+    assert!(
+        !h.has("update-primary", cx),
+        "skipped version is not offered"
+    );
 
     // A newer, unskipped version prompts.
     h.with_app(cx, |app, window, cx| {
@@ -3770,27 +4165,44 @@ fn agent_usage_bars_survive_rate_limiting(cx: &mut TestAppContext) {
     };
 
     // Fresh start while rate limited: nothing to show, but we know why.
-    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Err(limited()), cx));
+    panel.update(cx, |p, cx| {
+        p.apply_limits_fetch_for_test(Err(limited()), cx)
+    });
     assert_eq!(state(cx), (false, false, true));
 
     // Numbers arrive.
-    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Ok(week(25.0)), cx));
+    panel.update(cx, |p, cx| {
+        p.apply_limits_fetch_for_test(Ok(week(25.0)), cx)
+    });
     assert_eq!(state(cx), (true, false, false));
 
     // Rate limited again: the bar stays, dimmed.
-    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Err(limited()), cx));
+    panel.update(cx, |p, cx| {
+        p.apply_limits_fetch_for_test(Err(limited()), cx)
+    });
     assert_eq!(state(cx), (true, true, true));
 
     // An empty 200 is not a recovery.
-    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Ok(week(25.0)), cx));
+    panel.update(cx, |p, cx| {
+        p.apply_limits_fetch_for_test(Ok(week(25.0)), cx)
+    });
     assert_eq!(state(cx), (true, false, false));
-    panel.update(cx, |p, cx| p.apply_limits_fetch_for_test(Err("boom".to_string().into()), cx));
+    panel.update(cx, |p, cx| {
+        p.apply_limits_fetch_for_test(Err("boom".to_string().into()), cx)
+    });
     assert_eq!(state(cx), (true, true, false));
     panel.update(cx, |p, cx| {
-        let empty = PlanLimits { week: None, ..week(0.0) };
+        let empty = PlanLimits {
+            week: None,
+            ..week(0.0)
+        };
         p.apply_limits_fetch_for_test(Ok(empty), cx);
     });
-    assert_eq!(state(cx), (true, true, false), "empty payload keeps stale flag");
+    assert_eq!(
+        state(cx),
+        (true, true, false),
+        "empty payload keeps stale flag"
+    );
 }
 
 /// Kit's window `Root` binds Tab to focus traversal, which used to steal it
@@ -3877,11 +4289,16 @@ impl Harness {
     fn diff_panes(
         &self,
         cx: &mut TestAppContext,
-    ) -> (Entity<gpui_kit::component::input::EditorState>, Entity<gpui_kit::component::input::EditorState>) {
-        cx.read(|cx| match &self.app.read(cx).tabs.active().expect("tab").body {
-            super::tab::TabBody::Diff { old, new, .. } => (old.clone(), new.clone()),
-            _ => panic!("active tab is not a diff"),
-        })
+    ) -> (
+        Entity<gpui_kit::component::input::EditorState>,
+        Entity<gpui_kit::component::input::EditorState>,
+    ) {
+        cx.read(
+            |cx| match &self.app.read(cx).tabs.active().expect("tab").body {
+                super::tab::TabBody::Diff { old, new, .. } => (old.clone(), new.clone()),
+                _ => panic!("active tab is not a diff"),
+            },
+        )
     }
 
     fn mouse_move(&self, at: gpui_kit::Point<gpui_kit::Pixels>, cx: &mut TestAppContext) {
@@ -3941,7 +4358,6 @@ impl Harness {
     }
 }
 
-
 /// Wheel `steps` ticks over the pane at `at` and assert the two panes never
 /// disagree and the scroll never moves back the way it came (no snap to the
 /// top, no jitter on the shorter pane).
@@ -3977,16 +4393,14 @@ fn assert_locked_scroll(
 /// scroll tick, so it painted over-scrolled frames and jittered.
 #[gpui_kit::test]
 fn diff_panes_stay_locked_when_one_is_shorter(cx: &mut TestAppContext) {
-    for (conflict, left_lines, right_lines) in
-        [
-            (true, 150, 400),
-            (true, 400, 150),
-            // A pane that fits in the viewport (max offset 0) must not pin
-            // the longer one to the top.
-            (true, 10, 400),
-            (false, 10, 400),
-        ]
-    {
+    for (conflict, left_lines, right_lines) in [
+        (true, 150, 400),
+        (true, 400, 150),
+        // A pane that fits in the viewport (max offset 0) must not pin
+        // the longer one to the top.
+        (true, 10, 400),
+        (false, 10, 400),
+    ] {
         let label = format!(
             "{} {left_lines}|{right_lines}",
             if conflict { "conflict" } else { "change" }

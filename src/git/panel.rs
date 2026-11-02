@@ -23,9 +23,8 @@ use crate::config::GitRepoSession;
 
 use super::engine::{
     ConflictSide, GitChange, RepoOp, RepoStatus, accept_conflict_side, commit_paths,
-    write_resolved_conflict,
     conflict_banner, discard_all, discard_file, load_workspace_status, pull_ff_only, push,
-    read_merge_msg, suggest_commit_message,
+    read_merge_msg, suggest_commit_message, write_resolved_conflict,
 };
 
 const MAX_RENDERED_CHANGES: usize = 500;
@@ -58,7 +57,9 @@ fn commit_auto_h(message: &str) -> Pixels {
 /// Visible box: max(auto content height, drag floor), clamped.
 fn commit_display_h(floor: Pixels, message: &str) -> Pixels {
     let auto = commit_auto_h(message);
-    auto.max(floor).max(commit_min_h()).min(commit_manual_max_h())
+    auto.max(floor)
+        .max(commit_min_h())
+        .min(commit_manual_max_h())
 }
 
 struct MsgResize {
@@ -84,11 +85,17 @@ pub enum GitPanelEvent {
         rel_path: String,
     },
     /// Open the worktree file in the editor (same as the file tree).
-    OpenFile { path: PathBuf },
+    OpenFile {
+        path: PathBuf,
+    },
     /// Disk changed under an open tab (e.g. Accept Current/Incoming) — reload text.
-    ReloadFile { path: PathBuf },
+    ReloadFile {
+        path: PathBuf,
+    },
     /// Close the conflict compare tab for this worktree path (after Accept).
-    CloseConflictPreview { path: PathBuf },
+    CloseConflictPreview {
+        path: PathBuf,
+    },
     /// Ask the app to confirm discarding one file, then call [`GitPanel::discard_change`].
     ConfirmDiscardFile {
         repo: PathBuf,
@@ -97,7 +104,10 @@ pub enum GitPanelEvent {
         old_rel_path: Option<String>,
     },
     /// Ask the app to confirm discarding every change in a repo.
-    ConfirmDiscardAll { repo: PathBuf, count: usize },
+    ConfirmDiscardAll {
+        repo: PathBuf,
+        count: usize,
+    },
     /// AI Suggest for selected paths via Claude or Cursor (throwaway session).
     SuggestCommitAi {
         root: PathBuf,
@@ -105,9 +115,13 @@ pub enum GitPanelEvent {
         agent: BuiltinAgent,
     },
     /// Worktree paths the user discarded — agent **N Files** cards should drop them.
-    DiscardedPaths { paths: Vec<PathBuf> },
+    DiscardedPaths {
+        paths: Vec<PathBuf>,
+    },
     /// Whole-repo discard — drop every **N Files** row under this root.
-    DiscardedRepo { root: PathBuf },
+    DiscardedRepo {
+        root: PathBuf,
+    },
     ToastError(String),
     ToastSuccess(String),
     /// Porcelain reload finished — file tree can tint dirty paths.
@@ -366,10 +380,7 @@ impl GitPanel {
             }
             let changes_expanded = self.expanded.get(&status.root).copied().unwrap_or(true);
             let selected = if let Some(ui) = pending_ui {
-                merge_selection(
-                    Some(ui.selected.iter().cloned().collect()),
-                    &status.changes,
-                )
+                merge_selection(Some(ui.selected.iter().cloned().collect()), &status.changes)
             } else {
                 merge_selection(old_selection.remove(&status.root), &status.changes)
             };
@@ -407,13 +418,18 @@ impl GitPanel {
         if first_paint
             && std::env::var_os("ISENGARD_OPEN_CONFLICT").is_some()
             && let Some((repo, path, rel_path)) = self.sections.iter().find_map(|section| {
-                section.status.changes.iter().find(|c| c.status == 'U').map(|c| {
-                    (
-                        section.status.root.clone(),
-                        c.path.clone(),
-                        c.rel_path.clone(),
-                    )
-                })
+                section
+                    .status
+                    .changes
+                    .iter()
+                    .find(|c| c.status == 'U')
+                    .map(|c| {
+                        (
+                            section.status.root.clone(),
+                            c.path.clone(),
+                            c.rel_path.clone(),
+                        )
+                    })
             })
         {
             cx.emit(GitPanelEvent::OpenConflict {
@@ -430,19 +446,12 @@ impl GitPanel {
     pub fn dirty_paths(&self) -> Vec<(PathBuf, char)> {
         self.sections
             .iter()
-            .flat_map(|s| {
-                s.status
-                    .changes
-                    .iter()
-                    .map(|c| (c.path.clone(), c.status))
-            })
+            .flat_map(|s| s.status.changes.iter().map(|c| (c.path.clone(), c.status)))
             .collect()
     }
 
     fn section_mut(&mut self, root: &Path) -> Option<&mut RepoSection> {
-        self.sections
-            .iter_mut()
-            .find(|s| s.status.root == root)
+        self.sections.iter_mut().find(|s| s.status.root == root)
     }
 
     fn set_busy(&mut self, root: &Path, busy: Option<BusyOp>, cx: &mut Context<Self>) {
@@ -657,11 +666,7 @@ impl GitPanel {
 
     /// Spin Suggest while an agent turn runs (or clear on failure before fallback).
     pub fn set_suggest_busy(&mut self, root: &Path, busy: bool, cx: &mut Context<Self>) {
-        self.set_busy(
-            root,
-            busy.then_some(BusyOp::Suggest),
-            cx,
-        );
+        self.set_busy(root, busy.then_some(BusyOp::Suggest), cx);
     }
 
     fn set_change_selected(
@@ -782,9 +787,7 @@ impl GitPanel {
             };
             let msg = section.message.read(cx).value().to_string();
             if msg.trim().is_empty() {
-                cx.emit(GitPanelEvent::ToastError(
-                    "Commit message is empty".into(),
-                ));
+                cx.emit(GitPanelEvent::ToastError("Commit message is empty".into()));
                 return;
             }
             let paths: Vec<String> = section.selected.iter().cloned().collect();
@@ -824,9 +827,7 @@ impl GitPanel {
                 }
                 Some(GitPanelEvent::DiscardedPaths { paths })
             }
-            Mutation::DiscardAll => Some(GitPanelEvent::DiscardedRepo {
-                root: root.clone(),
-            }),
+            Mutation::DiscardAll => Some(GitPanelEvent::DiscardedRepo { root: root.clone() }),
             _ => None,
         };
 
@@ -837,16 +838,10 @@ impl GitPanel {
                         Mutation::Commit => {
                             let msg = message.unwrap_or_default();
                             let paths = commit_paths_list.unwrap_or_default();
-                            commit_paths(&root_bg, &msg, &paths)
-                                .map(|_| "Committed".to_owned())
+                            commit_paths(&root_bg, &msg, &paths).map(|_| "Committed".to_owned())
                         }
-                        Mutation::Pull => pull_ff_only(&root_bg).map(|out| {
-                            if out.is_empty() {
-                                "Pulled".into()
-                            } else {
-                                out
-                            }
-                        }),
+                        Mutation::Pull => pull_ff_only(&root_bg)
+                            .map(|out| if out.is_empty() { "Pulled".into() } else { out }),
                         Mutation::Push => push(&root_bg).map(|out| {
                             if out.is_empty() {
                                 "Everything up-to-date".into()
@@ -858,25 +853,18 @@ impl GitPanel {
                             rel_path,
                             status,
                             old_rel_path,
-                        } => discard_file(
-                            &root_bg,
-                            &rel_path,
-                            status,
-                            old_rel_path.as_deref(),
-                        )
-                        .map(|_| format!("Discarded {rel_path}")),
+                        } => discard_file(&root_bg, &rel_path, status, old_rel_path.as_deref())
+                            .map(|_| format!("Discarded {rel_path}")),
                         Mutation::DiscardAll => {
                             discard_all(&root_bg).map(|_| "Discarded all changes".to_owned())
                         }
                         Mutation::AcceptConflict { rel_path, side } => {
-                            accept_conflict_side(&root_bg, &rel_path, side).map(|_| {
-                                format!("Accepted {} for {rel_path}", side.label())
-                            })
+                            accept_conflict_side(&root_bg, &rel_path, side)
+                                .map(|_| format!("Accepted {} for {rel_path}", side.label()))
                         }
                         Mutation::ResolveConflictContent { rel_path, content } => {
-                            write_resolved_conflict(&root_bg, &rel_path, &content).map(|_| {
-                                format!("Resolved {rel_path}")
-                            })
+                            write_resolved_conflict(&root_bg, &rel_path, &content)
+                                .map(|_| format!("Resolved {rel_path}"))
                         }
                     }
                 })
@@ -886,17 +874,13 @@ impl GitPanel {
                 this.set_busy(&root, None, cx);
                 match result {
                     Ok(msg) => {
-                        if clear_message
-                            && let Some(section) = this.section_mut(&root)
-                        {
+                        if clear_message && let Some(section) = this.section_mut(&root) {
                             section.message.update(cx, |state, cx| {
                                 state.set_value("", window, cx);
                             });
                         }
                         if let Some(path) = reload_path {
-                            cx.emit(GitPanelEvent::CloseConflictPreview {
-                                path: path.clone(),
-                            });
+                            cx.emit(GitPanelEvent::CloseConflictPreview { path: path.clone() });
                             cx.emit(GitPanelEvent::ReloadFile { path });
                         }
                         if let Some(ev) = discard_notify {
@@ -1104,7 +1088,9 @@ impl Render for GitPanel {
                 if repo_collapsed {
                     body.push(
                         v_flex()
-                            .id(ElementId::Name(SharedString::from(format!("git-repo-{si}"))))
+                            .id(ElementId::Name(SharedString::from(format!(
+                                "git-repo-{si}"
+                            ))))
                             .w_full()
                             .flex_shrink_0()
                             .when(show_sep, |el| el.border_b_1().border_color(theme.border))
@@ -1856,9 +1842,7 @@ fn render_change_row(
                                 rel_path: rel.clone(),
                             });
                         } else {
-                            cx.emit(GitPanelEvent::OpenFile {
-                                path: path.clone(),
-                            });
+                            cx.emit(GitPanelEvent::OpenFile { path: path.clone() });
                         }
                     })
                 }),
@@ -1901,16 +1885,10 @@ mod tests {
     #[test]
     fn commit_display_h_auto_then_floor() {
         assert_eq!(commit_auto_h(""), commit_min_h());
-        assert_eq!(
-            commit_auto_h("a\nb\nc\nd\ne\nf\ng"),
-            commit_auto_max_h()
-        );
+        assert_eq!(commit_auto_h("a\nb\nc\nd\ne\nf\ng"), commit_auto_max_h());
         assert_eq!(commit_display_h(px(0.), "a"), commit_min_h());
         let tall = px(200.);
         assert_eq!(commit_display_h(tall, "a"), tall);
-        assert_eq!(
-            commit_display_h(px(9999.), "a"),
-            commit_manual_max_h()
-        );
+        assert_eq!(commit_display_h(px(9999.), "a"), commit_manual_max_h());
     }
 }

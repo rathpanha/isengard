@@ -250,10 +250,7 @@ pub fn list_mentions(roots: &[PathBuf], query: &str, limit: usize) -> Vec<Mentio
             .then_with(|| b.hit.is_dir.cmp(&a.hit.is_dir))
             .then_with(|| a.hit.label.cmp(&b.hit.label))
     });
-    hits.into_iter()
-        .take(limit)
-        .map(|s| s.hit)
-        .collect()
+    hits.into_iter().take(limit).map(|s| s.hit).collect()
 }
 
 /// Relative path used when diving into a folder (`@label/`).
@@ -279,12 +276,7 @@ fn resolve_dir(roots: &[PathBuf], query: &str) -> Option<(PathBuf, PathBuf)> {
     Some((root, path))
 }
 
-fn list_dir_children(
-    roots: &[PathBuf],
-    root: &Path,
-    dir: &Path,
-    limit: usize,
-) -> Vec<MentionHit> {
+fn list_dir_children(roots: &[PathBuf], root: &Path, dir: &Path, limit: usize) -> Vec<MentionHit> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -621,14 +613,17 @@ mod tests {
 
         let empty = list_mentions(&roots, "", 50);
         assert!(
-            empty.iter().any(|h| h.label == "royal5g-system" && h.path == system),
+            empty
+                .iter()
+                .any(|h| h.label == "royal5g-system" && h.path == system),
             "empty @ must list workspace roots, got {:?}",
             empty.iter().map(|h| &h.label).collect::<Vec<_>>()
         );
 
         let hits = list_mentions(&roots, "royal5g-system", 8);
         assert!(
-            hits.iter().any(|h| h.label == "royal5g-system" && h.is_dir && h.path == system),
+            hits.iter()
+                .any(|h| h.label == "royal5g-system" && h.is_dir && h.path == system),
             "filter must hit the workspace root itself, got {hits:?}"
         );
 

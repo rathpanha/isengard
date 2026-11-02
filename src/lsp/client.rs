@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use lsp_types::notification::{Notification as _, Initialized};
+use lsp_types::notification::{Initialized, Notification as _};
 use lsp_types::request::{Initialize, Request as _, Shutdown};
 use lsp_types::{InitializeParams, InitializedParams};
 use serde::Serialize;
@@ -26,9 +26,16 @@ type PendingMap = HashMap<i64, PendingTx>;
 
 #[derive(Debug)]
 pub enum Incoming {
-    Notification { method: String, params: Value },
+    Notification {
+        method: String,
+        params: Value,
+    },
     /// Server → client request; caller must [`LspClient::respond`] or [`LspClient::respond_error`].
-    ServerRequest { id: Value, method: String, params: Value },
+    ServerRequest {
+        id: Value,
+        method: String,
+        params: Value,
+    },
 }
 
 pub struct LspClient {
@@ -55,8 +62,7 @@ impl LspClient {
         preflight(&command)?;
 
         // npm-packaged servers are `#!/usr/bin/env node` scripts: run them on Bun.
-        let (program, args) =
-            crate::runtime::run_on_bun(command.clone().into(), spec.args.clone());
+        let (program, args) = crate::runtime::run_on_bun(command.clone().into(), spec.args.clone());
         let mut child = crate::process::command(&program)
             .args(&args)
             .stdin(Stdio::piped())
@@ -87,9 +93,7 @@ impl LspClient {
                             break;
                         }
                     };
-                    if let Err(err) =
-                        dispatch_message(&body, &pending_reader, &incoming_tx)
-                    {
+                    if let Err(err) = dispatch_message(&body, &pending_reader, &incoming_tx) {
                         log::warn!("LSP dispatch: {err:#}");
                     }
                 }
@@ -223,20 +227,16 @@ fn preflight(command: &str) -> anyhow::Result<()> {
     let path = std::path::Path::new(command);
     if !path.is_file() {
         // Basename only — try resolve (app-local then PATH).
-        let resolved = super::install::resolve_command(command)
-            .ok_or_else(|| {
-                anyhow!(
-                    "`{command}` not found (app-local or PATH) — use Install or install it yourself"
-                )
-            })?;
+        let resolved = super::install::resolve_command(command).ok_or_else(|| {
+            anyhow!(
+                "`{command}` not found (app-local or PATH) — use Install or install it yourself"
+            )
+        })?;
         return preflight(&resolved.to_string_lossy());
     }
     // rustup installs a PATH shim that exists before the real component.
     // App-local downloads are real binaries — skip the shim check for those.
-    let basename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(command);
+    let basename = path.file_name().and_then(|n| n.to_str()).unwrap_or(command);
     if basename == "rust-analyzer" && !super::install::is_app_local("rust-analyzer") {
         let status = crate::process::command(command)
             .arg("--version")

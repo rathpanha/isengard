@@ -1,7 +1,7 @@
 //! Source Control: open diff/conflict tabs, accept hunks, discard confirms.
-use super::*;
-use super::tab::{DiffKind, TabBody};
 use super::tab::conflict_side_to_hunk;
+use super::tab::{DiffKind, TabBody};
+use super::*;
 use crate::acp::{BuiltinAgent, builtin_agent};
 use crate::git::build_commit_suggest_prompt;
 
@@ -77,12 +77,7 @@ impl IsengardApp {
         }
     }
 
-    pub(super) fn on_show_git(
-        &mut self,
-        _: &ShowGit,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn on_show_git(&mut self, _: &ShowGit, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.is_empty() {
             return;
         }
@@ -257,14 +252,8 @@ impl IsengardApp {
                     state.set_readonly(true, cx);
                 });
                 Self::match_diff_extent(&old, &new, window, cx);
-                let highlights = Self::apply_diff_pane_highlights(
-                    &old,
-                    &new,
-                    &old_text,
-                    &new_text,
-                    &kind,
-                    cx,
-                );
+                let highlights =
+                    Self::apply_diff_pane_highlights(&old, &new, &old_text, &new_text, &kind, cx);
                 if let Some(tab) = self.tabs.get_mut(ix)
                     && let TabBody::Diff {
                         kind: tab_kind,
@@ -300,19 +289,11 @@ impl IsengardApp {
         // Conflict: no line numbers / folding — less gutter so Accept can sit
         // on the text column (Kit does not expose `line_number_width`).
         let is_conflict = matches!(kind, DiffKind::Conflict { .. });
-        let old =
-            Self::new_diff_editor(language, old_text.clone(), is_conflict, window, cx);
-        let new =
-            Self::new_diff_editor(language, new_text.clone(), is_conflict, window, cx);
+        let old = Self::new_diff_editor(language, old_text.clone(), is_conflict, window, cx);
+        let new = Self::new_diff_editor(language, new_text.clone(), is_conflict, window, cx);
         Self::match_diff_extent(&old, &new, window, cx);
-        let highlights = Self::apply_diff_pane_highlights(
-            &old,
-            &new,
-            &old_text,
-            &new_text,
-            &kind,
-            cx,
-        );
+        let highlights =
+            Self::apply_diff_pane_highlights(&old, &new, &old_text, &new_text, &kind, cx);
         let subscriptions = Self::diff_scroll_subscriptions(&old, &new, window, cx);
         Self::scroll_diff_to_first_change(&old, &new, &old_text, &new_text, window, cx);
         self.tabs.push(EditorTab {

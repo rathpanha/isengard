@@ -14,7 +14,8 @@ impl IsengardApp {
         self.sidebar_view = SidebarView::Search;
         self.sidebar_visible = true;
         self.persist_session(cx);
-        self.search.update(cx, |panel, cx| panel.focus_find(window, cx));
+        self.search
+            .update(cx, |panel, cx| panel.focus_find(window, cx));
         cx.notify();
     }
 
@@ -52,8 +53,7 @@ impl IsengardApp {
         self.search_generation = self.search_generation.wrapping_add(1);
         let search_gen = self.search_generation;
         if query.pattern.is_empty() {
-            self.search
-                .update(cx, |panel, cx| panel.clear_results(cx));
+            self.search.update(cx, |panel, cx| panel.clear_results(cx));
             return;
         }
         let cancel = Arc::new(AtomicBool::new(false));
@@ -74,9 +74,7 @@ impl IsengardApp {
                 return None;
             }
             let outcome = cx
-                .background_spawn(async move {
-                    run_search(&roots, &query, &buffers, &cancel)
-                })
+                .background_spawn(async move { run_search(&roots, &query, &buffers, &cancel) })
                 .await;
             this.update(cx, |this, cx| {
                 if this.search_generation != search_gen {
@@ -85,12 +83,7 @@ impl IsengardApp {
                 let labels: HashMap<PathBuf, String> = outcome
                     .groups
                     .iter()
-                    .map(|g| {
-                        (
-                            g.path.clone(),
-                            this.workspace.relative_label(&g.path),
-                        )
-                    })
+                    .map(|g| (g.path.clone(), this.workspace.relative_label(&g.path)))
                     .collect();
                 this.search
                     .update(cx, |panel, cx| panel.set_outcome(outcome, labels, cx));
@@ -243,12 +236,7 @@ impl IsengardApp {
                 let Some(state) = state.upgrade() else {
                     return;
                 };
-                Self::apply_selection_match_decorations(
-                    &app_entity,
-                    &state,
-                    Vec::new(),
-                    cx,
-                );
+                Self::apply_selection_match_decorations(&app_entity, &state, Vec::new(), cx);
             });
             return;
         }
@@ -280,7 +268,11 @@ impl IsengardApp {
                         || editor.text().len() > selection_matches::MAX_HAYSTACK_BYTES
                     {
                         Self::apply_selection_match_decorations_for(
-                            this, id, &state, Vec::new(), cx,
+                            this,
+                            id,
+                            &state,
+                            Vec::new(),
+                            cx,
                         );
                         return;
                     }
@@ -288,19 +280,16 @@ impl IsengardApp {
                     // SharedString wrap) on this hot path.
                     (range, needle, editor.text().to_string())
                 };
-                let decorations = selection_matches::find_selection_matches(
-                    &haystack, &needle, range,
-                )
-                .into_iter()
-                .map(|r| {
-                    RangeDecoration::new(r)
-                        .with_style(RangeDecorationStyle::Fill)
-                        .with_color(fill)
-                })
-                .collect();
-                Self::apply_selection_match_decorations_for(
-                    this, id, &state, decorations, cx,
-                );
+                let decorations =
+                    selection_matches::find_selection_matches(&haystack, &needle, range)
+                        .into_iter()
+                        .map(|r| {
+                            RangeDecoration::new(r)
+                                .with_style(RangeDecorationStyle::Fill)
+                                .with_color(fill)
+                        })
+                        .collect();
+                Self::apply_selection_match_decorations_for(this, id, &state, decorations, cx);
             })
             .ok();
         })
@@ -418,8 +407,7 @@ impl IsengardApp {
             .and_then(|t| t.editor_state().cloned());
         if let Some(state) = open_state {
             let text = state.read(cx).value().to_string();
-            let (new_text, count) =
-                apply_replace(&text, query).map_err(anyhow::Error::msg)?;
+            let (new_text, count) = apply_replace(&text, query).map_err(anyhow::Error::msg)?;
             if count == 0 {
                 return Ok(());
             }
@@ -445,5 +433,4 @@ impl IsengardApp {
         let query = self.search.read(cx).query(cx);
         self.schedule_search(query, cx);
     }
-
 }

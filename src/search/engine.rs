@@ -35,10 +35,10 @@ const SKIP_DIR_NAMES: &[&str] = &[
 /// Extensions we never bother reading (binary / media / archives).
 const SKIP_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "tif", "tiff", "psd", "ai", "svgz", "pdf",
-    "zip", "gz", "tgz", "bz2", "xz", "7z", "rar", "jar", "war", "ear", "whl", "dmg", "iso",
-    "woff", "woff2", "ttf", "otf", "eot", "mp3", "mp4", "m4a", "wav", "flac", "ogg", "webm",
-    "mov", "avi", "mkv", "wasm", "so", "dylib", "dll", "exe", "o", "a", "lib", "class", "pyc",
-    "pyo", "db", "sqlite", "sqlite3", "bin", "dat", "pak", "icns", "lockb",
+    "zip", "gz", "tgz", "bz2", "xz", "7z", "rar", "jar", "war", "ear", "whl", "dmg", "iso", "woff",
+    "woff2", "ttf", "otf", "eot", "mp3", "mp4", "m4a", "wav", "flac", "ogg", "webm", "mov", "avi",
+    "mkv", "wasm", "so", "dylib", "dll", "exe", "o", "a", "lib", "class", "pyc", "pyo", "db",
+    "sqlite", "sqlite3", "bin", "dat", "pak", "icns", "lockb",
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -307,8 +307,7 @@ fn search_text(
         matches: file_matches,
     });
     let files = shared.file_count.fetch_add(1, Ordering::Relaxed) + 1;
-    if files >= MAX_FILES_WITH_HITS || shared.match_count.load(Ordering::Relaxed) >= MAX_MATCHES
-    {
+    if files >= MAX_FILES_WITH_HITS || shared.match_count.load(Ordering::Relaxed) >= MAX_MATCHES {
         shared.capped.store(true, Ordering::Relaxed);
         return true;
     }

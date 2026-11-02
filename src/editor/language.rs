@@ -245,15 +245,33 @@ mod tests {
         assert_eq!(Language::from_path(Path::new("lib.rs")), Language::Rust);
         assert_eq!(Language::from_path(Path::new("main.go")), Language::Go);
         assert_eq!(Language::from_path(Path::new("app.py")), Language::Python);
-        assert_eq!(Language::from_path(Path::new("docker-compose.yml")), Language::Yaml);
+        assert_eq!(
+            Language::from_path(Path::new("docker-compose.yml")),
+            Language::Yaml
+        );
         assert_eq!(Language::from_path(Path::new("Cargo.toml")), Language::Toml);
-        assert_eq!(Language::from_path(Path::new("README.md")), Language::Markdown);
+        assert_eq!(
+            Language::from_path(Path::new("README.md")),
+            Language::Markdown
+        );
         assert_eq!(Language::from_path(Path::new("icon.svg")), Language::Svg);
         assert_eq!(Language::from_path(Path::new("Makefile")), Language::Make);
-        assert_eq!(Language::from_path(Path::new("CMakeLists.txt")), Language::CMake);
-        assert_eq!(Language::from_path(Path::new("notes.xyz")), Language::PlainText);
-        assert_eq!(Language::from_path(Path::new("schema.gql")), Language::GraphQL);
-        assert_eq!(Language::from_path(Path::new("schema.graphql")), Language::GraphQL);
+        assert_eq!(
+            Language::from_path(Path::new("CMakeLists.txt")),
+            Language::CMake
+        );
+        assert_eq!(
+            Language::from_path(Path::new("notes.xyz")),
+            Language::PlainText
+        );
+        assert_eq!(
+            Language::from_path(Path::new("schema.gql")),
+            Language::GraphQL
+        );
+        assert_eq!(
+            Language::from_path(Path::new("schema.graphql")),
+            Language::GraphQL
+        );
     }
 
     #[test]
@@ -263,13 +281,28 @@ mod tests {
         assert_eq!(Language::from_path(Path::new(".gitignore")), Language::Bash);
         assert_eq!(Language::from_path(Path::new("Cargo.lock")), Language::Toml);
         assert_eq!(Language::from_path(Path::new("bun.lock")), Language::Json);
-        assert_eq!(Language::from_path(Path::new("pnpm-lock.yaml")), Language::Yaml);
+        assert_eq!(
+            Language::from_path(Path::new("pnpm-lock.yaml")),
+            Language::Yaml
+        );
         assert_eq!(Language::from_path(Path::new("yarn.lock")), Language::Bash);
         assert_eq!(Language::from_path(Path::new("foo.lock")), Language::Json);
-        assert_eq!(Language::from_path(Path::new("Dockerfile")), Language::Dockerfile);
-        assert_eq!(Language::from_path(Path::new("app.dockerfile")), Language::Dockerfile);
-        assert_eq!(Language::from_path(Path::new("Containerfile")), Language::Dockerfile);
-        assert_eq!(Language::from_path(Path::new(".dockerignore")), Language::Bash);
+        assert_eq!(
+            Language::from_path(Path::new("Dockerfile")),
+            Language::Dockerfile
+        );
+        assert_eq!(
+            Language::from_path(Path::new("app.dockerfile")),
+            Language::Dockerfile
+        );
+        assert_eq!(
+            Language::from_path(Path::new("Containerfile")),
+            Language::Dockerfile
+        );
+        assert_eq!(
+            Language::from_path(Path::new(".dockerignore")),
+            Language::Bash
+        );
         assert_eq!(
             Language::from_path(Path::new("Dockerfile")).highlighter_name(),
             "bash"

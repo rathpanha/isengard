@@ -62,7 +62,10 @@ mod tests {
         let tab = detect_indent("func f() {\n\tif x {\n\t\ty\n\t}\n}\n").unwrap();
         assert!(tab.hard_tabs);
         assert!(detect_indent("a\nb\n").is_none());
-        assert!(detect_indent("f {\n      x\n}\n").is_none(), "odd step is not a style");
+        assert!(
+            detect_indent("f {\n      x\n}\n").is_none(),
+            "odd step is not a style"
+        );
         assert!(detect_indent("").is_none());
     }
 }

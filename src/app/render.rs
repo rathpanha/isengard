@@ -1,7 +1,7 @@
 //! Layout paint: title bar, sidebar, editor area, status bar, `Render`.
-use super::*;
-use super::tab::{DiffKind, TabBody};
 use super::lsp::lsp_aggregate_color;
+use super::tab::{DiffKind, TabBody};
+use super::*;
 use gpui_kit::component::Icon;
 
 impl IsengardApp {
@@ -59,16 +59,12 @@ impl IsengardApp {
     pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> AnyElement {
         let title = self.window_title();
         let bar = if cfg!(target_os = "macos") {
-            h_flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(title),
-                )
+            h_flex().flex_1().items_center().justify_center().child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(title),
+            )
         } else {
             h_flex()
                 .flex_1()
@@ -197,10 +193,7 @@ impl IsengardApp {
                                     .when(modified, |this| {
                                         this.child(
                                             // Block-style dirty mark (docs/design.md: no rounded corners).
-                                            div()
-                                                .size(px(6.))
-                                                .flex_shrink_0()
-                                                .bg(dirty_color),
+                                            div().size(px(6.)).flex_shrink_0().bg(dirty_color),
                                         )
                                     })
                                     .child(
@@ -369,9 +362,7 @@ impl IsengardApp {
                 .into_any_element()
         } else if active.is_diff() {
             let (old, new, kind) = match &active.body {
-                TabBody::Diff { old, new, kind, .. } => {
-                    (old.clone(), new.clone(), kind.clone())
-                }
+                TabBody::Diff { old, new, kind, .. } => (old.clone(), new.clone(), kind.clone()),
                 _ => unreachable!("is_diff"),
             };
             let old_text = old.read(cx).value();
@@ -437,11 +428,7 @@ impl IsengardApp {
                 .into_any_element()
         } else if rendered_preview {
             let language = active.language().expect("text tab");
-            let text = active
-                .editor_state()
-                .expect("text tab")
-                .read(cx)
-                .value();
+            let text = active.editor_state().expect("text tab").read(cx).value();
             match language {
                 Language::Svg => {
                     let id = SharedString::from(format!("svg-preview-{}", active.path.display()));
@@ -467,8 +454,7 @@ impl IsengardApp {
                 }
                 _ => {
                     // Markdown (and any future TextView-based preview).
-                    let id =
-                        SharedString::from(format!("md-preview-{}", active.path.display()));
+                    let id = SharedString::from(format!("md-preview-{}", active.path.display()));
                     div()
                         .size_full()
                         .p_4()
@@ -491,10 +477,8 @@ impl IsengardApp {
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_size(cx.theme().mono_font_size)
                 .context_menu(|menu, _, _| {
-                    menu.separator().menu(
-                        "Add Selection to Agent",
-                        Box::new(AddSelectionToAgent),
-                    )
+                    menu.separator()
+                        .menu("Add Selection to Agent", Box::new(AddSelectionToAgent))
                 })
                 .into_any_element()
         };
@@ -525,9 +509,7 @@ impl IsengardApp {
             .flex_1()
             .min_w_0()
             .h_full()
-            .when(with_right_border, |el| {
-                el.border_r_1().border_color(border)
-            })
+            .when(with_right_border, |el| el.border_r_1().border_color(border))
             .child(
                 div()
                     .w_full()
@@ -802,15 +784,9 @@ impl IsengardApp {
                                             let key_remove = key.clone();
                                             let label = server.label.clone();
                                             let status_color = match &server.status {
-                                                ServerDisplayStatus::Running => {
-                                                    cx.theme().success
-                                                }
-                                                ServerDisplayStatus::Starting => {
-                                                    cx.theme().warning
-                                                }
-                                                ServerDisplayStatus::Error(_) => {
-                                                    cx.theme().danger
-                                                }
+                                                ServerDisplayStatus::Running => cx.theme().success,
+                                                ServerDisplayStatus::Starting => cx.theme().warning,
+                                                ServerDisplayStatus::Error(_) => cx.theme().danger,
                                                 ServerDisplayStatus::Idle => {
                                                     cx.theme().muted_foreground
                                                 }
@@ -848,9 +824,9 @@ impl IsengardApp {
                                                 )
                                                 .when(can_install, |row| {
                                                     row.child(
-                                                        Button::new(SharedString::from(
-                                                            format!("lsp-install-{key}"),
-                                                        ))
+                                                        Button::new(SharedString::from(format!(
+                                                            "lsp-install-{key}"
+                                                        )))
                                                         .ghost()
                                                         .cursor_pointer()
                                                         .xsmall()
@@ -864,8 +840,9 @@ impl IsengardApp {
                                                                     p.dismiss(window, cx);
                                                                 });
                                                             }
-                                                            let _ =
-                                                                app_install.update(cx, |this, cx| {
+                                                            let _ = app_install.update(
+                                                                cx,
+                                                                |this, cx| {
                                                                     this.lsp_catalog_open = false;
                                                                     this.run_lsp_install_command(
                                                                         &key, window, cx,
@@ -874,15 +851,16 @@ impl IsengardApp {
                                                                         window, cx,
                                                                     );
                                                                     cx.notify();
-                                                                });
+                                                                },
+                                                            );
                                                         }),
                                                     )
                                                 })
                                                 .when(can_remove, |row| {
                                                     row.child(
-                                                        Button::new(SharedString::from(
-                                                            format!("lsp-remove-{key_remove}"),
-                                                        ))
+                                                        Button::new(SharedString::from(format!(
+                                                            "lsp-remove-{key_remove}"
+                                                        )))
                                                         .ghost()
                                                         .cursor_pointer()
                                                         .xsmall()
@@ -896,8 +874,9 @@ impl IsengardApp {
                                                                     p.dismiss(window, cx);
                                                                 });
                                                             }
-                                                            let _ =
-                                                                app_remove.update(cx, |this, cx| {
+                                                            let _ = app_remove.update(
+                                                                cx,
+                                                                |this, cx| {
                                                                     this.lsp_catalog_open = false;
                                                                     this.offer_lsp_remove(
                                                                         &key_remove,
@@ -905,71 +884,63 @@ impl IsengardApp {
                                                                         cx,
                                                                     );
                                                                     cx.notify();
-                                                                });
+                                                                },
+                                                            );
                                                         }),
                                                     )
                                                 })
                                         }))
                                 }),
                         )
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .right_0()
-                                .size(px(6.))
-                                .bg(agg),
-                        ),
+                        .child(div().absolute().top_0().right_0().size(px(6.)).bg(agg)),
                 )
             })
-            .when(has_folders, |this| {
-                this.child(
-                    Button::new("toggle-terminal")
-                        .ghost()
-                        .cursor_pointer()
-                        .small()
-                        .icon(if term_visible {
-                            Icon::new(IconName::SquareTerminal).text_color(cx.theme().info)
+            .child(
+                Button::new("toggle-terminal")
+                    .ghost()
+                    .cursor_pointer()
+                    .small()
+                    .icon(if term_visible {
+                        Icon::new(IconName::SquareTerminal).text_color(cx.theme().info)
+                    } else {
+                        Icon::new(IconName::SquareTerminal)
+                    })
+                    .tooltip_with_action(
+                        if term_visible {
+                            "Minimize Terminal"
                         } else {
-                            Icon::new(IconName::SquareTerminal)
-                        })
-                        .tooltip_with_action(
-                            if term_visible {
-                                "Minimize Terminal"
-                            } else {
-                                "Show Terminal"
-                            },
-                            &ToggleTerminal,
-                            None,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.on_toggle_terminal(&ToggleTerminal, window, cx)
-                        })),
-                )
-                .child(
-                    Button::new("toggle-agent")
-                        .ghost()
-                        .cursor_pointer()
-                        .small()
-                        .icon(if self.agent_visible {
-                            Icon::new(LucideIcon::Bot).text_color(cx.theme().info)
+                            "Show Terminal"
+                        },
+                        &ToggleTerminal,
+                        None,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_toggle_terminal(&ToggleTerminal, window, cx)
+                    })),
+            )
+            .child(
+                Button::new("toggle-agent")
+                    .ghost()
+                    .cursor_pointer()
+                    .small()
+                    .icon(if self.agent_visible {
+                        Icon::new(LucideIcon::Bot).text_color(cx.theme().info)
+                    } else {
+                        Icon::new(LucideIcon::Bot)
+                    })
+                    .tooltip_with_action(
+                        if self.agent_visible {
+                            "Hide Agent Panel"
                         } else {
-                            Icon::new(LucideIcon::Bot)
-                        })
-                        .tooltip_with_action(
-                            if self.agent_visible {
-                                "Hide Agent Panel"
-                            } else {
-                                "Show Agent Panel"
-                            },
-                            &ToggleAgentPanel,
-                            None,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.on_toggle_agent_panel(&ToggleAgentPanel, window, cx)
-                        })),
-                )
-            });
+                            "Show Agent Panel"
+                        },
+                        &ToggleAgentPanel,
+                        None,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.on_toggle_agent_panel(&ToggleAgentPanel, window, cx)
+                    })),
+            );
 
         StatusBar::new()
             .left(left)
@@ -984,7 +955,11 @@ impl IsengardApp {
         self.stack_with_terminal(editor, cx)
     }
 
-    pub(super) fn stack_with_terminal(&self, top: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn stack_with_terminal(
+        &self,
+        top: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if !self.terminal.read(cx).is_visible() {
             return top;
         }
@@ -1002,19 +977,12 @@ impl IsengardApp {
                 });
             })
             .child(resizable_panel().child(top))
-            .child(
-                resizable_panel()
-                    .size(height)
-                    .child(self.terminal.clone()),
-            )
+            .child(resizable_panel().size(height).child(self.terminal.clone()))
             .into_any_element()
     }
 
     fn show_agent_panel(&self) -> bool {
-        self.agent_visible
-            && self.agent.is_some()
-            && !self.show_welcome()
-            && self.file_tree.is_open()
+        self.agent_visible && self.agent.is_some() && !self.show_welcome()
     }
 
     /// Agent panel as the right child of `agent-split` (full height beside
@@ -1034,15 +1002,13 @@ impl IsengardApp {
             })
             .child(resizable_panel().child(main))
             .child(
-                resizable_panel()
-                    .size(width)
-                    .child(
-                        div()
-                            .size_full()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .when_some(self.agent.clone(), |d, agent| d.child(agent)),
-                    ),
+                resizable_panel().size(width).child(
+                    div()
+                        .size_full()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .when_some(self.agent.clone(), |d, agent| d.child(agent)),
+                ),
             )
             .into_any_element()
     }
@@ -1075,11 +1041,14 @@ impl Render for IsengardApp {
                 SidebarView::Search => self.search.clone().into_any_element(),
                 SidebarView::Git => self.git.clone().into_any_element(),
             };
-            let sidebar = v_flex()
-                .size_full()
-                .min_w_0()
-                .child(chrome)
-                .child(div().flex_1().min_h_0().min_w_0().overflow_hidden().child(body));
+            let sidebar = v_flex().size_full().min_w_0().child(chrome).child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(body),
+            );
             let width = px(self.sidebar_width.max(100.));
             let app = cx.entity().downgrade();
             let split_id = self
@@ -1168,5 +1137,3 @@ impl Render for IsengardApp {
             })
     }
 }
-
-

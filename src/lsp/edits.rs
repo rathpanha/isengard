@@ -141,7 +141,11 @@ mod tests {
             }
         }
         let e = replace_edit("a\n  b\nc\n", "a\nb\nc\n").unwrap();
-        assert_eq!((e.range.start.line, e.range.end.line), (1, 2), "only line 2 touched");
+        assert_eq!(
+            (e.range.start.line, e.range.end.line),
+            (1, 2),
+            "only line 2 touched"
+        );
     }
 
     fn edit(sl: u32, sc: u32, el: u32, ec: u32, new: &str) -> TextEdit {

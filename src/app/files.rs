@@ -1,6 +1,6 @@
 //! Open / save / close tabs, untitled buffers, font size, rendered preview.
-use super::*;
 use super::tab::{EditorTab, TabBody};
+use super::*;
 
 impl IsengardApp {
     pub(super) fn open_file(
@@ -29,11 +29,7 @@ impl IsengardApp {
 
         if document::is_image(path) {
             if !path.is_file() {
-                return notify_error(
-                    format!("Image not found: {}", path.display()),
-                    window,
-                    cx,
-                );
+                return notify_error(format!("Image not found: {}", path.display()), window, cx);
             }
             self.tabs.push(EditorTab {
                 path: path.to_path_buf(),
@@ -75,10 +71,10 @@ impl IsengardApp {
                         .iter()
                         .find(|t| t.editor_state().is_some_and(|s| s.entity_id() == id))
                         .map(|t| t.path.clone());
-                    if let Some(tab) = this.tabs.find_mut(|t| {
-                        t.editor_state()
-                            .is_some_and(|s| s.entity_id() == id)
-                    }) {
+                    if let Some(tab) = this
+                        .tabs
+                        .find_mut(|t| t.editor_state().is_some_and(|s| s.entity_id() == id))
+                    {
                         tab.refresh_modified(cx);
                         // Editing pins a preview tab (VS Code behaviour).
                         tab.preview = false;
@@ -277,7 +273,11 @@ impl IsengardApp {
 
     /// After LSP catalog / install dialog chrome: park focus on the editor
     /// (or the app handle) so native File menu actions keep a live target.
-    pub(super) fn restore_focus_after_lsp_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn restore_focus_after_lsp_ui(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.lsp_catalog_open = false;
         window.dismiss_tooltip(cx);
         self.focus_active_editor(window, cx);
@@ -557,10 +557,7 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         while let Some(path) = paths.first().cloned() {
-            let still_dirty = self
-                .tabs
-                .iter()
-                .any(|t| t.path == path && t.is_modified);
+            let still_dirty = self.tabs.iter().any(|t| t.path == path && t.is_modified);
             if !still_dirty {
                 paths.remove(0);
                 continue;
@@ -641,7 +638,12 @@ impl IsengardApp {
     }
 
     /// Closes the tab for `path`, asking first if it has unsaved changes.
-    pub(super) fn request_close(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn request_close(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tab) = self.tabs.iter().find(|t| t.path == path) else {
             return;
         };
@@ -662,11 +664,9 @@ impl IsengardApp {
         if paths.is_empty() {
             return;
         }
-        let dirty = paths.iter().any(|path| {
-            self.tabs
-                .iter()
-                .any(|t| t.path == *path && t.is_modified)
-        });
+        let dirty = paths
+            .iter()
+            .any(|path| self.tabs.iter().any(|t| t.path == *path && t.is_modified));
         if !dirty {
             self.close_tabs(&paths, window, cx);
             return;
@@ -696,7 +696,12 @@ impl IsengardApp {
         self.close_tabs(&[path.to_path_buf()], window, cx);
     }
 
-    pub(super) fn close_tabs(&mut self, paths: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_tabs(
+        &mut self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Tab × tooltips lose their trigger on remove (incl. ⌘W while hovered).
         window.dismiss_tooltip(cx);
         // Remove from the end so earlier indexes stay valid while we scan.
@@ -787,7 +792,12 @@ impl IsengardApp {
         });
     }
 
-    pub(super) fn confirm_close_tab(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn confirm_close_tab(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let path_discard = path.clone();
         self.open_choice_dialog(
             "Unsaved changes",
@@ -923,11 +933,7 @@ impl IsengardApp {
             match self.new_file_directory(cx) {
                 Some(dir) => Some(dir),
                 None => {
-                    return notify_error(
-                        "No folder available for a new file.",
-                        window,
-                        cx,
-                    );
+                    return notify_error("No folder available for a new file.", window, cx);
                 }
             }
         };
@@ -976,10 +982,10 @@ impl IsengardApp {
             cx.subscribe(&state, |this, state, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     let entity_id = state.entity_id();
-                    if let Some(tab) = this.tabs.find_mut(|t| {
-                        t.editor_state()
-                            .is_some_and(|s| s.entity_id() == entity_id)
-                    }) {
+                    if let Some(tab) = this
+                        .tabs
+                        .find_mut(|t| t.editor_state().is_some_and(|s| s.entity_id() == entity_id))
+                    {
                         tab.refresh_modified(cx);
                         tab.preview = false;
                     }
@@ -1072,12 +1078,7 @@ impl IsengardApp {
         self.prompt_save_as(path, window, cx);
     }
 
-    fn prompt_save_as(
-        &mut self,
-        old_path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn prompt_save_as(&mut self, old_path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let dir = old_path
             .parent()
             .map(Path::to_path_buf)
@@ -1126,7 +1127,12 @@ impl IsengardApp {
         self.request_save_all(|_, _, _| {}, None, window, cx);
     }
 
-    pub(super) fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_close_tab(
+        &mut self,
+        _: &CloseTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(path) = self.tabs.active().map(|t| t.path.clone()) {
             self.request_close(&path, window, cx);
         }
@@ -1205,7 +1211,12 @@ impl IsengardApp {
         self.apply_config(window, cx);
     }
 
-    pub(super) fn on_reset_font(&mut self, _: &ResetFontSize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_reset_font(
+        &mut self,
+        _: &ResetFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.config.font_size = DEFAULT_EDITOR_FONT_SIZE;
         self.apply_config(window, cx);
     }
@@ -1301,6 +1312,9 @@ mod tests {
     #[test]
     fn multiple_failures_are_listed_together() {
         let msg = save_failures_message(&["a.rs: denied".into(), "b.rs: disk full".into()]);
-        assert_eq!(msg, "Could not save 2 files:\na.rs: denied\nb.rs: disk full");
+        assert_eq!(
+            msg,
+            "Could not save 2 files:\na.rs: denied\nb.rs: disk full"
+        );
     }
 }

@@ -167,9 +167,7 @@ pub fn file_sides(
     status: char,
     old_rel_path: Option<&str>,
 ) -> Result<(String, String), String> {
-    let head_path = old_rel_path
-        .filter(|s| !s.is_empty())
-        .unwrap_or(rel_path);
+    let head_path = old_rel_path.filter(|s| !s.is_empty()).unwrap_or(rel_path);
     let old = match status {
         '?' => String::new(),
         _ => git_show_head(repo, head_path).unwrap_or_default(),
@@ -218,9 +216,7 @@ pub fn discover_repos(folders: &[PathBuf]) -> Vec<PathBuf> {
             continue;
         };
         let root = PathBuf::from(toplevel);
-        let key = root
-            .canonicalize()
-            .unwrap_or_else(|_| root.clone());
+        let key = root.canonicalize().unwrap_or_else(|_| root.clone());
         by_canon.entry(key).or_insert(root);
     }
     by_canon.into_values().collect()
@@ -228,8 +224,8 @@ pub fn discover_repos(folders: &[PathBuf]) -> Vec<PathBuf> {
 
 /// Branch name + porcelain status for `root`.
 pub fn load_repo_status(root: &Path) -> RepoStatus {
-    let branch = git(root, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .unwrap_or_else(|_| "HEAD".into());
+    let branch =
+        git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "HEAD".into());
     let (ahead, behind) = ahead_behind_upstream(root);
     let op = detect_repo_op(root);
     match git(root, &["status", "--porcelain=v1", "-uall"]) {
@@ -333,10 +329,7 @@ pub fn load_workspace_status(folders: &[PathBuf]) -> Vec<RepoStatus> {
 }
 
 /// Find the dirty/conflict entry for an absolute worktree path, if any.
-pub fn change_at_path(
-    statuses: &[RepoStatus],
-    file: &Path,
-) -> Option<(PathBuf, GitChange)> {
+pub fn change_at_path(statuses: &[RepoStatus], file: &Path) -> Option<(PathBuf, GitChange)> {
     for status in statuses {
         if let Some(change) = status.changes.iter().find(|c| c.path == file) {
             return Some((status.root.clone(), change.clone()));
@@ -400,28 +393,17 @@ impl ConflictSide {
 }
 
 /// Whole-file resolve: `git checkout --ours|--theirs -- path` then `git add -- path`.
-pub fn accept_conflict_side(
-    root: &Path,
-    rel_path: &str,
-    side: ConflictSide,
-) -> Result<(), String> {
+pub fn accept_conflict_side(root: &Path, rel_path: &str, side: ConflictSide) -> Result<(), String> {
     if detect_repo_op(root).is_none() {
         return Err("No merge/rebase/cherry-pick in progress".into());
     }
-    git(
-        root,
-        &["checkout", side.checkout_arg(), "--", rel_path],
-    )?;
+    git(root, &["checkout", side.checkout_arg(), "--", rel_path])?;
     git(root, &["add", "--", rel_path])?;
     Ok(())
 }
 
 /// Write a fully merged conflict file and `git add` it (hunk / manual resolve).
-pub fn write_resolved_conflict(
-    root: &Path,
-    rel_path: &str,
-    content: &str,
-) -> Result<(), String> {
+pub fn write_resolved_conflict(root: &Path, rel_path: &str, content: &str) -> Result<(), String> {
     if detect_repo_op(root).is_none() {
         return Err("No merge/rebase/cherry-pick in progress".into());
     }
@@ -589,7 +571,12 @@ pub fn recent_commit_subjects(repo: &Path, limit: usize) -> Vec<String> {
     }
     let n = limit.to_string();
     match git(repo, &["log", &format!("-{n}"), "--pretty=format:%s"]) {
-        Ok(out) if !out.is_empty() => out.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect(),
+        Ok(out) if !out.is_empty() => out
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -808,7 +795,9 @@ fn unquote_path(s: &str) -> String {
     let s = s.trim();
     if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
         // Porcelain quotes C-style; enough for spaces — leave escapes as-is for v1.
-        s[1..s.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\")
+        s[1..s.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
     } else {
         s.to_owned()
     }
@@ -1226,7 +1215,10 @@ DD both_deleted.rs\n";
             discard_file(&root, "note.txt", 'U', None).is_err(),
             "discard conflict must fail"
         );
-        assert!(discard_all(&root).is_err(), "discard-all mid-merge must fail");
+        assert!(
+            discard_all(&root).is_err(),
+            "discard-all mid-merge must fail"
+        );
     }
 
     #[test]
@@ -1274,7 +1266,10 @@ DD both_deleted.rs\n";
         assert!(!root.join("scratch.txt").exists());
 
         discard_file(&root, "tracked.txt", 'M', None).unwrap();
-        assert_eq!(fs::read_to_string(root.join("tracked.txt")).unwrap(), "one\n");
+        assert_eq!(
+            fs::read_to_string(root.join("tracked.txt")).unwrap(),
+            "one\n"
+        );
         assert!(load_repo_status(&root).changes.is_empty());
     }
 
@@ -1606,7 +1601,10 @@ DD both_deleted.rs\n";
             scrub_commit_message("Commit message: Add widget"),
             "Add widget"
         );
-        assert_eq!(scrub_commit_message("\"docs: tweak README\""), "docs: tweak README");
+        assert_eq!(
+            scrub_commit_message("\"docs: tweak README\""),
+            "docs: tweak README"
+        );
     }
 
     #[test]

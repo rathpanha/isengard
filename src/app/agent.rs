@@ -1,6 +1,6 @@
 //! Right Agent panel: show/hide, plus the agent's file and login requests.
-use super::*;
 use super::tab::TabBody;
+use super::*;
 use crate::acp::{self, BuiltinAgent, launch_for_workspace, slice_lines, with_builtin};
 use crate::agent::{Attachment, LineRange, line_at_offset};
 use crate::terminal::pty::TerminalCommand;
@@ -34,10 +34,7 @@ impl IsengardApp {
         // toggle-away and would otherwise steal Ctrl/Cmd+L with a dead end.
         let terminal_focused = {
             let term = self.terminal.read(cx);
-            term.is_visible()
-                && term
-                    .focus_handle(cx)
-                    .is_some_and(|h| h.is_focused(window))
+            term.is_visible() && term.focus_handle(cx).is_some_and(|h| h.is_focused(window))
         };
 
         let attachment = if terminal_focused {
@@ -99,7 +96,9 @@ impl IsengardApp {
         agent.update(cx, |agent, cx| {
             agent.ensure_started(cx);
             agent.attach_context(attachment, cx);
-            agent.input().update(cx, |input, cx| input.focus(window, cx));
+            agent
+                .input()
+                .update(cx, |input, cx| input.focus(window, cx));
         });
         cx.notify();
     }
@@ -114,8 +113,12 @@ impl IsengardApp {
             self.agent_visible = false;
             self.focus_active_editor(window, cx);
         } else {
+            // Folderless window (lone file / untitled buffer): build lazily.
+            if self.agent.is_none() {
+                self.switch_agent_panel(window, cx);
+            }
             let Some(agent) = self.agent.clone() else {
-                return notify_error("Open a folder before using the agent", window, cx);
+                return notify_error("Nothing to run the agent in yet", window, cx);
             };
             self.agent_visible = true;
             agent.update(cx, |agent, cx| agent.ensure_started(cx));
@@ -135,7 +138,7 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws_key) = self.workspace.session_key() else {
+        let Some(ws_key) = self.panel_scope_key() else {
             return;
         };
         // Persist the outgoing slot's chats before remounting.
@@ -167,6 +170,40 @@ impl IsengardApp {
         cx.notify();
     }
 
+    /// Where the agent and terminal run: workspace folders, else the active
+    /// on-disk file's directory, else `$HOME` (untitled-only window).
+    ///
+    /// ponytail: picked when a panel is created; it does not follow later tab
+    /// switches (that would restart the agent). Opening a folder swaps to that
+    /// folder's panel via `switch_agent_panel`.
+    pub(super) fn panel_roots(&self) -> Vec<PathBuf> {
+        let folders = self.workspace.folders();
+        if !folders.is_empty() {
+            return folders.to_vec();
+        }
+        let file_dir = self
+            .tabs
+            .active()
+            .map(|t| &t.path)
+            .filter(|p| {
+                p.is_absolute() && !document::is_untitled(p) && !document::is_diff_preview(p)
+            })
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf);
+        file_dir.or_else(dirs::home_dir).into_iter().collect()
+    }
+
+    /// Session key for the agent panel cache. Folderless windows use
+    /// `loose:<dir>`; ponytail: their chats are not persisted (only
+    /// `persist_session` writes chats, and it needs a real workspace key).
+    fn panel_scope_key(&self) -> Option<String> {
+        self.workspace.session_key().or_else(|| {
+            self.panel_roots()
+                .first()
+                .map(|dir| format!("loose:{}", dir.display()))
+        })
+    }
+
     /// Write `sessions.<key>.agent` (Claude / Cursor / custom slot id).
     fn set_workspace_agent(&mut self, ws_key: &str, slot: &str) {
         let mut session = self.config.session(ws_key).cloned().unwrap_or_default();
@@ -179,7 +216,7 @@ impl IsengardApp {
     /// running turn, then stops) and bring up this workspace's panel, reusing
     /// it — transcript and all — if we were here before.
     pub(super) fn switch_agent_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ws_key) = self.workspace.session_key() else {
+        let Some(ws_key) = self.panel_scope_key() else {
             if let Some(old) = self.agent.take() {
                 old.update(cx, |agent, cx| agent.suspend(cx));
             }
@@ -204,7 +241,7 @@ impl IsengardApp {
             self.sync_git_agent_ready(cx);
             return;
         }
-        let roots = self.workspace.folders().to_vec();
+        let roots = self.panel_roots();
         let slot = acp::agent_slot_id(&settings);
         let saved = self
             .config
@@ -231,10 +268,13 @@ impl IsengardApp {
                 cx,
             )
         });
-        let subscription =
-            cx.subscribe_in(&panel, window, |this, panel, event: &AgentPanelEvent, window, cx| {
+        let subscription = cx.subscribe_in(
+            &panel,
+            window,
+            |this, panel, event: &AgentPanelEvent, window, cx| {
                 this.handle_agent_event(panel, event, window, cx);
-            });
+            },
+        );
         self.agents.insert(key, (panel.clone(), subscription));
         self.agent = Some(panel);
         self.sync_git_agent_ready(cx);
@@ -344,7 +384,11 @@ impl IsengardApp {
                     .agent_key(panel)
                     .map(|key| document::file_name(Path::new(&key)))
                     .unwrap_or_default();
-                notify_warning(format!("The agent in {name} is waiting for your approval"), window, cx);
+                notify_warning(
+                    format!("The agent in {name} is waiting for your approval"),
+                    window,
+                    cx,
+                );
             }
             AgentPanelEvent::CommitSuggestReady { root, message } => {
                 self.git.update(cx, |git, cx| {

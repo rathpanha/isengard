@@ -310,7 +310,12 @@ impl WorkspaceSession {
     /// Slot id last used here (`claude`, `cursor-agent`, …), including a
     /// one-shot infer from older sessions that only stored chats.
     pub fn remembered_agent(&self) -> Option<String> {
-        if let Some(id) = self.agent.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(id) = self
+            .agent
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             return Some(id.to_owned());
         }
         if !self.agent_chats.is_empty() {
@@ -648,12 +653,7 @@ impl AppConfig {
                         && !k.starts_with("untitled:")
                 })
                 .cloned()
-                .or_else(|| {
-                    self.sessions
-                        .keys()
-                        .find(|k| *k != &key)
-                        .cloned()
-                });
+                .or_else(|| self.sessions.keys().find(|k| *k != &key).cloned());
             // ponytail: prefer evicting keys not in recent lists; never the one just written.
             if let Some(k) = victim {
                 self.sessions.remove(&k);
@@ -725,9 +725,11 @@ mod tests {
         );
         config.remove_recent_workspace(Path::new("/code/other.isengard-workspace"));
         assert_eq!(config.recent_workspaces.len(), 1);
-        assert!(!config
-            .sessions
-            .contains_key("/code/other.isengard-workspace"));
+        assert!(
+            !config
+                .sessions
+                .contains_key("/code/other.isengard-workspace")
+        );
     }
 
     #[test]
@@ -949,7 +951,10 @@ mod tests {
             },
         );
         config.save_to(&path).unwrap();
-        let session = AppConfig::load_from(&path).session("/code/app").unwrap().clone();
+        let session = AppConfig::load_from(&path)
+            .session("/code/app")
+            .unwrap()
+            .clone();
         assert_eq!(session.sidebar_panel, SidebarPanel::Git);
         assert_eq!(session.search.pattern, "foo");
         assert!(session.search.case_sensitive);
@@ -996,10 +1001,8 @@ mod tests {
 
     #[test]
     fn agent_chat_without_file_changes_still_loads() {
-        let chat: AgentChat = serde_json::from_str(
-            r#"{"id":"s1","title":"Hi","updated":1}"#,
-        )
-        .unwrap();
+        let chat: AgentChat =
+            serde_json::from_str(r#"{"id":"s1","title":"Hi","updated":1}"#).unwrap();
         assert!(chat.file_changes.is_empty());
     }
 

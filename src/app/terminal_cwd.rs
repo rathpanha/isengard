@@ -27,32 +27,30 @@ impl TerminalCwdPicker {
             let Some(entity) = entity.upgrade() else {
                 return;
             };
-            entity.update(cx, |this, cx| {
-                match event.keystroke.key.as_str() {
-                    "up" => {
-                        if this.selected > 0 {
-                            this.selected -= 1;
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
+            entity.update(cx, |this, cx| match event.keystroke.key.as_str() {
+                "up" => {
+                    if this.selected > 0 {
+                        this.selected -= 1;
+                        cx.notify();
                     }
-                    "down" => {
-                        if this.selected + 1 < this.folders.len() {
-                            this.selected += 1;
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
-                    }
-                    "enter" => {
-                        this.confirm(window, cx);
-                        cx.stop_propagation();
-                    }
-                    "escape" => {
-                        this.cancel(window, cx);
-                        cx.stop_propagation();
-                    }
-                    _ => {}
+                    cx.stop_propagation();
                 }
+                "down" => {
+                    if this.selected + 1 < this.folders.len() {
+                        this.selected += 1;
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }
+                "enter" => {
+                    this.confirm(window, cx);
+                    cx.stop_propagation();
+                }
+                "escape" => {
+                    this.cancel(window, cx);
+                    cx.stop_propagation();
+                }
+                _ => {}
             });
         });
         Self {
@@ -111,4 +109,3 @@ impl Render for TerminalCwdPicker {
             }))
     }
 }
-

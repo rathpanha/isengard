@@ -70,14 +70,8 @@ impl PtySession {
             .context("spawn shell in PTY")?;
         drop(pair.slave);
 
-        let writer = pair
-            .master
-            .take_writer()
-            .context("PTY writer")?;
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .context("PTY reader")?;
+        let writer = pair.master.take_writer().context("PTY writer")?;
+        let reader = pair.master.try_clone_reader().context("PTY reader")?;
 
         let master = Arc::new(Mutex::new(pair.master));
         Ok((

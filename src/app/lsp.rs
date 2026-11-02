@@ -120,8 +120,7 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.lsp
-            .set_settings(self.effective_config().lsp.clone());
+        self.lsp.set_settings(self.effective_config().lsp.clone());
         self.lsp.set_folders(self.workspace.folders().to_vec());
         let text = state.read(cx).value().to_string();
         let app = cx.entity().downgrade();
@@ -156,9 +155,7 @@ impl IsengardApp {
                     this.update_in(window, |this, window, cx| {
                         match start {
                             Ok((client, incoming)) => {
-                                if let Err(err) =
-                                    this.lsp.finish_start(&spec, client, incoming)
-                                {
+                                if let Err(err) = this.lsp.finish_start(&spec, client, incoming) {
                                     this.lsp.mark_start_failed(&process_key, &err);
                                     notify_error(
                                         format!("Language server failed: {err:#}"),
@@ -290,11 +287,7 @@ impl IsengardApp {
                                     .on_click(move |_, window, cx| {
                                         window.close_dialog(cx);
                                         let _ = app_install.update(cx, |this, cx| {
-                                            this.run_lsp_install(
-                                                offer_install.clone(),
-                                                window,
-                                                cx,
-                                            );
+                                            this.run_lsp_install(offer_install.clone(), window, cx);
                                             this.restore_focus_after_lsp_ui(window, cx);
                                         });
                                     }),
@@ -305,7 +298,11 @@ impl IsengardApp {
         });
     }
 
-    pub(super) fn clear_lsp_providers_for_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+    pub(super) fn clear_lsp_providers_for_paths(
+        &mut self,
+        paths: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) {
         for path in paths {
             let Some(state) = self
                 .tabs
@@ -390,7 +387,8 @@ impl IsengardApp {
         if touched {
             self.refresh_git_panel(window, cx);
             let roots: Vec<_> = self.workspace.folders().to_vec();
-            self.file_tree.refresh_loaded_dirs(roots.iter().map(|p| p.as_path()), cx);
+            self.file_tree
+                .refresh_loaded_dirs(roots.iter().map(|p| p.as_path()), cx);
         }
     }
 
@@ -517,23 +515,12 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         let Some(recipe) = recipe_for_command(process_key) else {
-            notify_error(
-                format!("No install recipe for `{process_key}`"),
-                window,
-                cx,
-            );
+            notify_error(format!("No install recipe for `{process_key}`"), window, cx);
             return;
         };
         let path = self.tabs.active().map(|t| t.path.clone());
         let language = self.tabs.active().and_then(|t| t.language());
-        self.run_lsp_install_recipe(
-            recipe,
-            process_key.to_string(),
-            path,
-            language,
-            window,
-            cx,
-        );
+        self.run_lsp_install_recipe(recipe, process_key.to_string(), path, language, window, cx);
     }
 
     pub(super) fn run_lsp_install(
@@ -631,7 +618,9 @@ impl IsengardApp {
         if crate::runtime::fmt_supported(path)
             && let Some(out) = crate::runtime::bun_fmt(path, text, configured)?
         {
-            return Ok(Some(crate::lsp::replace_edit(text, &out).into_iter().collect()));
+            return Ok(Some(
+                crate::lsp::replace_edit(text, &out).into_iter().collect(),
+            ));
         }
         if !self.lsp.is_attached(path) {
             return Ok(None);
@@ -662,7 +651,11 @@ impl IsengardApp {
             return;
         };
         let text = state.read(cx).value().to_string();
-        let indent = self.tabs.iter().find(|t| t.path == path).and_then(|t| t.indent());
+        let indent = self
+            .tabs
+            .iter()
+            .find(|t| t.path == path)
+            .and_then(|t| t.indent());
         let edits = match self.format_edits(&path, &text, indent) {
             Ok(Some(edits)) => edits,
             // No formatter for this file: plain save.
@@ -723,7 +716,10 @@ impl IsengardApp {
         let rope = Rope::from(text.as_str());
         let range = editor.selected_range();
         let selection_name = if range.start < range.end {
-            Some(rope.slice(range.start..range.end.min(rope.len())).to_string())
+            Some(
+                rope.slice(range.start..range.end.min(rope.len()))
+                    .to_string(),
+            )
         } else {
             None
         };
@@ -824,11 +820,7 @@ impl IsengardApp {
     }
 
     /// Format the active text tab without saving.
-    pub(super) fn format_active_document(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn format_active_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(tab) = self.tabs.active() else {
             return;
         };
@@ -871,8 +863,7 @@ impl IsengardApp {
         let previous = self.config.lsp.clone();
         self.config = AppConfig::load_from(&config_path);
         if self.config.lsp == previous {
-            self.lsp
-            .set_settings(self.effective_config().lsp.clone());
+            self.lsp.set_settings(self.effective_config().lsp.clone());
             return;
         }
         self.restart_lsp_servers(window, cx);
@@ -883,8 +874,7 @@ impl IsengardApp {
         let paths = self.lsp.attached_paths();
         self.clear_lsp_providers_for_paths(&paths, cx);
         self.lsp.shutdown_all();
-        self.lsp
-            .set_settings(self.effective_config().lsp.clone());
+        self.lsp.set_settings(self.effective_config().lsp.clone());
         self.lsp.set_folders(self.workspace.folders().to_vec());
         let reattach: Vec<(PathBuf, Language, Entity<EditorState>)> = self
             .tabs
@@ -910,7 +900,10 @@ fn ident_at(rope: &Rope, offset: usize) -> String {
         return String::new();
     }
     let mut i = offset.min(bytes.len());
-    if i > 0 && !is_ident_byte(bytes[i.saturating_sub(1)]) && (i >= bytes.len() || !is_ident_byte(bytes[i])) {
+    if i > 0
+        && !is_ident_byte(bytes[i.saturating_sub(1)])
+        && (i >= bytes.len() || !is_ident_byte(bytes[i]))
+    {
         // caret after a non-ident — nothing to grab
     }
     while i > 0 && is_ident_byte(bytes[i - 1]) {

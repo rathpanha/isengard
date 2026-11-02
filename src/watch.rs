@@ -102,9 +102,9 @@ impl FsWatcher {
             })
             .map_err(|err| notify::Error::new(notify::ErrorKind::Generic(err.to_string())))?;
 
-        ready_rx
-            .recv()
-            .map_err(|_| notify::Error::new(notify::ErrorKind::Generic("watch thread died".into())))??;
+        ready_rx.recv().map_err(|_| {
+            notify::Error::new(notify::ErrorKind::Generic("watch thread died".into()))
+        })??;
 
         Ok(Self {
             _shutdown: shutdown_tx,
@@ -221,7 +221,10 @@ fn watch_ref_tree(watcher: &mut RecommendedWatcher, dir: &Path) {
         return;
     };
     for entry in entries.flatten() {
-        if entry.file_type().is_ok_and(|ft| ft.is_dir() && !ft.is_symlink()) {
+        if entry
+            .file_type()
+            .is_ok_and(|ft| ft.is_dir() && !ft.is_symlink())
+        {
             watch_ref_tree(watcher, &entry.path());
         }
     }
@@ -243,8 +246,8 @@ fn is_git_state(path: &Path) -> bool {
         return false;
     };
     match first {
-        "HEAD" | "index" | "packed-refs" | "MERGE_HEAD" | "CHERRY_PICK_HEAD"
-        | "REVERT_HEAD" | "REBASE_HEAD" | "rebase-merge" | "rebase-apply" => rest.len() == 1,
+        "HEAD" | "index" | "packed-refs" | "MERGE_HEAD" | "CHERRY_PICK_HEAD" | "REVERT_HEAD"
+        | "REBASE_HEAD" | "rebase-merge" | "rebase-apply" => rest.len() == 1,
         "refs" => !rest
             .last()
             .and_then(|c| c.as_os_str().to_str())
@@ -372,7 +375,10 @@ mod tests {
 
         crate::git::load_workspace_status(std::slice::from_ref(&root));
         assert!(
-            watcher.events().recv_timeout(Duration::from_millis(800)).is_err(),
+            watcher
+                .events()
+                .recv_timeout(Duration::from_millis(800))
+                .is_err(),
             "status refresh must not produce watcher events"
         );
     }

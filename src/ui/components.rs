@@ -2,9 +2,7 @@
 //! rules (see docs/design.md). Use these instead of re-styling the same pattern.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _,
-    dialog::Dialog,
-    h_flex,
+    ActiveTheme as _, Icon, IconName, Sizable as _, WindowExt as _, dialog::Dialog, h_flex,
     notification::Notification,
 };
 use gpui_kit::*;
@@ -29,17 +27,35 @@ pub fn center_dialog(dialog: Dialog, window: &Window) -> Dialog {
 /// We skip `with_type` and lay out the row ourselves. Text must
 /// `min_w_0` + `whitespace_normal` or Kit's toast `overflow_hidden` clips it.
 pub fn notify_success(message: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-    notify_with_icon(message, IconName::CircleCheck, |cx| cx.theme().success, window, cx);
+    notify_with_icon(
+        message,
+        IconName::CircleCheck,
+        |cx| cx.theme().success,
+        window,
+        cx,
+    );
 }
 
 /// Error toast with icon + wrapping message. See [`notify_success`].
 pub fn notify_error(message: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-    notify_with_icon(message, IconName::CircleX, |cx| cx.theme().danger, window, cx);
+    notify_with_icon(
+        message,
+        IconName::CircleX,
+        |cx| cx.theme().danger,
+        window,
+        cx,
+    );
 }
 
 /// Attention toast (something is waiting on the user). See [`notify_success`].
 pub fn notify_warning(message: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-    notify_with_icon(message, IconName::TriangleAlert, |cx| cx.theme().warning, window, cx);
+    notify_with_icon(
+        message,
+        IconName::TriangleAlert,
+        |cx| cx.theme().warning,
+        window,
+        cx,
+    );
 }
 
 fn notify_with_icon(

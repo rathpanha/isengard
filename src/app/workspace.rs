@@ -35,7 +35,12 @@ impl IsengardApp {
 
     /// Adds root folders to the current workspace, keeping open tabs. A saved
     /// workspace file is updated right away.
-    pub(super) fn add_folders(&mut self, folders: &[PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn add_folders(
+        &mut self,
+        folders: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let was_empty = self.workspace.is_empty();
         let mut added = false;
         for folder in folders.iter().filter(|f| f.is_dir()) {
@@ -74,8 +79,7 @@ impl IsengardApp {
         self.refresh_menus(cx);
         // Workspace `settings` overlay font / format-on-save (not written to config.json).
         theme::apply(&self.effective_config(), Some(window), cx);
-        self.lsp
-            .set_settings(self.effective_config().lsp.clone());
+        self.lsp.set_settings(self.effective_config().lsp.clone());
         cx.notify();
     }
 
@@ -104,8 +108,9 @@ impl IsengardApp {
                 (root, label)
             })
             .collect();
-        self.git
-            .update(cx, |panel, cx| panel.set_folders(folders, labels, window, cx));
+        self.git.update(cx, |panel, cx| {
+            panel.set_folders(folders, labels, window, cx)
+        });
     }
 
     pub(super) fn window_title(&self) -> String {
@@ -118,7 +123,12 @@ impl IsengardApp {
 
     /// Leaves the current workspace: offers to save an untitled multi-root
     /// workspace, then to save unsaved files, then switches.
-    pub(super) fn request_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn request_switch(
+        &mut self,
+        switch: Switch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.workspace.is_untitled_multi_root() {
             return self.confirm_unsaved_then(switch, window, cx);
         }
@@ -159,9 +169,7 @@ impl IsengardApp {
         };
         self.open_choice_dialog(
             "Unsaved changes",
-            format!(
-                "Some files have unsaved changes. Save them before closing this {noun}?"
-            ),
+            format!("Some files have unsaved changes. Save them before closing this {noun}?"),
             "Don't Save",
             "Save All",
             move |this, window, cx| this.apply_switch(after_discard.clone(), window, cx),
@@ -179,7 +187,12 @@ impl IsengardApp {
         );
     }
 
-    pub(super) fn apply_switch(&mut self, switch: Switch, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn apply_switch(
+        &mut self,
+        switch: Switch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Welcome recent rows unmount on switch; clear any path tooltip that
         // lost its trigger (Kit hide can race a pending show timer).
         window.dismiss_tooltip(cx);
@@ -198,8 +211,7 @@ impl IsengardApp {
             }
             Switch::Close => Workspace::default(),
         };
-        self.lsp
-            .reset_workspace(self.workspace.folders().to_vec());
+        self.lsp.reset_workspace(self.workspace.folders().to_vec());
         self.config.save();
         self.focus_handle.focus(window, cx);
         self.workspace_changed(window, cx);
@@ -446,15 +458,30 @@ impl IsengardApp {
         .detach();
     }
 
-    pub(super) fn on_open_folder(&mut self, _: &OpenFolder, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_open_folder(
+        &mut self,
+        _: &OpenFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.prompt_and_open(true, window, cx);
     }
 
-    pub(super) fn on_open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_open_file(
+        &mut self,
+        _: &OpenFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.prompt_and_open(false, window, cx);
     }
 
-    pub(super) fn prompt_and_open(&mut self, directories: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn prompt_and_open(
+        &mut self,
+        directories: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: !directories,
             directories,
@@ -592,11 +619,7 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         if self.workspace.is_empty() {
-            notify_error(
-                "Open a folder before saving a workspace.",
-                window,
-                cx,
-            );
+            notify_error("Open a folder before saving a workspace.", window, cx);
             return;
         }
         self.save_workspace_as(AfterWorkspaceSave::None, window, cx);
@@ -623,7 +646,10 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspace.move_folder(&action.folder, action.before.as_deref()) {
+        if self
+            .workspace
+            .move_folder(&action.folder, action.before.as_deref())
+        {
             self.sync_agent_roots(cx);
             self.persist_workspace(window, cx);
             self.workspace_changed(window, cx);

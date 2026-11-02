@@ -1,6 +1,6 @@
 //! File-tree inline create/rename/delete and path remaps.
-use super::*;
 use super::tab::TabBody;
+use super::*;
 
 impl IsengardApp {
     pub(super) fn begin_inline_rename(
@@ -86,14 +86,17 @@ impl IsengardApp {
             state.focus(window, cx);
             state.select_all(window, cx);
         });
-        let events = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-            match event {
-                InputEvent::PressEnter { .. } | InputEvent::Blur => {
-                    this.commit_tree_edit(window, cx);
-                }
-                _ => {}
-            }
-        });
+        let events =
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                        this.commit_tree_edit(window, cx);
+                    }
+                    _ => {}
+                },
+            );
         let weak = cx.weak_entity();
         let keys = cx.intercept_keystrokes(move |event, window, cx| {
             if event.keystroke.key.as_str() != "escape" {
@@ -320,7 +323,8 @@ impl IsengardApp {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.file_tree.set_dir_expanded(&action.path, action.expand, cx);
+        self.file_tree
+            .set_dir_expanded(&action.path, action.expand, cx);
         self.persist_session(cx);
     }
 
@@ -444,7 +448,11 @@ impl IsengardApp {
         cx: &mut Context<Self>,
     ) {
         if let Err(err) = reveal_in_file_manager(&action.0) {
-            notify_error(format!("Could not open the file manager: {err}"), window, cx);
+            notify_error(
+                format!("Could not open the file manager: {err}"),
+                window,
+                cx,
+            );
         }
     }
 
@@ -501,11 +509,18 @@ fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
     }
     let parent = path.parent().unwrap_or(path);
     let spawned = if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg("-R").arg(path).spawn().is_ok()
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()
+            .is_ok()
     } else if cfg!(target_os = "windows") {
         let mut arg = std::ffi::OsString::from("/select,");
         arg.push(path);
-        std::process::Command::new("explorer").arg(arg).spawn().is_ok()
+        std::process::Command::new("explorer")
+            .arg(arg)
+            .spawn()
+            .is_ok()
     } else {
         url::Url::from_file_path(path).is_ok_and(|uri| {
             std::process::Command::new("dbus-send")

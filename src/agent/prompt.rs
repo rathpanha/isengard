@@ -38,10 +38,7 @@ pub enum Attachment {
         selection: Option<LineRange>,
     },
     /// Non-file text (e.g. terminal selection).
-    Snippet {
-        label: String,
-        text: String,
-    },
+    Snippet { label: String, text: String },
     Image {
         mime: String,
         data_b64: String,
@@ -124,7 +121,10 @@ pub fn image_from_path(path: &Path) -> Option<Attachment> {
 
 /// Keep PNG/JPEG/GIF/WebP as-is; re-encode ICO/BMP/TIFF (etc.) to PNG.
 fn normalize_for_agent(mime: &str, bytes: &[u8]) -> (String, Vec<u8>) {
-    if AGENT_IMAGE_MIMES.iter().any(|m| mime.eq_ignore_ascii_case(m)) {
+    if AGENT_IMAGE_MIMES
+        .iter()
+        .any(|m| mime.eq_ignore_ascii_case(m))
+    {
         return (mime.to_owned(), bytes.to_vec());
     }
     match reencode_png(bytes) {
@@ -136,11 +136,8 @@ fn normalize_for_agent(mime: &str, bytes: &[u8]) -> (String, Vec<u8>) {
 fn reencode_png(bytes: &[u8]) -> Option<Vec<u8>> {
     let img = image::load_from_memory(bytes).ok()?;
     let mut out = Vec::new();
-    img.write_to(
-        &mut std::io::Cursor::new(&mut out),
-        image::ImageFormat::Png,
-    )
-    .ok()?;
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
     Some(out)
 }
 
@@ -245,11 +242,9 @@ fn attachment_block(attachment: &Attachment, caps: PromptCaps) -> Option<Content
                 // Agent didn't advertise embed (or file was huge): still put
                 // bytes in a text block so the model sees them. ResourceLink
                 // alone is only a markdown [@name](uri) in Claude ACP.
-                (_, Some(body)) if body.len() <= MAX_EMBED_BYTES => {
-                    Some(ContentBlock::Text(TextContent::new(format!(
-                        "<context ref=\"{uri}\">\n{body}\n</context>"
-                    ))))
-                }
+                (_, Some(body)) if body.len() <= MAX_EMBED_BYTES => Some(ContentBlock::Text(
+                    TextContent::new(format!("<context ref=\"{uri}\">\n{body}\n</context>")),
+                )),
                 _ => {
                     let mut link = ResourceLink::new(file_label(path), uri);
                     if let Some(r) = selection {
@@ -566,6 +561,11 @@ mod serde_shape {
         let v = serde_json::to_value(&blocks[0]).unwrap();
         assert_eq!(v["type"], "resource");
         assert!(v["resource"]["text"].as_str().unwrap().contains("fn main"));
-        assert!(v["resource"]["uri"].as_str().unwrap().starts_with("file://"));
+        assert!(
+            v["resource"]["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("file://")
+        );
     }
 }

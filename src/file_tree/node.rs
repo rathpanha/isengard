@@ -311,7 +311,10 @@ mod tests {
         assert_eq!(names, ["src", "b.js"]);
         let mut expanded = Vec::new();
         root.collect_expanded(&mut expanded);
-        assert!(expanded.contains(&tmp.path().join("src/ui")), "{expanded:?}");
+        assert!(
+            expanded.contains(&tmp.path().join("src/ui")),
+            "{expanded:?}"
+        );
 
         // Unloaded dirs stay unloaded.
         let mut fresh = FsNode::from_path(tmp.path());

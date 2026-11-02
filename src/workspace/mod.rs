@@ -345,10 +345,7 @@ mod tests {
     fn close_label_folder_vs_workspace() {
         assert_eq!(ws(&["/code/app"]).close_menu_label(), "Close Folder");
         assert_eq!(ws(&["/code/app"]).kind_noun(), "folder");
-        assert_eq!(
-            ws(&["/a", "/b"]).close_menu_label(),
-            "Close Workspace"
-        );
+        assert_eq!(ws(&["/a", "/b"]).close_menu_label(), "Close Workspace");
         let mut named = ws(&["/code/app"]);
         named.file = Some(PathBuf::from("/code/app.isengard-workspace"));
         assert_eq!(named.close_menu_label(), "Close Workspace");
@@ -378,7 +375,10 @@ mod tests {
     #[test]
     fn move_folder_reorders_roots() {
         let order = |w: &Workspace| -> Vec<String> {
-            w.folders().iter().map(|f| f.display().to_string()).collect()
+            w.folders()
+                .iter()
+                .map(|f| f.display().to_string())
+                .collect()
         };
         let mut w = ws(&["/a", "/b", "/c"]);
         assert!(w.move_folder(Path::new("/c"), Some(Path::new("/a"))));
@@ -423,7 +423,10 @@ mod tests {
     fn replace_folder_updates_root() {
         let mut w = ws(&["/code/a", "/code/b"]);
         assert!(w.replace_folder(Path::new("/code/a"), Path::new("/code/a2")));
-        assert_eq!(w.folders(), [PathBuf::from("/code/a2"), PathBuf::from("/code/b")]);
+        assert_eq!(
+            w.folders(),
+            [PathBuf::from("/code/a2"), PathBuf::from("/code/b")]
+        );
         assert!(!w.replace_folder(Path::new("/code/missing"), Path::new("/code/x")));
         assert!(!w.replace_folder(Path::new("/code/b"), Path::new("/code/a2")));
     }

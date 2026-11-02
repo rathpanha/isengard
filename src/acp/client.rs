@@ -66,8 +66,14 @@ enum AgentCommand {
     CancelSilent,
     Delete(String),
     SetMode(String),
-    SetConfig { config_id: String, value: String },
-    SetConfigBool { config_id: String, value: bool },
+    SetConfig {
+        config_id: String,
+        value: String,
+    },
+    SetConfigBool {
+        config_id: String,
+        value: bool,
+    },
 }
 
 /// How to open a chat on a connected agent.
@@ -152,14 +158,24 @@ pub enum AgentEvent {
         config_options: Option<Vec<SessionConfigOption>>,
     },
     /// Opening a chat failed (e.g. it was deleted outside Isengard).
-    SessionOpenFailed { open: SessionOpen, message: String },
-    Update { session: String, update: SessionUpdate },
+    SessionOpenFailed {
+        open: SessionOpen,
+        message: String,
+    },
+    Update {
+        session: String,
+        update: SessionUpdate,
+    },
     /// `session/set_config_option` returned a full options snapshot.
     ConfigOptions(Vec<SessionConfigOption>),
     TurnEnded(StopReason),
     TurnFailed(String),
     /// Throwaway silent job finished (`ok` = EndTurn and not aborted).
-    SilentTurnEnded { job: u64, ok: bool, text: String },
+    SilentTurnEnded {
+        job: u64,
+        ok: bool,
+        text: String,
+    },
     /// Not signed in. The connection is finished; restart it after login.
     AuthRequired(Vec<LoginMethod>),
     Permission(PermissionAsk),
@@ -212,22 +228,20 @@ impl AgentConnection {
     ) -> Self {
         let (commands, command_rx) = flume::unbounded();
         let (event_tx, events) = flume::unbounded();
-        let spawned = std::thread::Builder::new()
-            .name("acp-agent".into())
-            .spawn({
-                let event_tx = event_tx.clone();
-                move || {
-                    let result = futures::executor::block_on(run(
-                        transport,
-                        roots,
-                        claude,
-                        command_rx,
-                        event_tx.clone(),
-                        auth_ids,
-                    ));
-                    let _ = event_tx.send(AgentEvent::Closed(result.err().map(describe_error)));
-                }
-            });
+        let spawned = std::thread::Builder::new().name("acp-agent".into()).spawn({
+            let event_tx = event_tx.clone();
+            move || {
+                let result = futures::executor::block_on(run(
+                    transport,
+                    roots,
+                    claude,
+                    command_rx,
+                    event_tx.clone(),
+                    auth_ids,
+                ));
+                let _ = event_tx.send(AgentEvent::Closed(result.err().map(describe_error)));
+            }
+        });
         if let Err(err) = spawned {
             let _ = event_tx.send(AgentEvent::Closed(Some(format!(
                 "Could not start the agent thread: {err}"
@@ -332,7 +346,12 @@ mod cursor_smoke {
                 Ok(AgentEvent::Connected(i)) => {
                     eprintln!(
                         "Cursor ACP initialize OK (pin {CURSOR_VERSION}): name={:?} load={} resume={} delete={} image={} embedded={}",
-                        i.name, i.can_load, i.can_resume, i.can_delete, i.can_image, i.can_embedded_context
+                        i.name,
+                        i.can_load,
+                        i.can_resume,
+                        i.can_delete,
+                        i.can_image,
+                        i.can_embedded_context
                     );
                     info = Some(i);
                     break;
@@ -386,7 +405,11 @@ fn describe_error(err: Error) -> String {
     let data = err
         .data
         .as_ref()
-        .and_then(|d| d.as_str().map(str::to_owned).or_else(|| Some(d.to_string())))
+        .and_then(|d| {
+            d.as_str()
+                .map(str::to_owned)
+                .or_else(|| Some(d.to_string()))
+        })
         .filter(|d| !d.is_empty() && d != "null");
     match data {
         Some(data) => format!("{}: {data}", err.message),
@@ -453,8 +476,7 @@ async fn run(
                 // forward into the open-chat UI stream.
                 {
                     let mut slot = on_update_silent.lock().unwrap();
-                    if let Some(job) = slot.get_mut(&n.session_id)
-                    {
+                    if let Some(job) = slot.get_mut(&n.session_id) {
                         match &n.update {
                             SessionUpdate::AgentMessageChunk(chunk) => {
                                 if let ContentBlock::Text(t) = &chunk.content {
@@ -485,11 +507,10 @@ async fn run(
                 // Silent jobs must not open tools — cancel immediately.
                 {
                     let mut slot = on_permission_silent.lock().unwrap();
-                    if let Some(job) = slot.get_mut(&req.session_id)
-                    {
+                    if let Some(job) = slot.get_mut(&req.session_id) {
                         job.aborted = true;
-                        let _ = cx
-                            .send_notification(CancelNotification::new(job.session_id.clone()));
+                        let _ =
+                            cx.send_notification(CancelNotification::new(job.session_id.clone()));
                         return responder.respond(RequestPermissionResponse::new(
                             RequestPermissionOutcome::Cancelled,
                         ));
@@ -548,8 +569,9 @@ async fn run(
                 cx.spawn(async move {
                     match answer.recv_async().await {
                         Ok(Ok(content)) => responder.respond(ReadTextFileResponse::new(content)),
-                        Ok(Err(msg)) => responder
-                            .respond_with_error(Error::resource_not_found(None).data(msg)),
+                        Ok(Err(msg)) => {
+                            responder.respond_with_error(Error::resource_not_found(None).data(msg))
+                        }
                         Err(_) => responder.respond_with_error(Error::internal_error()),
                     }
                 })
@@ -605,9 +627,7 @@ fn client_capabilities() -> ClientCapabilities {
         .auth(AuthCapabilities::new().terminal(true))
         // So agents can send CompactionUpdate / SummaryChunk when
         // they auto-compact near the context limit.
-        .session(
-            ClientSessionCapabilities::new().compaction(CompactionCapabilities::new()),
-        )
+        .session(ClientSessionCapabilities::new().compaction(CompactionCapabilities::new()))
         // Nested Agent/Explore progress as `subagent_update` +
         // child-session tool traffic (Claude Agent ACP).
         .subagents(SubagentCapabilities::new())
@@ -694,7 +714,10 @@ async fn session(
                 if let Some(old) = current.take()
                     && can_close
                 {
-                    let _ = cx.send_request(CloseSessionRequest::new(old)).block_task().await;
+                    let _ = cx
+                        .send_request(CloseSessionRequest::new(old))
+                        .block_task()
+                        .await;
                 }
                 let opened = match &open {
                     SessionOpen::New => cx
@@ -796,10 +819,7 @@ async fn session(
                             ok: false,
                             text: String::new(),
                         });
-                        log::warn!(
-                            "agent: silent session/new failed: {}",
-                            describe_error(err)
-                        );
+                        log::warn!("agent: silent session/new failed: {}", describe_error(err));
                         continue;
                     }
                 };
@@ -830,9 +850,9 @@ async fn session(
                 silent.lock().unwrap().insert(
                     ephemeral.clone(),
                     SilentJob {
-                    session_id: ephemeral.clone(),
-                    text: String::new(),
-                    aborted: false,
+                        session_id: ephemeral.clone(),
+                        text: String::new(),
+                        aborted: false,
                     },
                 );
                 let turn = cx.send_request(PromptRequest::new(ephemeral.clone(), blocks));
@@ -883,8 +903,7 @@ async fn session(
             }
             AgentCommand::Cancel => {
                 // Home chat and throwaway silent can run at once — cancel both.
-                let silent_ids: Vec<SessionId> =
-                    silent.lock().unwrap().keys().cloned().collect();
+                let silent_ids: Vec<SessionId> = silent.lock().unwrap().keys().cloned().collect();
                 for session_id in silent_ids {
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
@@ -893,8 +912,7 @@ async fn session(
                 }
             }
             AgentCommand::CancelSilent => {
-                let silent_ids: Vec<SessionId> =
-                    silent.lock().unwrap().keys().cloned().collect();
+                let silent_ids: Vec<SessionId> = silent.lock().unwrap().keys().cloned().collect();
                 for session_id in silent_ids {
                     cx.send_notification(CancelNotification::new(session_id))?;
                 }
@@ -904,8 +922,10 @@ async fn session(
                     if current.as_ref().is_some_and(|c| c.to_string() == id) {
                         current = None;
                     }
-                    if let Err(err) =
-                        cx.send_request(DeleteSessionRequest::new(id)).block_task().await
+                    if let Err(err) = cx
+                        .send_request(DeleteSessionRequest::new(id))
+                        .block_task()
+                        .await
                     {
                         log::warn!("agent: delete session failed: {}", describe_error(err));
                     }
@@ -1055,7 +1075,9 @@ mod tests {
             panic!("expected Permission");
         };
         assert_eq!(ask.options.len(), 2);
-        ask.reply.send(Some(ask.options[0].option_id.clone())).unwrap();
+        ask.reply
+            .send(Some(ask.options[0].option_id.clone()))
+            .unwrap();
 
         let AgentEvent::WriteFile(write) = next(&conn) else {
             panic!("expected WriteFile");
@@ -1135,7 +1157,11 @@ mod tests {
         assert_eq!(agent.extra_roots(), [PathBuf::from("/w/system")]);
         conn.open(SessionOpen::Load(id));
         opened(&conn);
-        assert_eq!(agent.extra_roots(), [PathBuf::from("/w/system")], "load passes them too");
+        assert_eq!(
+            agent.extra_roots(),
+            [PathBuf::from("/w/system")],
+            "load passes them too"
+        );
     }
 
     #[test]
@@ -1156,7 +1182,8 @@ mod tests {
         });
         for (claude, expected) in [(true, Some(want)), (false, None)] {
             let agent = FakeAgent::new();
-            let conn = AgentConnection::spawn_with(agent.connect(), vec![PathBuf::from("/w")], claude);
+            let conn =
+                AgentConnection::spawn_with(agent.connect(), vec![PathBuf::from("/w")], claude);
             assert!(matches!(next(&conn), AgentEvent::Connected(_)));
             conn.open(SessionOpen::New);
             let id = opened(&conn);
@@ -1164,7 +1191,11 @@ mod tests {
             opened(&conn);
             conn.open(SessionOpen::Resume(id));
             opened(&conn);
-            assert_eq!(agent.session_metas(), vec![expected; 3], "new, load and resume (claude={claude})");
+            assert_eq!(
+                agent.session_metas(),
+                vec![expected; 3],
+                "new, load and resume (claude={claude})"
+            );
         }
     }
 
@@ -1214,10 +1245,7 @@ mod tests {
         let home_chat = agent.chat(&home).expect("home chat");
         assert_eq!(
             home_chat,
-            vec![
-                (true, "keep me".into()),
-                (false, "echo: keep me".into()),
-            ]
+            vec![(true, "keep me".into()), (false, "echo: keep me".into()),]
         );
         // Scratch session was deleted (FakeAgent removes it).
         assert!(
@@ -1226,7 +1254,11 @@ mod tests {
             agent.calls()
         );
         assert_eq!(
-            agent.calls().iter().filter(|c| c.starts_with("new ")).count(),
+            agent
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("new "))
+                .count(),
             2,
             "home + throwaway: {:?}",
             agent.calls()
@@ -1270,7 +1302,10 @@ mod tests {
         got.sort();
         assert_eq!(
             got,
-            vec![(1, "echo: alpha".to_string()), (2, "echo: beta".to_string())]
+            vec![
+                (1, "echo: alpha".to_string()),
+                (2, "echo: beta".to_string())
+            ]
         );
     }
 }

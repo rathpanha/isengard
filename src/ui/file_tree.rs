@@ -112,7 +112,13 @@ impl Render for TreeDragPreview {
             .border_color(cx.theme().border)
             .text_sm()
             .text_color(cx.theme().foreground)
-            .child(tree_icon(&self.drag.path, self.drag.is_dir, false, false, self.drag.dark))
+            .child(tree_icon(
+                &self.drag.path,
+                self.drag.is_dir,
+                false,
+                false,
+                self.drag.dark,
+            ))
             .child(self.drag.label.clone())
     }
 }
@@ -206,10 +212,7 @@ impl FileTreePanel {
         for (path, status) in changes {
             self.git_file_status.insert(path.clone(), status);
             for ancestor in git_ancestors_in_roots(&path, &roots) {
-                folder_letters
-                    .entry(ancestor)
-                    .or_default()
-                    .push(status);
+                folder_letters.entry(ancestor).or_default().push(status);
             }
         }
         for (folder, letters) in folder_letters {
@@ -325,12 +328,9 @@ impl FileTreePanel {
     pub fn selected_path(&self, cx: &App) -> Option<PathBuf> {
         let id = self.state.read(cx).selected_item()?.id.clone();
         let raw = id.as_ref();
-        let path = raw
-            .strip_suffix(PLACEHOLDER_SUFFIX)
-            .unwrap_or(raw);
+        let path = raw.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(raw);
         Some(PathBuf::from(path))
     }
-
 
     /// Expands `dir`, reloads its children from disk, and syncs the Kit tree.
     pub fn refresh_dir(&mut self, dir: &Path, cx: &mut App) {
@@ -452,7 +452,9 @@ impl FileTreePanel {
         let on_open_file = Rc::new(on_open_file);
         let tree_state = self.state.clone();
         let edit_id = edit.map(|(target, _)| target.row_id());
-        let edit_folder_icon = edit.map(|(target, _)| target.is_folder_icon()).unwrap_or(false);
+        let edit_folder_icon = edit
+            .map(|(target, _)| target.is_folder_icon())
+            .unwrap_or(false);
         let edit_input = edit.map(|(_, input)| input.clone());
         let guide_masks = Rc::new(compute_guide_masks(self.state.read(cx)));
         let ignored_paths = Rc::new({
@@ -479,277 +481,274 @@ impl FileTreePanel {
 
         let blank_menu_blocked_row = blank_menu_blocked.clone();
         let tree_el = tree(&self.state, move |ix, entry, _selected, _window, cx| {
-                    let item = entry.item();
-                    let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
-                    let is_creating = item.id.ends_with(CREATING_SUFFIX);
-                    let path = PathBuf::from(item.id.as_ref());
-                    let is_missing_root = entry.depth() == 0 && entry.is_disabled();
-                    let is_editing = edit_id.as_ref().is_some_and(|id| id == &item.id);
-                    let is_dir =
-                        entry.is_folder() || is_missing_root || (is_creating && edit_folder_icon);
-                    let git_ignored = !is_placeholder
-                        && !is_creating
-                        && ignored_paths.contains(&path);
-                    let git_letter = (!is_placeholder && !is_creating)
-                        .then(|| {
-                            if is_dir {
-                                git_folders.get(&path).copied()
+            let item = entry.item();
+            let is_placeholder = item.id.ends_with(PLACEHOLDER_SUFFIX);
+            let is_creating = item.id.ends_with(CREATING_SUFFIX);
+            let path = PathBuf::from(item.id.as_ref());
+            let is_missing_root = entry.depth() == 0 && entry.is_disabled();
+            let is_editing = edit_id.as_ref().is_some_and(|id| id == &item.id);
+            let is_dir = entry.is_folder() || is_missing_root || (is_creating && edit_folder_icon);
+            let git_ignored = !is_placeholder && !is_creating && ignored_paths.contains(&path);
+            let git_letter = (!is_placeholder && !is_creating)
+                .then(|| {
+                    if is_dir {
+                        git_folders.get(&path).copied()
+                    } else {
+                        git_files.get(&path).copied()
+                    }
+                })
+                .flatten();
+            let icon = (!is_placeholder).then(|| {
+                let icon_path = if is_creating {
+                    PathBuf::from(if edit_folder_icon {
+                        "New Folder"
+                    } else {
+                        "untitled.txt"
+                    })
+                } else {
+                    path.clone()
+                };
+                tree_icon(
+                    &icon_path,
+                    is_dir,
+                    entry.is_expanded(),
+                    multi_root && entry.depth() == 0,
+                    cx.theme().is_dark(),
+                )
+            });
+            let on_open_file = on_open_file.clone();
+            let tree_state = tree_state.clone();
+            let is_file = !entry.is_folder() && !is_placeholder && !is_creating;
+            let toggle_on_click =
+                entry.is_folder() && !is_placeholder && !is_creating && !is_missing_root;
+            let expanded_now = entry.is_expanded();
+            let row_input = edit_input.clone().filter(|_| is_editing);
+            let base_path = PathBuf::from(
+                item.id
+                    .strip_suffix(PLACEHOLDER_SUFFIX)
+                    .unwrap_or(item.id.as_ref()),
+            );
+            let draggable = !is_placeholder
+                && !is_creating
+                && !is_editing
+                && !entry.is_disabled()
+                && !is_missing_root;
+            let row_is_root = multi_root && entry.depth() == 0;
+            let root_paths = root_paths.clone();
+            let drag_payload = TreeEntryDrag {
+                path: path.clone(),
+                label: item.label.clone(),
+                is_dir,
+                dark: cx.theme().is_dark(),
+                is_root: row_is_root,
+            };
+            let drop_dir: Option<PathBuf> = if is_creating {
+                None
+            } else if is_placeholder || is_dir {
+                Some(base_path)
+            } else {
+                base_path.parent().map(Path::to_path_buf)
+            };
+            let guides = guide_masks.get(ix).cloned().unwrap_or_default();
+            let guide_color = cx.theme().sidebar_border;
+            let muted = cx.theme().muted_foreground;
+
+            ListItem::new(ix)
+                .w_full()
+                .min_w_0()
+                // Kit's ListItem defaults to py_1 / px_3 — py gaps break
+                // guides; px would inset the hover. Zero both; inset the
+                // row content instead so hover is full-bleed.
+                .py_0()
+                .px_0()
+                .when(!entry.is_disabled() && !is_editing, |item| {
+                    item.cursor_pointer()
+                })
+                .rounded(cx.theme().radius)
+                // Kit selects on mouse-down but does not focus the Tree;
+                // without this, Delete/F2 stay bound to the editor.
+                .when(!is_editing && !entry.is_disabled(), |item| {
+                    let blank_menu_blocked = blank_menu_blocked_row.clone();
+                    item.on_mouse_down(MouseButton::Left, {
+                        let tree_state = tree_state.clone();
+                        move |_, window, cx| {
+                            tree_state.update(cx, |state, cx| {
+                                state.focus(window, cx);
+                                state.set_selected_index(Some(ix), cx);
+                            });
+                            // Kit expands a folder on mouse-down, before we
+                            // know whether this press is a drag. Keep it from
+                            // seeing the press; folders toggle on click below.
+                            cx.stop_propagation();
+                        }
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        move |_, window, cx| {
+                            blank_menu_blocked.set(true);
+                            tree_state.update(cx, |state, cx| state.focus(window, cx));
+                        },
+                    )
+                })
+                .when(draggable, |item| {
+                    item.on_drag(drag_payload, |drag, _, _, cx| {
+                        cx.new(|_| TreeDragPreview { drag: drag.clone() })
+                    })
+                })
+                .when_some(drop_dir, |item, dir| {
+                    // No `can_drop`: GPUI then skips this row's listener on a
+                    // refused drop, leaving the drag alive for the panel's
+                    // blank-space handler (it would move the item to the root)
+                    // and the hover painted. Handle every drop; gate inside.
+                    let allowed = {
+                        let dir = dir.clone();
+                        Rc::new(move |d: &TreeEntryDrag| {
+                            if d.is_root {
+                                // Roots only reorder, and only onto another root.
+                                row_is_root && reorder_allowed(&root_paths, &d.path, Some(&dir))
                             } else {
-                                git_files.get(&path).copied()
+                                move_allowed(&d.path, &dir)
                             }
                         })
-                        .flatten();
-                    let icon = (!is_placeholder).then(|| {
-                        let icon_path = if is_creating {
-                            PathBuf::from(if edit_folder_icon {
-                                "New Folder"
-                            } else {
-                                "untitled.txt"
-                            })
+                    };
+                    let allowed_over = allowed.clone();
+                    item.drag_over::<TreeEntryDrag>(move |this, d, _, cx| {
+                        if allowed_over(d) {
+                            this.bg(cx.theme().drop_target)
                         } else {
-                            path.clone()
-                        };
-                        tree_icon(
-                            &icon_path,
-                            is_dir,
-                            entry.is_expanded(),
-                            multi_root && entry.depth() == 0,
-                            cx.theme().is_dark(),
-                        )
-                    });
-                    let on_open_file = on_open_file.clone();
-                    let tree_state = tree_state.clone();
-                    let is_file = !entry.is_folder() && !is_placeholder && !is_creating;
-                    let toggle_on_click =
-                        entry.is_folder() && !is_placeholder && !is_creating && !is_missing_root;
-                    let expanded_now = entry.is_expanded();
-                    let row_input = edit_input.clone().filter(|_| is_editing);
-                    let base_path = PathBuf::from(
-                        item.id.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(item.id.as_ref()),
-                    );
-                    let draggable = !is_placeholder
-                        && !is_creating
-                        && !is_editing
-                        && !entry.is_disabled()
-                        && !is_missing_root;
-                    let row_is_root = multi_root && entry.depth() == 0;
-                    let root_paths = root_paths.clone();
-                    let drag_payload = TreeEntryDrag {
-                        path: path.clone(),
-                        label: item.label.clone(),
-                        is_dir,
-                        dark: cx.theme().is_dark(),
-                        is_root: row_is_root,
-                    };
-                    let drop_dir: Option<PathBuf> = if is_creating {
-                        None
-                    } else if is_placeholder || is_dir {
-                        Some(base_path)
-                    } else {
-                        base_path.parent().map(Path::to_path_buf)
-                    };
-                    let guides = guide_masks.get(ix).cloned().unwrap_or_default();
-                    let guide_color = cx.theme().sidebar_border;
-                    let muted = cx.theme().muted_foreground;
-
-                    ListItem::new(ix)
+                            this
+                        }
+                    })
+                    .on_drop(move |d: &TreeEntryDrag, window, cx| {
+                        if !allowed(d) {
+                            return;
+                        }
+                        if d.is_root {
+                            window.dispatch_action(
+                                Box::new(ReorderRoot {
+                                    folder: d.path.clone(),
+                                    before: Some(dir.clone()),
+                                }),
+                                cx,
+                            );
+                        } else {
+                            window.dispatch_action(
+                                Box::new(MovePath {
+                                    from: d.path.clone(),
+                                    to_dir: dir.clone(),
+                                }),
+                                cx,
+                            );
+                        }
+                    })
+                })
+                .child(
+                    h_flex()
                         .w_full()
                         .min_w_0()
-                        // Kit's ListItem defaults to py_1 / px_3 — py gaps break
-                        // guides; px would inset the hover. Zero both; inset the
-                        // row content instead so hover is full-bleed.
-                        .py_0()
-                        .px_0()
-                        .when(!entry.is_disabled() && !is_editing, |item| {
-                            item.cursor_pointer()
-                        })
-                        .rounded(cx.theme().radius)
-                        // Kit selects on mouse-down but does not focus the Tree;
-                        // without this, Delete/F2 stay bound to the editor.
-                        .when(!is_editing && !entry.is_disabled(), |item| {
-                            let blank_menu_blocked = blank_menu_blocked_row.clone();
-                            item.on_mouse_down(MouseButton::Left, {
-                                let tree_state = tree_state.clone();
-                                move |_, window, cx| {
-                                    tree_state.update(cx, |state, cx| {
-                                        state.focus(window, cx);
-                                        state.set_selected_index(Some(ix), cx);
-                                    });
-                                    // Kit expands a folder on mouse-down, before we
-                                    // know whether this press is a drag. Keep it from
-                                    // seeing the press; folders toggle on click below.
-                                    cx.stop_propagation();
-                                }
-                            })
-                            .on_mouse_down(MouseButton::Right, move |_, window, cx| {
-                                blank_menu_blocked.set(true);
-                                tree_state.update(cx, |state, cx| state.focus(window, cx));
-                            })
-                        })
-                        .when(draggable, |item| {
-                            item.on_drag(drag_payload, |drag, _, _, cx| {
-                                cx.new(|_| TreeDragPreview { drag: drag.clone() })
-                            })
-                        })
-                        .when_some(drop_dir, |item, dir| {
-                            // No `can_drop`: GPUI then skips this row's listener on a
-                            // refused drop, leaving the drag alive for the panel's
-                            // blank-space handler (it would move the item to the root)
-                            // and the hover painted. Handle every drop; gate inside.
-                            let allowed = {
-                                let dir = dir.clone();
-                                Rc::new(move |d: &TreeEntryDrag| {
-                                    if d.is_root {
-                                        // Roots only reorder, and only onto another root.
-                                        row_is_root
-                                            && reorder_allowed(&root_paths, &d.path, Some(&dir))
-                                    } else {
-                                        move_allowed(&d.path, &dir)
-                                    }
-                                })
-                            };
-                            let allowed_over = allowed.clone();
-                            item.drag_over::<TreeEntryDrag>(move |this, d, _, cx| {
-                                if allowed_over(d) {
-                                    this.bg(cx.theme().drop_target)
-                                } else {
-                                    this
-                                }
-                            })
-                            .on_drop(move |d: &TreeEntryDrag, window, cx| {
-                                if !allowed(d) {
-                                    return;
-                                }
-                                if d.is_root {
-                                    window.dispatch_action(
-                                        Box::new(ReorderRoot {
-                                            folder: d.path.clone(),
-                                            before: Some(dir.clone()),
-                                        }),
-                                        cx,
-                                    );
-                                } else {
-                                    window.dispatch_action(
-                                        Box::new(MovePath {
-                                            from: d.path.clone(),
-                                            to_dir: dir.clone(),
-                                        }),
-                                        cx,
-                                    );
-                                }
-                            })
-                        })
+                        .items_stretch()
+                        .px_3()
+                        // Do not overflow_hidden here — guide lines extend
+                        // 1px past the row to meet the next segment.
+                        .children(guides.into_iter().map(|continues| {
+                            // Absolute line with 1px overlap so segments
+                            // still meet if ListItem/list leaves a hairline gap.
+                            div().relative().w(px(INDENT_COL)).flex_shrink_0().children(
+                                continues.then(|| {
+                                    div()
+                                        .absolute()
+                                        .top(px(-1.))
+                                        .bottom(px(-1.))
+                                        .left(px((INDENT_COL - 1.) / 2.))
+                                        .w(px(1.))
+                                        .bg(guide_color)
+                                }),
+                            )
+                        }))
                         .child(
                             h_flex()
-                                .w_full()
+                                .gap_2()
+                                .items_center()
                                 .min_w_0()
-                                .items_stretch()
-                                .px_3()
-                                // Do not overflow_hidden here — guide lines extend
-                                // 1px past the row to meet the next segment.
-                                .children(guides.into_iter().map(|continues| {
-                                    // Absolute line with 1px overlap so segments
-                                    // still meet if ListItem/list leaves a hairline gap.
-                                    div()
-                                        .relative()
-                                        .w(px(INDENT_COL))
-                                        .flex_shrink_0()
-                                        .children(continues.then(|| {
-                                            div()
-                                                .absolute()
-                                                .top(px(-1.))
-                                                .bottom(px(-1.))
-                                                .left(px((INDENT_COL - 1.) / 2.))
-                                                .w(px(1.))
-                                                .bg(guide_color)
-                                        }))
-                                }))
+                                .flex_1()
+                                .overflow_hidden()
+                                .py_0p5()
+                                .when(git_ignored && !is_editing, |this| this.opacity(0.6))
+                                .children(icon)
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .items_center()
+                                    div()
                                         .min_w_0()
                                         .flex_1()
                                         .overflow_hidden()
-                                        .py_0p5()
-                                        .when(git_ignored && !is_editing, |this| this.opacity(0.6))
-                                        .children(icon)
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .flex_1()
-                                                .overflow_hidden()
-                                                .when(!is_editing, |this| this.truncate())
-                                                .when(is_placeholder, |this| {
-                                                    this.text_color(muted)
-                                                })
-                                                .when_some(git_letter, |this, letter| {
-                                                    this.text_color(git_status_label_color(
-                                                        letter,
-                                                        cx.theme(),
-                                                    ))
-                                                })
-                                                .map(|this| match row_input {
-                                                    Some(input) => this.child(
-                                                        Input::new(&input)
-                                                            .id("tree-name-input")
-                                                            .xsmall()
-                                                            .w_full(),
-                                                    ),
-                                                    None => this.child(item.label.clone()),
-                                                }),
-                                        ),
-                                ),
-                        )
-                        .when(!is_editing, |item| {
-                            item.on_click(move |ev: &ClickEvent, window, cx| {
-                                if toggle_on_click {
-                                    window.dispatch_action(
-                                        Box::new(ToggleDir {
-                                            path: path.clone(),
-                                            expand: !expanded_now,
+                                        .when(!is_editing, |this| this.truncate())
+                                        .when(is_placeholder, |this| this.text_color(muted))
+                                        .when_some(git_letter, |this, letter| {
+                                            this.text_color(git_status_label_color(
+                                                letter,
+                                                cx.theme(),
+                                            ))
+                                        })
+                                        .map(|this| match row_input {
+                                            Some(input) => this.child(
+                                                Input::new(&input)
+                                                    .id("tree-name-input")
+                                                    .xsmall()
+                                                    .w_full(),
+                                            ),
+                                            None => this.child(item.label.clone()),
                                         }),
-                                        cx,
-                                    );
-                                }
-                                if is_file {
-                                    on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
-                                }
-                            })
-                        })
+                                ),
+                        ),
+                )
+                .when(!is_editing, |item| {
+                    item.on_click(move |ev: &ClickEvent, window, cx| {
+                        if toggle_on_click {
+                            window.dispatch_action(
+                                Box::new(ToggleDir {
+                                    path: path.clone(),
+                                    expand: !expanded_now,
+                                }),
+                                cx,
+                            );
+                        }
+                        if is_file {
+                            on_open_file(path.clone(), ev.click_count() >= 2, window, cx);
+                        }
+                    })
                 })
-                .context_menu(move |_, entry, menu, _, _| {
-                    let id = entry.item().id.as_ref();
-                    if id.contains(PLACEHOLDER_SUFFIX) || id.contains(CREATING_SUFFIX) {
-                        return menu;
-                    }
-                    let path = PathBuf::from(id);
-                    let is_dir = entry.is_folder();
-                    let is_workspace_root = multi_root && entry.depth() == 0;
-                    let mut menu = menu;
-                    if is_dir {
-                        menu = menu
-                            .menu("New File", Box::new(NewFileIn(path.clone())))
-                            .menu("New Folder", Box::new(NewFolderIn(path.clone())))
-                            .separator();
-                    }
-                    menu = menu
-                        .menu(REVEAL_LABEL, Box::new(RevealPath(path.clone())))
-                        .separator()
-                        .menu("Rename", Box::new(RenamePath(path.clone())))
-                        .menu("Delete", Box::new(DeletePath(path.clone())));
-                    if is_workspace_root {
-                        menu = menu.separator().menu(
-                            "Remove Folder from Workspace",
-                            Box::new(RemoveWorkspaceFolder(path)),
-                        );
-                    }
-                    menu
-                })
-                .size_full()
-                .min_w_0()
-                .text_color(theme.sidebar_foreground)
-                .text_sm();
+        })
+        .context_menu(move |_, entry, menu, _, _| {
+            let id = entry.item().id.as_ref();
+            if id.contains(PLACEHOLDER_SUFFIX) || id.contains(CREATING_SUFFIX) {
+                return menu;
+            }
+            let path = PathBuf::from(id);
+            let is_dir = entry.is_folder();
+            let is_workspace_root = multi_root && entry.depth() == 0;
+            let mut menu = menu;
+            if is_dir {
+                menu = menu
+                    .menu("New File", Box::new(NewFileIn(path.clone())))
+                    .menu("New Folder", Box::new(NewFolderIn(path.clone())))
+                    .separator();
+            }
+            menu = menu
+                .menu(REVEAL_LABEL, Box::new(RevealPath(path.clone())))
+                .separator()
+                .menu("Rename", Box::new(RenamePath(path.clone())))
+                .menu("Delete", Box::new(DeletePath(path.clone())));
+            if is_workspace_root {
+                menu = menu.separator().menu(
+                    "Remove Folder from Workspace",
+                    Box::new(RemoveWorkspaceFolder(path)),
+                );
+            }
+            menu
+        })
+        .size_full()
+        .min_w_0()
+        .text_color(theme.sidebar_foreground)
+        .text_sm();
 
         // Toolbar: folder/workspace name | New File / New Folder. Parent for
         // create resolved on click: selection's dir, parent of selected file,
@@ -790,17 +789,14 @@ impl FileTreePanel {
                             .small()
                             .icon(LucideIcon::FilePlus)
                             .tooltip("New File")
-                            .on_click(
-                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                    let Some(parent) =
-                                        toolbar_create_parent(&tree_state, &roots, &*cx)
-                                    else {
-                                        return;
-                                    };
-                                    tree_state.update(cx, |state, cx| state.focus(window, cx));
-                                    window.dispatch_action(Box::new(NewFileIn(parent)), cx);
-                                },
-                            )
+                            .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let Some(parent) = toolbar_create_parent(&tree_state, &roots, &*cx)
+                                else {
+                                    return;
+                                };
+                                tree_state.update(cx, |state, cx| state.focus(window, cx));
+                                window.dispatch_action(Box::new(NewFileIn(parent)), cx);
+                            })
                     })
                     .child({
                         let tree_state = tree_state_toolbar;
@@ -811,17 +807,14 @@ impl FileTreePanel {
                             .small()
                             .icon(LucideIcon::FolderPlus)
                             .tooltip("New Folder")
-                            .on_click(
-                                move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                    let Some(parent) =
-                                        toolbar_create_parent(&tree_state, &roots, &*cx)
-                                    else {
-                                        return;
-                                    };
-                                    tree_state.update(cx, |state, cx| state.focus(window, cx));
-                                    window.dispatch_action(Box::new(NewFolderIn(parent)), cx);
-                                },
-                            )
+                            .on_click(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                                let Some(parent) = toolbar_create_parent(&tree_state, &roots, &*cx)
+                                else {
+                                    return;
+                                };
+                                tree_state.update(cx, |state, cx| state.focus(window, cx));
+                                window.dispatch_action(Box::new(NewFolderIn(parent)), cx);
+                            })
                     }),
             );
 
@@ -896,9 +889,7 @@ fn toolbar_create_parent(
     if let Some(item) = tree_state.read(cx).selected_item() {
         let raw = item.id.as_ref();
         if !raw.contains(CREATING_SUFFIX) {
-            let path = PathBuf::from(
-                raw.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(raw),
-            );
+            let path = PathBuf::from(raw.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(raw));
             if path.is_dir() {
                 return Some(path);
             }
@@ -956,7 +947,11 @@ fn to_root_item(root: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
 fn inject_creating_row(children: &mut Vec<TreeItem>, parent: &Path, is_folder: bool) {
     children.retain(|c| !c.id.ends_with(PLACEHOLDER_SUFFIX));
     let id = format!("{}{CREATING_SUFFIX}", parent.to_string_lossy());
-    let label = if is_folder { "New Folder" } else { "untitled.txt" };
+    let label = if is_folder {
+        "New Folder"
+    } else {
+        "untitled.txt"
+    };
     children.insert(0, TreeItem::new(id, label.to_owned()));
 }
 
@@ -1005,4 +1000,3 @@ fn git_status_label_color(status: char, theme: &gpui_kit::component::Theme) -> H
         _ => theme.warning,
     }
 }
-

@@ -241,8 +241,7 @@ impl Render for SearchPanel {
                 }
                 rendered_matches += 1;
                 let is_selected = selected == Some((gi, mi));
-                let (before, matched, after) =
-                    preview_parts(&m.line_text, m.col, m.match_len);
+                let (before, matched, after) = preview_parts(&m.line_text, m.col, m.match_len);
                 let line_no = m.line + 1;
                 let hit = m.clone();
                 results.push(
@@ -277,12 +276,7 @@ impl Render for SearchPanel {
                                     .text_sm()
                                     .child(before)
                                     .when(!matched.is_empty(), |row| {
-                                        row.child(
-                                            div()
-                                                .bg(match_bg)
-                                                .rounded(px(2.))
-                                                .child(matched),
-                                        )
+                                        row.child(div().bg(match_bg).rounded(px(2.)).child(matched))
                                     })
                                     .child(after),
                             ),
@@ -384,9 +378,10 @@ impl Render for SearchPanel {
                             .gap_1()
                             .items_center()
                             .child(
-                                div().min_w_0().flex_1().child(
-                                    Input::new(&self.replace).id("search-replace").w_full(),
-                                ),
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .child(Input::new(&self.replace).id("search-replace").w_full()),
                             )
                             .child(
                                 Button::new("search-replace-file")
@@ -467,7 +462,10 @@ mod tests {
     #[test]
     fn preview_parts_highlights_span() {
         let (b, m, a) = preview_parts("hello world", 6, 5);
-        assert_eq!((b.as_str(), m.as_str(), a.as_str()), ("hello ", "world", ""));
+        assert_eq!(
+            (b.as_str(), m.as_str(), a.as_str()),
+            ("hello ", "world", "")
+        );
     }
 
     #[test]

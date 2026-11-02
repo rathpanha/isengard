@@ -567,7 +567,8 @@ impl TerminalRenderer {
 
             // First pass: find and draw horizontal spans of box-drawing characters
             // This draws continuous lines across multiple cells to avoid gaps
-            let mut processed_horizontal: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut processed_horizontal: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
 
             let mut i = 0;
             while i < cells_vec.len() {
@@ -804,7 +805,8 @@ impl TerminalRenderer {
             return;
         }
         let cursor_x = origin.x + self.cell_width * (cursor_point.column.0 as f32);
-        let cursor_y = origin.y + self.cell_height * ((cursor_point.line.0 + display_offset) as f32);
+        let cursor_y =
+            origin.y + self.cell_height * ((cursor_point.line.0 + display_offset) as f32);
 
         let cursor_color = self.palette.resolve(
             Color::Named(alacritty_terminal::vte::ansi::NamedColor::Cursor),

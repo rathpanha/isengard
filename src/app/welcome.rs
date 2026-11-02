@@ -85,7 +85,11 @@ pub(super) fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyEle
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child("Isengard"),
                         )
-                        .child(div().text_color(muted).child("The already configured editor")),
+                        .child(
+                            div()
+                                .text_color(muted)
+                                .child("The already configured editor"),
+                        ),
                 )
                 .child(
                     v_flex()
@@ -122,10 +126,8 @@ pub(super) fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyEle
                                                 .icon(IconName::FolderClosed)
                                                 .label("New Workspace…")
                                                 .on_click(|_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(NewWorkspace),
-                                                        cx,
-                                                    )
+                                                    window
+                                                        .dispatch_action(Box::new(NewWorkspace), cx)
                                                 }),
                                         ),
                                 )
@@ -159,10 +161,7 @@ pub(super) fn render(app: &IsengardApp, cx: &mut Context<IsengardApp>) -> AnyEle
                                                 .icon(IconName::File)
                                                 .label("Open File…")
                                                 .on_click(|_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(OpenFile),
-                                                        cx,
-                                                    )
+                                                    window.dispatch_action(Box::new(OpenFile), cx)
                                                 }),
                                         )
                                         .child(

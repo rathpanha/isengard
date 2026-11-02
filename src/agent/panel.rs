@@ -9,8 +9,8 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::rc::Rc;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::assets::IconName as LucideIcon;
@@ -37,6 +37,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
 
+#[cfg(test)]
+use crate::acp::schema::ToolCallUpdateFields;
 use crate::acp::schema::{
     AvailableCommand, CompactionStatus, ContentBlock, PermissionOption, PermissionOptionId,
     PermissionOptionKind, PlanEntry, PlanEntryStatus, SessionConfigKind, SessionConfigOption,
@@ -44,27 +46,25 @@ use crate::acp::schema::{
     StateUpdate, StopReason, TextContent, ToolCall, ToolCallId, ToolCallStatus, ToolCallUpdate,
     ToolKind,
 };
-#[cfg(test)]
-use crate::acp::schema::ToolCallUpdateFields;
 use crate::acp::{
     self, AgentConnection, AgentEvent, AgentInfo, AgentLaunch, BuiltinAgent, CLAUDE_AGENT_NAME,
     CURSOR_AGENT_NAME, CURSOR_COMMAND, CreatePlanAsk, CursorCreatePlanOutcome,
     CursorPlanTodoStatus, FileRead, FileWrite, LoginMethod, PermissionAsk, Resolved, SessionOpen,
     SilentConfigValue, builtin_agent,
 };
-use crate::agent::mention::{self, MentionHit, MentionQuery, MAX_MENTION_HITS};
-use crate::agent::slash::{self, SlashQuery, MAX_SLASH_HITS};
+use crate::agent::limits;
+use crate::agent::mention::{self, MAX_MENTION_HITS, MentionHit, MentionQuery};
 use crate::agent::prompt::{
-    self, Attachment, PromptCaps, MAX_ATTACHMENTS, display_user_message, image_from_bytes,
+    self, Attachment, MAX_ATTACHMENTS, PromptCaps, display_user_message, image_from_bytes,
     image_from_path,
 };
-use crate::agent::limits;
-use crate::editor::document;
-use crate::file_tree::{material_icon, tree_icon};
+use crate::agent::slash::{self, MAX_SLASH_HITS, SlashQuery};
 use crate::config::{
     AgentChat, AgentFileChange, AgentFileChangesCard, AgentPrefValue, AgentPrefs, AgentSettings,
     MAX_AGENT_CHATS,
 };
+use crate::editor::document;
+use crate::file_tree::{material_icon, tree_icon};
 use crate::git::{line_change_counts, snapshot_dirty_contents, worktree_deltas_since_turn};
 use crate::terminal::pty::TerminalCommand;
 use crate::theme;
@@ -77,7 +77,10 @@ pub enum AgentPanelEvent {
     ReadFile(FileRead),
     WriteFile(FileWrite),
     /// Run the agent's login command in a terminal tab.
-    Login { title: String, command: TerminalCommand },
+    Login {
+        title: String,
+        command: TerminalCommand,
+    },
     /// Open the OS file picker and attach the chosen paths.
     AttachFromDisk,
     /// Attach a path as a chip (paperclip, paste, or drag-drop from tree /
@@ -99,9 +102,14 @@ pub enum AgentPanelEvent {
     /// the background).
     PermissionRequested,
     /// Silent commit-message turn finished with a draft for Source Control.
-    CommitSuggestReady { root: PathBuf, message: String },
+    CommitSuggestReady {
+        root: PathBuf,
+        message: String,
+    },
     /// Silent commit-message turn failed / was cancelled.
-    CommitSuggestFailed { root: PathBuf },
+    CommitSuggestFailed {
+        root: PathBuf,
+    },
     /// [`AgentPanel::can_silent_prompt`] may have flipped (Source Control Claude Suggest).
     PromptabilityChanged,
     /// User picked Claude or Cursor — remount the panel under that slot.
@@ -236,7 +244,10 @@ enum Entry {
         files: Vec<FileChangeRow>,
         expanded: bool,
     },
-    Notice { text: SharedString, error: bool },
+    Notice {
+        text: SharedString,
+        error: bool,
+    },
 }
 
 struct CursorPlanEntry {
@@ -267,10 +278,7 @@ struct SubagentEntry {
     activity: Option<SharedString>,
 }
 
-fn user_refs_from(
-    attachments: &[Attachment],
-    thumbs: &[Option<ImageThumb>],
-) -> Vec<UserRef> {
+fn user_refs_from(attachments: &[Attachment], thumbs: &[Option<ImageThumb>]) -> Vec<UserRef> {
     attachments
         .iter()
         .enumerate()
@@ -411,7 +419,10 @@ fn render_mention_token(ctx: &InlineTokenContext, roots: &[PathBuf], cx: &App) -
     let h = ctx.line_height();
     if document::is_image(&path) {
         return div()
-            .id(SharedString::from(format!("agent-inline-img-{}", path.display())))
+            .id(SharedString::from(format!(
+                "agent-inline-img-{}",
+                path.display()
+            )))
             .h(h)
             .w(h)
             .min_w(h)
@@ -437,7 +448,10 @@ fn render_mention_token(ctx: &InlineTokenContext, roots: &[PathBuf], cx: &App) -
     let is_root = roots.iter().any(|r| r == &path);
     // Material icons (same as the tree) — Kit InputToken only takes Lucide Icon.
     div()
-        .id(SharedString::from(format!("agent-inline-tok-{}", path.display())))
+        .id(SharedString::from(format!(
+            "agent-inline-tok-{}",
+            path.display()
+        )))
         .flex()
         .items_center()
         .gap_1()
@@ -476,15 +490,11 @@ fn thumb_for_attachment(attachment: &Attachment) -> Option<ImageThumb> {
         Attachment::Image {
             path: Some(path), ..
         } => Some(ImageThumb::Path(path.clone())),
-        Attachment::Image {
-            mime, data_b64, ..
-        } => {
+        Attachment::Image { mime, data_b64, .. } => {
             let format = ImageFormat::from_mime_type(mime)?;
-            let bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::STANDARD,
-                data_b64,
-            )
-            .ok()?;
+            let bytes =
+                base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data_b64)
+                    .ok()?;
             Some(ImageThumb::Memory(std::sync::Arc::new(Image::from_bytes(
                 format, bytes,
             ))))
@@ -518,12 +528,7 @@ fn render_image_thumb(
         .when_some(radius, |this, r| this.rounded(r))
         .border_1()
         .border_color(border)
-        .child(
-            img_el
-                .id(id)
-                .object_fit(ObjectFit::Cover)
-                .size_full(),
-        )
+        .child(img_el.id(id).object_fit(ObjectFit::Cover).size_full())
         .into_any_element()
 }
 
@@ -733,14 +738,19 @@ impl Render for RenameChatView {
                             .label("Cancel")
                             .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
-                                _ = panel_cancel.update(cx, |this, cx| this.close_rename_dialog(cx));
+                                _ = panel_cancel
+                                    .update(cx, |this, cx| this.close_rename_dialog(cx));
                             }),
                     )
                     .child(
                         Button::new("dialog-generate")
                             .when(can_generate, |b| b.cursor_pointer())
                             .outline()
-                            .label(if generating { "Generating…" } else { "Generate" })
+                            .label(if generating {
+                                "Generating…"
+                            } else {
+                                "Generate"
+                            })
                             .tooltip("Ask the agent for a title from this chat")
                             // Kit paints the spinner only on buttons that have an icon.
                             .when(generating, |b| b.icon(LucideIcon::Loader).loading(true))
@@ -863,8 +873,8 @@ fn estimate_context_window_size(options: &Option<Vec<SessionConfigOption>>) -> u
             return n;
         }
     }
-    if let Some(id) = find_select(options, Some(SessionConfigOptionCategory::Model), "model")
-        .map(|m| m.current)
+    if let Some(id) =
+        find_select(options, Some(SessionConfigOptionCategory::Model), "model").map(|m| m.current)
         && let Some(n) = context_from_model_id(&id).and_then(|l| tokens_from_context_label(&l))
     {
         return n;
@@ -977,21 +987,24 @@ impl AgentPanel {
                 .auto_grow(2, 10)
                 .submit_on_enter(true)
         });
-        let enter = cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
-            match event {
-                InputEvent::PressEnter { shift: false, .. } => {
-                    if this.mention.is_some() {
-                        this.confirm_mention(window, cx);
-                    } else if this.slash.is_some() {
-                        this.confirm_slash(window, cx);
-                    } else {
-                        this.send(window, cx);
+        let enter =
+            cx.subscribe_in(
+                &input,
+                window,
+                |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::PressEnter { shift: false, .. } => {
+                        if this.mention.is_some() {
+                            this.confirm_mention(window, cx);
+                        } else if this.slash.is_some() {
+                            this.confirm_slash(window, cx);
+                        } else {
+                            this.send(window, cx);
+                        }
                     }
-                }
-                InputEvent::Change => this.refresh_composer_menus(cx),
-                _ => {}
-            }
-        });
+                    InputEvent::Change => this.refresh_composer_menus(cx),
+                    _ => {}
+                },
+            );
         // ponytail: Textarea eats ↑↓/Esc; intercept while @ or / menu is open.
         // Also ⌘N/Ctrl+N — Kit focus may not put parent `Agent` key context on
         // the stack, so catch New Chat here when the composer is focused.
@@ -1007,11 +1020,7 @@ impl AgentPanel {
                     && !ks.modifiers.alt
                     && !ks.modifiers.shift
                 {
-                    let composer_focused = this
-                        .input
-                        .read(cx)
-                        .focus_handle(cx)
-                        .is_focused(window);
+                    let composer_focused = this.input.read(cx).focus_handle(cx).is_focused(window);
                     if composer_focused {
                         this.new_chat(window, cx);
                         cx.stop_propagation();
@@ -1166,15 +1175,16 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn active_chat_title(&self) -> Option<String> {
         let id = self.active.as_deref()?;
-        self.chats.iter().find(|c| c.id == id).map(|c| c.title.clone())
+        self.chats
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.title.clone())
     }
 
     /// Current ACP session mode id (tests).
     #[cfg(test)]
     pub fn current_mode_id(&self) -> Option<String> {
-        self.modes
-            .as_ref()
-            .map(|m| m.current_mode_id.to_string())
+        self.modes.as_ref().map(|m| m.current_mode_id.to_string())
     }
 
     /// Active chat id (tests).
@@ -1186,7 +1196,10 @@ impl AgentPanel {
     /// Title for a chat id (tests).
     #[cfg(test)]
     pub fn chat_title(&self, id: &str) -> Option<String> {
-        self.chats.iter().find(|c| c.id == id).map(|c| c.title.clone())
+        self.chats
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.title.clone())
     }
 
     /// Start a new chat from tests (same as the header Plus).
@@ -1198,8 +1211,12 @@ impl AgentPanel {
     /// Current model config value id (tests).
     #[cfg(test)]
     pub fn current_model_id(&self) -> Option<String> {
-        find_select(&self.config_options, Some(SessionConfigOptionCategory::Model), "model")
-            .map(|s| s.current)
+        find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        )
+        .map(|s| s.current)
     }
 
     /// Parsed model family label from the Model option (tests), e.g. `Sonnet`.
@@ -1385,9 +1402,10 @@ impl AgentPanel {
             .filter(|c| c.family == split.family && c.version.as_deref() == Some(version))
             .find(|c| c.context == prefer_ctx)
             .or_else(|| {
-                split.choices.iter().find(|c| {
-                    c.family == split.family && c.version.as_deref() == Some(version)
-                })
+                split
+                    .choices
+                    .iter()
+                    .find(|c| c.family == split.family && c.version.as_deref() == Some(version))
             })
             .map(|c| c.id.clone())
         else {
@@ -1456,8 +1474,12 @@ impl AgentPanel {
     /// Current value of the Mode config option (tests).
     #[cfg(test)]
     pub fn mode_config_current_for_test(&self) -> Option<String> {
-        find_select(&self.config_options, Some(SessionConfigOptionCategory::Mode), "mode")
-            .map(|s| s.current)
+        find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Mode),
+            "mode",
+        )
+        .map(|s| s.current)
     }
 
     /// Whether Mode / Model / Fast / OpusPlan controls are locked (tests).
@@ -1535,11 +1557,9 @@ impl AgentPanel {
             .iter()
             .rev()
             .find_map(|e| match e {
-                Entry::User { refs, .. } => Some(
-                    refs.iter()
-                        .map(|r| (r.name.to_string(), r.at))
-                        .collect(),
-                ),
+                Entry::User { refs, .. } => {
+                    Some(refs.iter().map(|r| (r.name.to_string(), r.at)).collect())
+                }
                 _ => None,
             })
             .unwrap_or_default()
@@ -1582,11 +1602,7 @@ impl AgentPanel {
             (
                 input.value().to_string(),
                 input.selected_range().end,
-                input
-                    .tokens()
-                    .iter()
-                    .map(|s| s.range())
-                    .collect::<Vec<_>>(),
+                input.tokens().iter().map(|s| s.range()).collect::<Vec<_>>(),
             )
         });
         let Some(query) = mention::mention_at_cursor(&text, cursor) else {
@@ -1746,8 +1762,8 @@ impl AgentPanel {
         }
         // Backing text is the basename (no leading `@` — that would re-trigger the
         // mention menu). Rendered as an inline chip inside the prompt Textarea.
-        let token = InlineToken::new(hit.path.to_string_lossy().to_string(), name.clone())
-            .with_label(name);
+        let token =
+            InlineToken::new(hit.path.to_string_lossy().to_string(), name.clone()).with_label(name);
         self.mention = None;
         let result = self.input.update(cx, |input, cx| {
             input.replace_range_with_token(at..cursor, token, window, cx)
@@ -1769,7 +1785,9 @@ impl AgentPanel {
         };
         let at = menu.query.at;
         let cursor = menu.cursor;
-        let text = self.input.read_with(cx, |input, _| input.value().to_string());
+        let text = self
+            .input
+            .read_with(cx, |input, _| input.value().to_string());
         let rel = mention::mention_rel_label(&self.roots, &hit.path);
         let insert = format!("@{}/", rel.trim_end_matches('/'));
         let (out, caret) = mention::replace_mention(&text, at, cursor, &insert);
@@ -1805,7 +1823,9 @@ impl AgentPanel {
         } else {
             format!("/{name}")
         };
-        let text = self.input.read_with(cx, |input, _| input.value().to_string());
+        let text = self
+            .input
+            .read_with(cx, |input, _| input.value().to_string());
         let (out, caret) = slash::replace_slash(&text, at, cursor, &insert);
         self.slash = None;
         self.input.update(cx, |input, cx| {
@@ -1894,13 +1914,8 @@ impl AgentPanel {
             .as_deref()
             .and_then(|id| split.choices.iter().find(|c| c.id == id))
             .and_then(|c| c.version.clone());
-        let id = pick_silent_model_id(
-            &split.choices,
-            &family,
-            prefer_version.as_deref(),
-            None,
-        )
-        .or_else(|| pick_silent_model_id(&split.choices, &family, None, None));
+        let id = pick_silent_model_id(&split.choices, &family, prefer_version.as_deref(), None)
+            .or_else(|| pick_silent_model_id(&split.choices, &family, None, None));
         self.set_subagent_model(id, cx);
     }
 
@@ -2052,7 +2067,10 @@ impl AgentPanel {
                     }
                     Some(format!("you: {line}"))
                 }
-                Entry::Agent(state) => Some(format!("agent: {}", state.read(cx).rendered_text().source())),
+                Entry::Agent(state) => Some(format!(
+                    "agent: {}",
+                    state.read(cx).rendered_text().source()
+                )),
                 _ => None,
             })
             .collect()
@@ -2084,23 +2102,26 @@ impl AgentPanel {
     /// Last file-change summary rows: `(basename, added, removed, deleted)`.
     #[cfg(test)]
     pub fn file_change_summaries_for_test(&self) -> Vec<(String, u32, u32, bool)> {
-        self.entries.iter().rev().find_map(|entry| match entry {
-            Entry::FileChanges { files, .. } => Some(
-                files
-                    .iter()
-                    .map(|f| {
-                        let name = f
-                            .path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| f.path.display().to_string());
-                        (name, f.added, f.removed, f.deleted)
-                    })
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .unwrap_or_default()
+        self.entries
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                Entry::FileChanges { files, .. } => Some(
+                    files
+                        .iter()
+                        .map(|f| {
+                            let name = f
+                                .path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| f.path.display().to_string());
+                            (name, f.added, f.removed, f.deleted)
+                        })
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     /// How many **N Files** cards are in the transcript (tests).
@@ -2346,19 +2367,13 @@ impl AgentPanel {
     #[cfg(test)]
     pub fn has_pending_permission_for_test(&self) -> bool {
         let id = ToolCallId::new("t-perm");
-        self.tool_index(&id).is_some_and(|ix| {
-            matches!(&self.entries[ix], Entry::Tool(t) if t.permission.is_some())
-        })
+        self.tool_index(&id)
+            .is_some_and(|ix| matches!(&self.entries[ix], Entry::Tool(t) if t.permission.is_some()))
     }
 
     /// Delete a chat from tests (same path as the confirm dialog).
     #[cfg(test)]
-    pub fn delete_chat_for_test(
-        &mut self,
-        id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn delete_chat_for_test(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.delete_chat(id.to_owned(), window, cx);
     }
 
@@ -2625,11 +2640,7 @@ impl AgentPanel {
     }
 
     fn cache_active_transcript(&mut self, cx: &App) {
-        let Some(id) = self
-            .transcript_of
-            .clone()
-            .or_else(|| self.active.clone())
-        else {
+        let Some(id) = self.transcript_of.clone().or_else(|| self.active.clone()) else {
             return;
         };
         let text = self.transcript_for_title(cx);
@@ -2687,7 +2698,11 @@ impl AgentPanel {
                 notify,
                 dialog: true,
             } => {
-                let title = if ok { scrub_chat_title(&text) } else { String::new() };
+                let title = if ok {
+                    scrub_chat_title(&text)
+                } else {
+                    String::new()
+                };
                 // Closing the dialog clears `rename_dialog`: then say nothing.
                 if let Some(dialog) = self.rename_dialog.as_mut().filter(|d| d.chat_id == chat_id) {
                     dialog.generating = false;
@@ -3050,7 +3065,9 @@ impl AgentPanel {
             center_dialog(
                 dialog
                     .title("Delete chat?")
-                    .child(format!("“{title}” will be deleted from the agent's history."))
+                    .child(format!(
+                        "“{title}” will be deleted from the agent's history."
+                    ))
                     .footer(
                         DialogFooter::new()
                             .gap_2()
@@ -3403,7 +3420,9 @@ impl AgentPanel {
             return;
         };
         if let Some(options) = &mut self.config_options
-            && let Some(opt) = options.iter_mut().find(|o| o.id.0.as_ref() == model.config_id)
+            && let Some(opt) = options
+                .iter_mut()
+                .find(|o| o.id.0.as_ref() == model.config_id)
             && let SessionConfigKind::Select(select) = &mut opt.kind
         {
             select.current_value = id.clone().into();
@@ -3626,9 +3645,7 @@ impl AgentPanel {
                 continue;
             }
             inline.push(prompt::Piece::Text(raw[cursor..range.start].to_owned()));
-            if let Some(a) =
-                prompt::attachment_from_path(Path::new(span.token().id().as_ref()))
-            {
+            if let Some(a) = prompt::attachment_from_path(Path::new(span.token().id().as_ref())) {
                 inline.push(prompt::Piece::Attach(a));
             }
             cursor = range.end;
@@ -3674,7 +3691,8 @@ impl AgentPanel {
         };
         let mut refs = user_refs_from_mention_tokens(content.text(), &tokens);
         refs.extend(user_refs_from(&attachments, &thumbs));
-        self.input.update(cx, |input, cx| input.set_value("", window, cx));
+        self.input
+            .update(cx, |input, cx| input.set_value("", window, cx));
 
         // Busy user turn: queue without a transcript bubble yet so the current
         // reply stays contiguous; drain pushes User + prompts. Silent jobs use
@@ -3920,12 +3938,13 @@ impl AgentPanel {
 
     /// Prefer Mode config / legacy modes named `agent`.
     fn switch_to_agent_mode(&mut self, cx: &mut Context<Self>) {
-        if let Some(sel) =
-            find_select(&self.config_options, Some(SessionConfigOptionCategory::Mode), "mode")
-            && let Some((id, _)) = sel.choices.iter().find(|(id, name)| {
-                id.eq_ignore_ascii_case("agent") || name.eq_ignore_ascii_case("Agent")
-            })
-        {
+        if let Some(sel) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Mode),
+            "mode",
+        ) && let Some((id, _)) = sel.choices.iter().find(|(id, name)| {
+            id.eq_ignore_ascii_case("agent") || name.eq_ignore_ascii_case("Agent")
+        }) {
             // Keep legacy mode state in sync (same as the Mode picker).
             if let Some(modes) = &mut self.modes {
                 modes.current_mode_id = id.clone().into();
@@ -4138,7 +4157,11 @@ impl AgentPanel {
     fn home_turn_finished(&mut self, ok: bool, cx: &mut Context<Self>) {
         self.turn_running = false;
         self.flush_turn_file_changes(cx);
-        if self.reconnect_after_turn && !self.suspend_after_turn && self.silent.is_none() && self.commit_jobs.is_empty() {
+        if self.reconnect_after_turn
+            && !self.suspend_after_turn
+            && self.silent.is_none()
+            && self.commit_jobs.is_empty()
+        {
             // Reconnect drops the connection (and the outbound queue).
             self.reconnect_after_turn = false;
             self.start(cx);
@@ -4372,12 +4395,7 @@ impl AgentPanel {
             self.pending_file_change_restore = false;
             return;
         }
-        let max_turn = chat
-            .file_changes
-            .iter()
-            .map(|c| c.turn)
-            .max()
-            .unwrap_or(0);
+        let max_turn = chat.file_changes.iter().map(|c| c.turn).max().unwrap_or(0);
         let mut by_turn: HashMap<u32, Vec<FileChangeRow>> = HashMap::new();
         for card in &chat.file_changes {
             by_turn.insert(
@@ -4450,12 +4468,16 @@ impl AgentPanel {
 
     /// Latest non-empty **N Files** card (sticky strip above the composer).
     fn latest_file_changes(&self) -> Option<(usize, &[FileChangeRow], bool)> {
-        self.entries.iter().enumerate().rev().find_map(|(ix, e)| match e {
-            Entry::FileChanges { files, expanded } if !files.is_empty() => {
-                Some((ix, files.as_slice(), *expanded))
-            }
-            _ => None,
-        })
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(ix, e)| match e {
+                Entry::FileChanges { files, expanded } if !files.is_empty() => {
+                    Some((ix, files.as_slice(), *expanded))
+                }
+                _ => None,
+            })
     }
 
     /// Source Control discarded these paths — drop them from **N Files** cards.
@@ -4681,7 +4703,11 @@ impl AgentPanel {
             SessionUpdate::ToolCall(call) => self.upsert_tool_call(call, cx),
             SessionUpdate::ToolCallUpdate(update) => self.update_tool_call(update, cx),
             SessionUpdate::Plan(plan) => {
-                if let Some(ix) = self.entries.iter().rposition(|e| matches!(e, Entry::Plan(_))) {
+                if let Some(ix) = self
+                    .entries
+                    .iter()
+                    .rposition(|e| matches!(e, Entry::Plan(_)))
+                {
                     self.entries[ix] = Entry::Plan(plan.entries);
                     self.touched(ix, cx);
                 } else {
@@ -4918,7 +4944,10 @@ impl AgentPanel {
         if let Some(ix) = self.tool_index(&id)
             && let Entry::Tool(tool) = &mut self.entries[ix]
         {
-            if let Some(old) = tool.permission.replace(PendingPermission { options, reply }) {
+            if let Some(old) = tool
+                .permission
+                .replace(PendingPermission { options, reply })
+            {
                 let _ = old.reply.send(None);
             }
             self.touched(ix, cx);
@@ -5007,10 +5036,9 @@ async fn next_event(events: &flume::Receiver<AgentEvent>, cx: &mut AsyncApp) -> 
 fn default_name(settings: &AgentSettings) -> SharedString {
     match settings.command.as_deref().map(str::trim) {
         Some(CURSOR_COMMAND) => CURSOR_AGENT_NAME.into(),
-        Some(command) if !command.is_empty() => crate::editor::document::file_name(
-            std::path::Path::new(command),
-        )
-        .into(),
+        Some(command) if !command.is_empty() => {
+            crate::editor::document::file_name(std::path::Path::new(command)).into()
+        }
         _ => CLAUDE_AGENT_NAME.into(),
     }
 }
@@ -5423,12 +5451,7 @@ fn display_context_label(all: &[ModelChoice], current: &ModelChoice) -> Option<S
     if !has_explicit {
         return None;
     }
-    Some(
-        current
-            .context
-            .clone()
-            .unwrap_or_else(|| "200K".into()),
-    )
+    Some(current.context.clone().unwrap_or_else(|| "200K".into()))
 }
 
 /// `(model_id, label)` context choices for the current family+version.
@@ -5597,9 +5620,7 @@ fn current_mode_is_plan(
         let name = name.to_ascii_lowercase();
         id.contains("plan") || name.contains("plan")
     };
-    if let Some(opt) =
-        find_select(options, Some(SessionConfigOptionCategory::Mode), "mode")
-    {
+    if let Some(opt) = find_select(options, Some(SessionConfigOptionCategory::Mode), "mode") {
         let name = opt
             .choices
             .iter()
@@ -5650,13 +5671,7 @@ fn pick_opusplan_id(choices: &[(String, String)], prefer_1m: bool) -> Option<Str
 
 /// One-line preview for a queued prompt in the composer strip.
 fn queued_preview(item: &QueuedPrompt) -> String {
-    let mut line = item
-        .text
-        .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_owned();
+    let mut line = item.text.lines().next().unwrap_or("").trim().to_owned();
     if line.is_empty() {
         line = item.title.clone();
     }
@@ -5734,7 +5749,9 @@ fn mode_icon(id: &str, name: &str) -> LucideIcon {
         LucideIcon::Sparkles
     } else if blob.contains("debug") {
         LucideIcon::Bug
-    } else if blob.contains("multitask") || blob.contains("multi-task") || blob.contains("multi task")
+    } else if blob.contains("multitask")
+        || blob.contains("multi-task")
+        || blob.contains("multi task")
     {
         LucideIcon::Layers
     } else if blob.contains("accept")
@@ -5844,12 +5861,7 @@ fn status_mark(color: Hsla) -> Div {
         .bg(color)
 }
 
-fn render_entry(
-    panel: &WeakEntity<AgentPanel>,
-    entry: &Entry,
-    ix: usize,
-    cx: &App,
-) -> AnyElement {
+fn render_entry(panel: &WeakEntity<AgentPanel>, entry: &Entry, ix: usize, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let body: AnyElement = match entry {
         Entry::User { text, refs } => {
@@ -5905,11 +5917,13 @@ fn render_entry(
                         col.child(text_view(format!("agent-user-{ix}"), text.clone()))
                     })
                     .when(!refs.is_empty(), |col| {
-                        col.child(h_flex().gap_1().flex_wrap().children(
-                            refs.iter()
-                                .enumerate()
-                                .map(|(rix, r)| render_user_ref(ix, rix, r, cx)),
-                        ))
+                        col.child(
+                            h_flex().gap_1().flex_wrap().children(
+                                refs.iter()
+                                    .enumerate()
+                                    .map(|(rix, r)| render_user_ref(ix, rix, r, cx)),
+                            ),
+                        )
                     })
                     .into_any_element()
             };
@@ -5928,9 +5942,7 @@ fn render_entry(
             .w_full()
             .min_w_0()
             .text_sm()
-            .child(
-                TextView::new(state).style(crate::theme::text_view_style(cx)),
-            )
+            .child(TextView::new(state).style(crate::theme::text_view_style(cx)))
             .into_any_element(),
         Entry::Thought(state) => render_thought(state, cx),
         Entry::Tool(tool) => render_tool(panel, tool, cx),
@@ -5959,7 +5971,9 @@ fn render_entry(
                         div()
                             .min_w_0()
                             .flex_1()
-                            .when(done, |d| d.text_color(theme.muted_foreground).line_through())
+                            .when(done, |d| {
+                                d.text_color(theme.muted_foreground).line_through()
+                            })
                             .child(item.content.clone()),
                     )
             }))
@@ -6046,13 +6060,12 @@ fn render_file_changes(
                         let _ = panel.update(cx, |p, cx| p.toggle_file_changes(ix, cx));
                     }
                 })
-                .child(Icon::new(chevron).small().text_color(theme.muted_foreground))
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(label),
-                ),
+                    Icon::new(chevron)
+                        .small()
+                        .text_color(theme.muted_foreground),
+                )
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label)),
         )
         .when(expanded, |col| {
             col.children(files.iter().enumerate().map(|(fix, file)| {
@@ -6079,38 +6092,23 @@ fn render_file_changes(
                         }
                     })
                     .child(material_path_icon(&path, false, false, cx))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .truncate()
-                            .text_sm()
-                            .child(name),
-                    )
+                    .child(div().min_w_0().flex_1().truncate().text_sm().child(name))
                     .child(
                         h_flex()
                             .gap_1()
                             .text_xs()
                             .when(added > 0, |row| {
                                 row.child(
-                                    div()
-                                        .text_color(theme.success)
-                                        .child(format!("+{added}")),
+                                    div().text_color(theme.success).child(format!("+{added}")),
                                 )
                             })
                             .when(removed > 0, |row| {
                                 row.child(
-                                    div()
-                                        .text_color(theme.danger)
-                                        .child(format!("-{removed}")),
+                                    div().text_color(theme.danger).child(format!("-{removed}")),
                                 )
                             })
                             .when(added == 0 && removed == 0 && file.deleted, |row| {
-                                row.child(
-                                    div()
-                                        .text_color(theme.danger)
-                                        .child("deleted"),
-                                )
+                                row.child(div().text_color(theme.danger).child("deleted"))
                             }),
                     )
             }))
@@ -6216,8 +6214,14 @@ fn tool_run(entries: &[Entry], ix: usize) -> Option<(usize, usize)> {
     if !entries.get(ix).is_some_and(grouped) {
         return None;
     }
-    let lo = entries[..ix].iter().rposition(|e| !grouped(e)).map_or(0, |p| p + 1);
-    let hi = entries[ix..].iter().position(|e| !grouped(e)).map_or(entries.len(), |p| ix + p);
+    let lo = entries[..ix]
+        .iter()
+        .rposition(|e| !grouped(e))
+        .map_or(0, |p| p + 1);
+    let hi = entries[ix..]
+        .iter()
+        .position(|e| !grouped(e))
+        .map_or(entries.len(), |p| ix + p);
     let is_tool = |e: &Entry| matches!(e, Entry::Tool(_));
     let start = lo + entries[lo..hi].iter().position(is_tool)?;
     let end = lo + entries[lo..hi].iter().rposition(is_tool)?;
@@ -6245,10 +6249,12 @@ fn render_tool_group(
         })
         .collect();
     let open = user_open || tools.iter().any(|t| t.permission.is_some());
-    let running = tools
-        .iter()
-        .rev()
-        .find(|t| matches!(t.status, ToolCallStatus::Pending | ToolCallStatus::InProgress));
+    let running = tools.iter().rev().find(|t| {
+        matches!(
+            t.status,
+            ToolCallStatus::Pending | ToolCallStatus::InProgress
+        )
+    });
     let label: SharedString = match running {
         Some(t) => t.title.clone(),
         None => format!("{} steps", tools.len()).into(),
@@ -6292,18 +6298,26 @@ fn render_tool_group(
                         let _ = panel.update(cx, |p, cx| p.toggle_tool_group(start, cx));
                     }
                 })
-                .child(Icon::new(chevron).small().text_color(theme.muted_foreground))
+                .child(
+                    Icon::new(chevron)
+                        .small()
+                        .text_color(theme.muted_foreground),
+                )
                 .child(div().flex_1().min_w_0().text_sm().truncate().child(label))
                 .child(status),
         )
         .when(open, |col| {
-            col.child(v_flex().w_full().gap_1().pl_3().children(
-                entries[start..=end].iter().map(|e| match e {
-                    Entry::Tool(t) => render_tool(panel, t, cx),
-                    Entry::Thought(state) => render_thought(state, cx),
-                    _ => div().into_any_element(),
-                }),
-            ))
+            col.child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .pl_3()
+                    .children(entries[start..=end].iter().map(|e| match e {
+                        Entry::Tool(t) => render_tool(panel, t, cx),
+                        Entry::Thought(state) => render_thought(state, cx),
+                        _ => div().into_any_element(),
+                    })),
+            )
         })
         .into_any_element()
 }
@@ -6431,33 +6445,30 @@ fn render_cursor_plan(
                 .child(TextView::new(&plan.plan).style(crate::theme::text_view_style(cx))),
         )
         .when(!plan.todos.is_empty(), |col| {
-            col.child(
-                v_flex()
-                    .w_full()
-                    .gap_1()
-                    .children(plan.todos.iter().map(|(content, status)| {
-                        let (color, done) = match status {
-                            CursorPlanTodoStatus::Completed => (theme.success, true),
-                            CursorPlanTodoStatus::InProgress => (theme.warning, false),
-                            CursorPlanTodoStatus::Cancelled => (theme.muted_foreground, true),
-                            CursorPlanTodoStatus::Pending => (theme.muted_foreground, false),
-                        };
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(status_mark(color))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .text_sm()
-                                    .when(done, |d| {
-                                        d.text_color(theme.muted_foreground).line_through()
-                                    })
-                                    .child(content.clone()),
-                            )
-                    })),
-            )
+            col.child(v_flex().w_full().gap_1().children(plan.todos.iter().map(
+                |(content, status)| {
+                    let (color, done) = match status {
+                        CursorPlanTodoStatus::Completed => (theme.success, true),
+                        CursorPlanTodoStatus::InProgress => (theme.warning, false),
+                        CursorPlanTodoStatus::Cancelled => (theme.muted_foreground, true),
+                        CursorPlanTodoStatus::Pending => (theme.muted_foreground, false),
+                    };
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(status_mark(color))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .text_sm()
+                                .when(done, |d| {
+                                    d.text_color(theme.muted_foreground).line_through()
+                                })
+                                .child(content.clone()),
+                        )
+                },
+            )))
         })
         .when(pending, |col| {
             let build_id = tool_call_id.clone();
@@ -6557,9 +6568,7 @@ impl AgentPanel {
                 match self.entries.last() {
                     Some(Entry::Thought(_)) => Some("Thinking…".into()),
                     Some(Entry::Agent(_)) => Some("Writing…".into()),
-                    Some(Entry::Plan(_)) | Some(Entry::CursorPlan(_)) => {
-                        Some("Planning…".into())
-                    }
+                    Some(Entry::Plan(_)) | Some(Entry::CursorPlan(_)) => Some("Planning…".into()),
                     Some(Entry::Subagent(sub)) => Some(format!("{}…", sub.title).into()),
                     _ => Some("Working…".into()),
                 }
@@ -6611,14 +6620,7 @@ impl AgentPanel {
             .border_color(border)
             .child(status_mark(color))
             .children(switch)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_sm()
-                    .child(title),
-            )
+            .child(div().flex_1().min_w_0().truncate().text_sm().child(title))
             .when_some(self.usage, |row, u| {
                 let pct = match (u.used, u.size > 0) {
                     (Some(used), true) => (used.saturating_mul(100)) / u.size,
@@ -6905,12 +6907,7 @@ impl AgentPanel {
                         .items_center()
                         .justify_between()
                         .gap_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.foreground)
-                                .child(label),
-                        )
+                        .child(div().text_sm().text_color(theme.foreground).child(label))
                         .child(
                             div()
                                 .flex_shrink_0()
@@ -7080,10 +7077,7 @@ impl AgentPanel {
                 families.push(c.family.clone());
             }
         }
-        let choices: Vec<(String, String)> = families
-            .into_iter()
-            .map(|f| (f.clone(), f))
-            .collect();
+        let choices: Vec<(String, String)> = families.into_iter().map(|f| (f.clone(), f)).collect();
         let config_id = split.config_id.clone();
         let all = split.choices.clone();
         let prefer_ctx = split.context_label.clone();
@@ -7100,9 +7094,7 @@ impl AgentPanel {
                 let id = all
                     .iter()
                     .filter(|c| c.family == family)
-                    .find(|c| {
-                        display_context_label(&all, c).as_ref() == prefer_ctx.as_ref()
-                    })
+                    .find(|c| display_context_label(&all, c).as_ref() == prefer_ctx.as_ref())
                     .or_else(|| all.iter().find(|c| c.family == family))
                     .map(|c| c.id.clone());
                 let Some(id) = id else {
@@ -7310,7 +7302,11 @@ impl AgentPanel {
             .id("agent-opusplan-wrap")
             .gap_1()
             .items_center()
-            .child(Icon::new(LucideIcon::ListTodo).small().text_color(icon_color))
+            .child(
+                Icon::new(LucideIcon::ListTodo)
+                    .small()
+                    .text_color(icon_color),
+            )
             .child(
                 Switch::new("agent-opusplan")
                     .small()
@@ -7328,9 +7324,11 @@ impl AgentPanel {
     }
 
     fn render_flat_model_picker(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(opt) =
-            find_select(&self.config_options, Some(SessionConfigOptionCategory::Model), "model")
-        else {
+        let Some(opt) = find_select(
+            &self.config_options,
+            Some(SessionConfigOptionCategory::Model),
+            "model",
+        ) else {
             return div().into_any_element();
         };
         let choices = model_picker_choices(&opt.choices);
@@ -7445,9 +7443,7 @@ impl AgentPanel {
             let mut choices = Vec::with_capacity(split.choices.len() + 1);
             choices.push((String::new(), "Default".into()));
             choices.extend(Self::settings_model_families(split));
-            let current = sub_choice
-                .map(|c| c.family.clone())
-                .unwrap_or_default();
+            let current = sub_choice.map(|c| c.family.clone()).unwrap_or_default();
             let label = if current.is_empty() {
                 "Default"
             } else {
@@ -7596,9 +7592,7 @@ impl AgentPanel {
             let mut choices = Vec::with_capacity(split.choices.len() + 1);
             choices.push((String::new(), "Chat model".into()));
             choices.extend(Self::settings_model_families(split));
-            let current = silent_choice
-                .map(|c| c.family.clone())
-                .unwrap_or_default();
+            let current = silent_choice.map(|c| c.family.clone()).unwrap_or_default();
             let label = if current.is_empty() {
                 "Chat model"
             } else {
@@ -7736,7 +7730,11 @@ impl AgentPanel {
                     "agent-settings-utility-context",
                     LucideIcon::Maximize2,
                     "Context",
-                    if current.is_empty() { "—" } else { current.as_str() },
+                    if current.is_empty() {
+                        "—"
+                    } else {
+                        current.as_str()
+                    },
                     &current,
                     &contexts,
                     locked,
@@ -7813,8 +7811,7 @@ impl AgentPanel {
                 let opt = select_from_option(o)?;
                 let icon = config_option_icon(o);
                 let config_id = opt.config_id.clone();
-                let popover_id: SharedString =
-                    format!("agent-config-{}", opt.config_id).into();
+                let popover_id: SharedString = format!("agent-config-{}", opt.config_id).into();
                 let label = opt
                     .choices
                     .iter()
@@ -7963,7 +7960,8 @@ impl AgentPanel {
                                     p.update(cx, |p, cx| p.dismiss(window, cx));
                                 }
                                 let id = open_id.clone();
-                                _ = open_panel.update(cx, |this, cx| this.switch_chat(id, window, cx));
+                                _ = open_panel
+                                    .update(cx, |this, cx| this.switch_chat(id, window, cx));
                             })
                             .child(
                                 h_flex()
@@ -7974,7 +7972,12 @@ impl AgentPanel {
                                         v_flex()
                                             .flex_1()
                                             .min_w_0()
-                                            .child(div().text_sm().truncate().child(chat.title.clone()))
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .truncate()
+                                                    .child(chat.title.clone()),
+                                            )
                                             .child(
                                                 h_flex()
                                                     .gap_2()
@@ -7996,16 +7999,18 @@ impl AgentPanel {
                                         .icon(LucideIcon::Pencil)
                                         .tooltip("Rename Chat")
                                         .cursor_pointer()
-                                        .on_click(move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(p) = rename_popover.upgrade() {
-                                                p.update(cx, |p, cx| p.dismiss(window, cx));
-                                            }
-                                            let id = rename_id.clone();
-                                            _ = rename_panel.update(cx, |this, cx| {
-                                                this.confirm_rename_chat(id, window, cx);
-                                            });
-                                        }),
+                                        .on_click(
+                                            move |_, window, cx| {
+                                                cx.stop_propagation();
+                                                if let Some(p) = rename_popover.upgrade() {
+                                                    p.update(cx, |p, cx| p.dismiss(window, cx));
+                                                }
+                                                let id = rename_id.clone();
+                                                _ = rename_panel.update(cx, |this, cx| {
+                                                    this.confirm_rename_chat(id, window, cx);
+                                                });
+                                            },
+                                        ),
                                     )
                                     .child(
                                         Button::new(SharedString::from(format!(
@@ -8018,16 +8023,18 @@ impl AgentPanel {
                                         .tooltip("Delete Chat")
                                         .disabled(busy && selected)
                                         .when(!(busy && selected), |b| b.cursor_pointer())
-                                        .on_click(move |_, window, cx| {
-                                            cx.stop_propagation();
-                                            if let Some(p) = delete_popover.upgrade() {
-                                                p.update(cx, |p, cx| p.dismiss(window, cx));
-                                            }
-                                            let id = delete_id.clone();
-                                            _ = delete_panel.update(cx, |this, cx| {
-                                                this.confirm_delete_chat(id, window, cx);
-                                            });
-                                        }),
+                                        .on_click(
+                                            move |_, window, cx| {
+                                                cx.stop_propagation();
+                                                if let Some(p) = delete_popover.upgrade() {
+                                                    p.update(cx, |p, cx| p.dismiss(window, cx));
+                                                }
+                                                let id = delete_id.clone();
+                                                _ = delete_panel.update(cx, |this, cx| {
+                                                    this.confirm_delete_chat(id, window, cx);
+                                                });
+                                            },
+                                        ),
                                     ),
                             )
                     }))
@@ -8085,7 +8092,13 @@ impl AgentPanel {
                      Chats stay separate."
                         .into(),
                 ))
-                .child(v_flex().gap_2().w_full().max_w(px(280.)).children([claude, cursor]))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .w_full()
+                        .max_w(px(280.))
+                        .children([claude, cursor]),
+                )
                 .into_any_element();
         }
         match &self.status {
@@ -8144,24 +8157,22 @@ impl AgentPanel {
                     "Login runs in the terminal. When it finishes we reconnect and authenticate."
                         .into()
                 }))
-                .child(
-                    h_flex().flex_wrap().justify_center().gap_2().children(
-                        methods.iter().enumerate().map(|(i, method)| {
-                            let method = method.clone();
-                            let button = Button::new(SharedString::from(format!("agent-login-{i}")))
-                                .cursor_pointer()
-                                .icon(LucideIcon::LogIn)
-                                .label(method.name.clone())
-                                .when_some(method.description.clone(), |b, d| b.tooltip(d));
-                            if i == 0 {
-                                button.primary()
-                            } else {
-                                button.outline()
-                            }
-                            .on_click(cx.listener(move |this, _, _, cx| this.login(&method, cx)))
-                        }),
-                    ),
-                )
+                .child(h_flex().flex_wrap().justify_center().gap_2().children(
+                    methods.iter().enumerate().map(|(i, method)| {
+                        let method = method.clone();
+                        let button = Button::new(SharedString::from(format!("agent-login-{i}")))
+                            .cursor_pointer()
+                            .icon(LucideIcon::LogIn)
+                            .label(method.name.clone())
+                            .when_some(method.description.clone(), |b, d| b.tooltip(d));
+                        if i == 0 {
+                            button.primary()
+                        } else {
+                            button.outline()
+                        }
+                        .on_click(cx.listener(move |this, _, _, cx| this.login(&method, cx)))
+                    }),
+                ))
                 .child(
                     Button::new("agent-retry")
                         .outline()
@@ -8210,28 +8221,32 @@ impl AgentPanel {
                 .into_any_element()
         } else {
             let panel = cx.entity().downgrade();
-            MessageScroller::new("agent-transcript", self.scroller.clone(), move |ix, _, cx| {
-                let Some(this) = panel.upgrade() else {
-                    return div().into_any_element();
-                };
-                let this = this.read(cx);
-                match (this.entries.get(ix), tool_run(&this.entries, ix)) {
-                    // Drawn inside the run's first row.
-                    (Some(_), Some((start, _))) if start != ix => div().into_any_element(),
-                    (Some(Entry::Tool(first)), Some((_, end))) => {
-                        let open = this.tool_groups_open.contains(&first.id.to_string());
-                        div()
-                            .id(("agent-entry", ix))
-                            .w_full()
-                            .px_3()
-                            .py_0p5()
-                            .child(render_tool_group(&panel, &this.entries, ix, end, open, cx))
-                            .into_any_element()
+            MessageScroller::new(
+                "agent-transcript",
+                self.scroller.clone(),
+                move |ix, _, cx| {
+                    let Some(this) = panel.upgrade() else {
+                        return div().into_any_element();
+                    };
+                    let this = this.read(cx);
+                    match (this.entries.get(ix), tool_run(&this.entries, ix)) {
+                        // Drawn inside the run's first row.
+                        (Some(_), Some((start, _))) if start != ix => div().into_any_element(),
+                        (Some(Entry::Tool(first)), Some((_, end))) => {
+                            let open = this.tool_groups_open.contains(&first.id.to_string());
+                            div()
+                                .id(("agent-entry", ix))
+                                .w_full()
+                                .px_3()
+                                .py_0p5()
+                                .child(render_tool_group(&panel, &this.entries, ix, end, open, cx))
+                                .into_any_element()
+                        }
+                        (Some(entry), _) => render_entry(&panel, entry, ix, cx),
+                        (None, _) => div().into_any_element(),
                     }
-                    (Some(entry), _) => render_entry(&panel, entry, ix, cx),
-                    (None, _) => div().into_any_element(),
-                }
-            })
+                },
+            )
             // ~half the pane below the latest row so long chats can sit mid-
             // viewport (Cursor-style), not glued to the composer.
             .with_bottom_space(relative(0.5))
@@ -8280,9 +8295,7 @@ impl AgentPanel {
         };
         let draft = {
             let input = self.input.read(cx);
-            !draft_plain.is_empty()
-                || !input.tokens().is_empty()
-                || !self.attachments.is_empty()
+            !draft_plain.is_empty() || !input.tokens().is_empty() || !self.attachments.is_empty()
         };
         // Send stays available while a user turn runs — it queues. Stop is
         // separate. Suggest/title do not switch Send→Queue.
@@ -8324,10 +8337,9 @@ impl AgentPanel {
                 .tooltip("Improve prompt")
                 .disabled(!can_improve)
                 .when(can_improve, |b| {
-                    b.cursor_pointer()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let _ = this.request_improve_prompt(cx);
-                        }))
+                    b.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                        let _ = this.request_improve_prompt(cx);
+                    }))
                 })
                 .into_any_element()
         };
@@ -8352,10 +8364,7 @@ impl AgentPanel {
             if self.outbound.is_empty() {
                 "@ · / · Enter to queue".to_owned()
             } else {
-                format!(
-                    "{} queued · Enter to queue",
-                    self.outbound.len()
-                )
+                format!("{} queued · Enter to queue", self.outbound.len())
             }
         } else {
             "@ files · / commands · Enter to send".to_owned()
@@ -8364,7 +8373,10 @@ impl AgentPanel {
         let muted = theme.muted_foreground;
         let border = theme.border;
         let chips = (!self.attachments.is_empty()).then(|| self.render_attachment_chips(cx));
-        let mention = self.mention.as_ref().map(|m| self.render_mention_menu(m, cx));
+        let mention = self
+            .mention
+            .as_ref()
+            .map(|m| self.render_mention_menu(m, cx));
         let slash = self.slash.as_ref().map(|m| self.render_slash_menu(m, cx));
         let roots = self.roots.clone();
         // Drop target for tree / editor-tab / OS file drags → attach chips.
@@ -8459,9 +8471,7 @@ impl AgentPanel {
                                             .icon(LucideIcon::Paperclip)
                                             .tooltip("Attach files… (or drop from tree / tab / OS)")
                                             .disabled(chat_busy || improving)
-                                            .when(!(chat_busy || improving), |b| {
-                                                b.cursor_pointer()
-                                            })
+                                            .when(!(chat_busy || improving), |b| b.cursor_pointer())
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 cx.emit(AgentPanelEvent::AttachFromDisk)
                                             })),
@@ -8513,14 +8523,7 @@ impl AgentPanel {
                     .w_full()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .child(preview),
-                    )
+                    .child(div().flex_1().min_w_0().truncate().text_sm().child(preview))
                     .child(
                         Button::new(SharedString::from(format!("agent-outbound-remove-{ix}")))
                             .ghost()
@@ -8667,14 +8670,7 @@ impl AgentPanel {
                             .px_1p5()
                             .py_0p5()
                             .child(icon)
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_xs()
-                                    .child(label),
-                            ),
+                            .child(div().min_w_0().flex_1().truncate().text_xs().child(label)),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.pick_mention(ix, window, cx);
@@ -8835,9 +8831,11 @@ impl Render for AgentPanel {
             .size_full()
             .min_w_0()
             .bg(cx.theme().sidebar)
-            .on_action(cx.listener(|this, _: &crate::app::NewAgentChat, window, cx| {
-                this.new_chat(window, cx);
-            }))
+            .on_action(
+                cx.listener(|this, _: &crate::app::NewAgentChat, window, cx| {
+                    this.new_chat(window, cx);
+                }),
+            )
             .child(self.render_header(cx))
             .children(self.render_plan_limits(cx))
             .child(
@@ -8856,7 +8854,9 @@ impl Render for AgentPanel {
             )
             // **N Files** sits on top of the composer (the chat input), not under usage.
             .children(self.render_sticky_file_changes(cx))
-            .when(show_composer, |col| col.child(self.render_composer(ready, cx)))
+            .when(show_composer, |col| {
+                col.child(self.render_composer(ready, cx))
+            })
     }
 }
 
@@ -8877,7 +8877,7 @@ mod default_model_label_tests {
 
 #[cfg(test)]
 mod silent_model_override_tests {
-    use super::{apply_silent_model_override, ConfigSelect};
+    use super::{ConfigSelect, apply_silent_model_override};
     use crate::acp::SilentConfigValue;
 
     fn model_select(current: &str) -> ConfigSelect {
@@ -8908,7 +8908,10 @@ mod silent_model_override_tests {
     fn overrides_when_silent_model_is_offered() {
         let mut configs = vec![
             ("mode".into(), SilentConfigValue::Select("code".into())),
-            ("model".into(), SilentConfigValue::Select("sonnet-4-5".into())),
+            (
+                "model".into(),
+                SilentConfigValue::Select("sonnet-4-5".into()),
+            ),
         ];
         apply_silent_model_override(
             &mut configs,
@@ -8924,7 +8927,10 @@ mod silent_model_override_tests {
 
     #[test]
     fn leaves_chat_model_when_unset_or_invalid() {
-        let mut configs = vec![("model".into(), SilentConfigValue::Select("sonnet-4-5".into()))];
+        let mut configs = vec![(
+            "model".into(),
+            SilentConfigValue::Select("sonnet-4-5".into()),
+        )];
         apply_silent_model_override(&mut configs, Some(&model_select("sonnet-4-5")), None);
         assert_eq!(model_value(&configs), Some("sonnet-4-5"));
 
@@ -8938,7 +8944,7 @@ mod silent_model_override_tests {
 
     #[test]
     fn pick_silent_model_id_prefers_family_then_version() {
-        use super::{pick_silent_model_id, ModelChoice};
+        use super::{ModelChoice, pick_silent_model_id};
         let choices = vec![
             ModelChoice {
                 family: "Sonnet".into(),
@@ -9000,8 +9006,8 @@ mod mode_filter_tests {
 #[cfg(test)]
 mod opusplan_tests {
     use super::{
-        current_mode_is_plan, is_opusplan_model_choice, is_opusplan_model_id,
-        model_picker_choices, pick_opusplan_id, prefs_want_opusplan,
+        current_mode_is_plan, is_opusplan_model_choice, is_opusplan_model_id, model_picker_choices,
+        pick_opusplan_id, prefs_want_opusplan,
     };
     use crate::config::{AgentPrefValue, AgentPrefs};
 
@@ -9111,10 +9117,15 @@ mod improve_prompt_tests {
             "Make expand absolute over the transcript"
         );
         assert_eq!(
-            scrub_improved_prompt("Here's an improved prompt:\nKeep attachments; rewrite text only"),
+            scrub_improved_prompt(
+                "Here's an improved prompt:\nKeep attachments; rewrite text only"
+            ),
             "Keep attachments; rewrite text only"
         );
-        assert_eq!(scrub_improved_prompt("\"Tighten the error message\""), "Tighten the error message");
+        assert_eq!(
+            scrub_improved_prompt("\"Tighten the error message\""),
+            "Tighten the error message"
+        );
         assert!(scrub_improved_prompt("   ").is_empty());
     }
 

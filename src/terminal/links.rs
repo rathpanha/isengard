@@ -149,10 +149,7 @@ mod tests {
     #[test]
     fn www_normalizes() {
         assert_eq!(normalize_url("www.example.com"), "https://www.example.com");
-        assert_eq!(
-            normalize_url("https://example.com"),
-            "https://example.com"
-        );
+        assert_eq!(normalize_url("https://example.com"), "https://example.com");
     }
 
     #[test]

@@ -146,7 +146,10 @@ mod tests {
     #[test]
     fn extracts_path_between_markers() {
         let out = format!("welcome banner\n{START}/opt/homebrew/bin:/usr/bin{END}\nbye");
-        assert_eq!(extract_path(&out).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+        assert_eq!(
+            extract_path(&out).as_deref(),
+            Some("/opt/homebrew/bin:/usr/bin")
+        );
         assert_eq!(extract_path("no markers"), None);
         assert_eq!(extract_path(&format!("{START}{END}")), None);
     }
@@ -166,7 +169,10 @@ mod tests {
         let file = dir.path().join("sub").join("login-path");
         assert_eq!(read_cache(&file), None, "missing file");
         write_cache(&file, "/opt/homebrew/bin:/usr/bin");
-        assert_eq!(read_cache(&file).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+        assert_eq!(
+            read_cache(&file).as_deref(),
+            Some("/opt/homebrew/bin:/usr/bin")
+        );
         std::fs::write(&file, "  \n").unwrap();
         assert_eq!(read_cache(&file), None, "blank cache is ignored");
     }

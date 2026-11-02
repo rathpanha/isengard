@@ -1,6 +1,6 @@
 //! Persist/restore workspace session and window geometry.
-use super::*;
 use super::tab::TabBody;
+use super::*;
 use crate::acp;
 
 impl IsengardApp {
@@ -18,7 +18,11 @@ impl IsengardApp {
     }
 
     /// Debounced write of window size/position into `config.json`.
-    pub(super) fn schedule_persist_window_geometry(&mut self, window: &Window, cx: &mut Context<Self>) {
+    pub(super) fn schedule_persist_window_geometry(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         self.window_geometry_generation = self.window_geometry_generation.wrapping_add(1);
         let geometry_gen = self.window_geometry_generation;
         // Capture geometry now — by the time the timer fires the Window borrow is gone.
@@ -51,13 +55,8 @@ impl IsengardApp {
         if snap.fullscreen {
             return false;
         }
-        self.config.set_window_geometry(
-            snap.width,
-            snap.height,
-            snap.x,
-            snap.y,
-            snap.maximized,
-        )
+        self.config
+            .set_window_geometry(snap.width, snap.height, snap.x, snap.y, snap.maximized)
     }
 
     /// Debounced session write (dirty buffers, search, git UI, layout).
@@ -220,7 +219,10 @@ impl IsengardApp {
             && let Some(ix) = self.tabs.position(|t| t.path == *active)
         {
             self.activate_tab(ix, window, cx);
-            if let Some(entry) = session.open_files.iter().find(|e| e.path() == active.as_path())
+            if let Some(entry) = session
+                .open_files
+                .iter()
+                .find(|e| e.path() == active.as_path())
             {
                 // Re-apply scroll after activate; cursor move-to can shift the viewport.
                 if document::is_git_preview(active) {
@@ -332,12 +334,15 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((old, new)) = self.tabs.iter().find(|t| t.path == path).and_then(|t| {
-            match &t.body {
-                TabBody::Diff { old, new, .. } => Some((old.clone(), new.clone())),
-                _ => None,
-            }
-        }) else {
+        let Some((old, new)) =
+            self.tabs
+                .iter()
+                .find(|t| t.path == path)
+                .and_then(|t| match &t.body {
+                    TabBody::Diff { old, new, .. } => Some((old.clone(), new.clone())),
+                    _ => None,
+                })
+        else {
             return;
         };
         Self::apply_editor_view(&old, view, window, cx);

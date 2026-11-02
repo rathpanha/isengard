@@ -66,7 +66,10 @@ fn build_menus(ctx: MenuContext) -> Vec<Menu> {
 fn file_items(ctx: MenuContext) -> Vec<MenuItem> {
     let mut items = Vec::new();
     if ctx.has_folder {
-        items.push(MenuItem::action("Add Folder to Workspace…", AddFolderToWorkspace));
+        items.push(MenuItem::action(
+            "Add Folder to Workspace…",
+            AddFolderToWorkspace,
+        ));
         items.push(MenuItem::action("Save Workspace As…", SaveWorkspaceAs));
         items.push(MenuItem::separator());
         items.push(MenuItem::action(ctx.close_label, CloseWorkspace));
@@ -102,7 +105,11 @@ mod tests {
         let items = file_items(ctx);
         assert_eq!(
             labels(&items),
-            ["Add Folder to Workspace…", "Save Workspace As…", "Close Folder"]
+            [
+                "Add Folder to Workspace…",
+                "Save Workspace As…",
+                "Close Folder"
+            ]
         );
     }
 }

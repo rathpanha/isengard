@@ -54,13 +54,17 @@ pub fn conflict_hunks(old: &str, new: &str) -> Vec<ConflictHunk> {
                 new_line += lines;
             }
             ChangeTag::Delete => {
-                let b = open.get_or_insert_with(|| HunkBuilder::start(old_off, new_off, old_line, new_line));
+                let b = open.get_or_insert_with(|| {
+                    HunkBuilder::start(old_off, new_off, old_line, new_line)
+                });
                 b.saw_change = true;
                 old_off += len;
                 old_line += lines;
             }
             ChangeTag::Insert => {
-                let b = open.get_or_insert_with(|| HunkBuilder::start(old_off, new_off, old_line, new_line));
+                let b = open.get_or_insert_with(|| {
+                    HunkBuilder::start(old_off, new_off, old_line, new_line)
+                });
                 b.saw_change = true;
                 new_off += len;
                 new_line += lines;
@@ -77,7 +81,11 @@ pub fn conflict_hunks(old: &str, new: &str) -> Vec<ConflictHunk> {
 
 /// Index of the hunk containing either pane's cursor line (`None` if on equal text).
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn hunk_index_at_line(hunks: &[ConflictHunk], old_line: usize, new_line: usize) -> Option<usize> {
+pub fn hunk_index_at_line(
+    hunks: &[ConflictHunk],
+    old_line: usize,
+    new_line: usize,
+) -> Option<usize> {
     hunks.iter().position(|h| {
         (!h.old_lines.is_empty() && h.old_lines.contains(&old_line))
             || (!h.new_lines.is_empty() && h.new_lines.contains(&new_line))
@@ -85,11 +93,7 @@ pub fn hunk_index_at_line(hunks: &[ConflictHunk], old_line: usize, new_line: usi
 }
 
 /// Build the resolved file from per-hunk Old/New choices (one per hunk).
-pub fn apply_hunk_choices(
-    old: &str,
-    new: &str,
-    choices: &[HunkSide],
-) -> Result<String, String> {
+pub fn apply_hunk_choices(old: &str, new: &str, choices: &[HunkSide]) -> Result<String, String> {
     let hunks = conflict_hunks(old, new);
     if choices.len() != hunks.len() {
         return Err(format!(
@@ -144,10 +148,7 @@ pub fn apply_hunk_choices(
         flush(&mut out, &mut old_buf, &mut new_buf, &mut hunk_i, choices);
     }
     if hunk_i != hunks.len() {
-        return Err(format!(
-            "Applied {hunk_i} hunks, expected {}",
-            hunks.len()
-        ));
+        return Err(format!("Applied {hunk_i} hunks, expected {}", hunks.len()));
     }
     Ok(out)
 }
@@ -285,7 +286,11 @@ fn merge_overview_marks(mut marks: Vec<OverviewMark>) -> Vec<OverviewMark> {
     if marks.len() <= 1 {
         return marks;
     }
-    marks.sort_by(|a, b| a.top.partial_cmp(&b.top).unwrap_or(std::cmp::Ordering::Equal));
+    marks.sort_by(|a, b| {
+        a.top
+            .partial_cmp(&b.top)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut out = Vec::with_capacity(marks.len());
     out.push(marks[0]);
     for m in marks.into_iter().skip(1) {
@@ -385,7 +390,11 @@ mod tests {
         let (o, n) = line_highlight_ranges(&old, &new);
         let marks = overview_marks(&new, &n);
         assert_eq!(marks.len(), 1);
-        assert!(marks[0].height < 0.1, "expected a short tick, got {}", marks[0].height);
+        assert!(
+            marks[0].height < 0.1,
+            "expected a short tick, got {}",
+            marks[0].height
+        );
         assert!(o.len() == 1 && n.len() == 1);
     }
 

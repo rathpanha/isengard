@@ -15,18 +15,14 @@ use tar::Archive;
 #[derive(Debug, Clone, Copy)]
 pub enum FetchKind {
     /// GitHub / release asset for this host.
-    Binary {
-        select: fn() -> Option<BinaryAsset>,
-    },
+    Binary { select: fn() -> Option<BinaryAsset> },
     /// `GOBIN=<lsp/bin> go install <module>@<version>` (app-local only).
     GoInstall {
         module: &'static str,
         version: &'static str,
     },
     /// `bun add --cwd <lsp/pkg/…>` (needs Bun, see `runtime`; never global).
-    Npm {
-        packages: &'static [NpmSpec],
-    },
+    Npm { packages: &'static [NpmSpec] },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -77,12 +73,13 @@ impl InstallRecipe {
     pub fn install_hint(&self) -> String {
         match self.fetch {
             FetchKind::Binary { .. } => {
-                format!("Download {0} into Isengard’s data folder (not your system PATH).", self.name)
+                format!(
+                    "Download {0} into Isengard’s data folder (not your system PATH).",
+                    self.name
+                )
             }
             FetchKind::GoInstall { module, version } => {
-                format!(
-                    "Run `go install {module}@{version}` with GOBIN set to Isengard’s lsp/bin."
-                )
+                format!("Run `go install {module}@{version}` with GOBIN set to Isengard’s lsp/bin.")
             }
             FetchKind::Npm { packages } => {
                 let list: Vec<_> = packages
@@ -348,9 +345,7 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             summary: "Zig language server.",
             pkg_id: "zls",
             bin_names: &["zls"],
-            fetch: FetchKind::Binary {
-                select: zls_asset,
-            },
+            fetch: FetchKind::Binary { select: zls_asset },
         },
         "lua-language-server" => InstallRecipe {
             name: "lua-language-server",
@@ -420,10 +415,7 @@ fn rust_analyzer_asset() -> Option<BinaryAsset> {
             "rust-analyzer-aarch64-pc-windows-msvc.zip",
             AssetFormat::Zip,
         ),
-        ("windows", "x86_64") => (
-            "rust-analyzer-x86_64-pc-windows-msvc.zip",
-            AssetFormat::Zip,
-        ),
+        ("windows", "x86_64") => ("rust-analyzer-x86_64-pc-windows-msvc.zip", AssetFormat::Zip),
         _ => return None,
     };
     let member = if matches!(format, AssetFormat::Zip) {
@@ -497,26 +489,10 @@ fn zls_asset() -> Option<BinaryAsset> {
     const TAG: &str = "0.16.0";
     let (os, arch) = host_os_arch()?;
     let (file, format, member) = match (os, arch) {
-        ("darwin", "aarch64") => (
-            "zls-aarch64-macos.tar.xz",
-            AssetFormat::TarXz,
-            "zls",
-        ),
-        ("darwin", "x86_64") => (
-            "zls-x86_64-macos.tar.xz",
-            AssetFormat::TarXz,
-            "zls",
-        ),
-        ("linux", "aarch64") => (
-            "zls-aarch64-linux.tar.xz",
-            AssetFormat::TarXz,
-            "zls",
-        ),
-        ("linux", "x86_64") => (
-            "zls-x86_64-linux.tar.xz",
-            AssetFormat::TarXz,
-            "zls",
-        ),
+        ("darwin", "aarch64") => ("zls-aarch64-macos.tar.xz", AssetFormat::TarXz, "zls"),
+        ("darwin", "x86_64") => ("zls-x86_64-macos.tar.xz", AssetFormat::TarXz, "zls"),
+        ("linux", "aarch64") => ("zls-aarch64-linux.tar.xz", AssetFormat::TarXz, "zls"),
+        ("linux", "x86_64") => ("zls-x86_64-linux.tar.xz", AssetFormat::TarXz, "zls"),
         ("windows", "aarch64") => ("zls-aarch64-windows.zip", AssetFormat::Zip, "zls.exe"),
         ("windows", "x86_64") => ("zls-x86_64-windows.zip", AssetFormat::Zip, "zls.exe"),
         _ => return None,
@@ -606,12 +582,8 @@ pub fn run_install_in(recipe: &InstallRecipe, root: &Path) -> Result<(), String>
     fs::create_dir_all(bin_dir(root)).map_err(|e| e.to_string())?;
     match recipe.fetch {
         FetchKind::Binary { select } => {
-            let asset = select().ok_or_else(|| {
-                format!(
-                    "No download asset for {} on this OS/arch",
-                    recipe.name
-                )
-            })?;
+            let asset = select()
+                .ok_or_else(|| format!("No download asset for {} on this OS/arch", recipe.name))?;
             install_binary(recipe, &asset, root)
         }
         FetchKind::GoInstall { module, version } => install_go(module, version, root),
@@ -619,11 +591,7 @@ pub fn run_install_in(recipe: &InstallRecipe, root: &Path) -> Result<(), String>
     }
 }
 
-fn install_binary(
-    recipe: &InstallRecipe,
-    asset: &BinaryAsset,
-    root: &Path,
-) -> Result<(), String> {
+fn install_binary(recipe: &InstallRecipe, asset: &BinaryAsset, root: &Path) -> Result<(), String> {
     let bytes = download(asset.url)?;
     let staging = root.join("tmp").join(recipe.pkg_id);
     let _ = fs::remove_dir_all(&staging);
@@ -682,8 +650,8 @@ fn finish_extracted(
     } else {
         asset.member
     };
-    let found = find_member(staging, member)
-        .ok_or_else(|| format!("archive missing `{member}`"))?;
+    let found =
+        find_member(staging, member).ok_or_else(|| format!("archive missing `{member}`"))?;
 
     if asset.keep_tree {
         let pkg = pkg_dir(root, recipe.pkg_id);
@@ -694,8 +662,14 @@ fn finish_extracted(
         let target = pkg.join(member);
         if !target.is_file() {
             // Some archives nest an extra top folder.
-            let target = find_member(&pkg, Path::new(member).file_name().and_then(|s| s.to_str()).unwrap_or(member))
-                .ok_or_else(|| format!("extracted tree missing `{member}`"))?;
+            let target = find_member(
+                &pkg,
+                Path::new(member)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(member),
+            )
+            .ok_or_else(|| format!("extracted tree missing `{member}`"))?;
             set_executable(&target)?;
             write_wrapper(root, recipe.bin_names[0], &target)?;
         } else {
@@ -760,11 +734,7 @@ fn install_go(module: &str, version: &str, root: &Path) -> Result<(), String> {
     })
 }
 
-fn install_npm(
-    recipe: &InstallRecipe,
-    packages: &[NpmSpec],
-    root: &Path,
-) -> Result<(), String> {
+fn install_npm(recipe: &InstallRecipe, packages: &[NpmSpec], root: &Path) -> Result<(), String> {
     let pkg = pkg_dir(root, recipe.pkg_id);
     let specs: Vec<String> = packages
         .iter()
@@ -780,11 +750,7 @@ fn install_npm(
                 .join("node_modules")
                 .join(".bin")
                 .join(format!("{bin_name}.cmd"));
-            if cmd.is_file() {
-                cmd
-            } else {
-                nm_bin
-            }
+            if cmd.is_file() { cmd } else { nm_bin }
         };
         if !nm_bin.is_file() {
             return Err(format!(
@@ -801,8 +767,8 @@ fn install_npm(
 /// package cache stays in the app data dir). Shared with the agent installer
 /// (`acp::install`).
 pub fn bun_install(pkg: &Path, specs: &[String]) -> Result<(), String> {
-    let bun = crate::runtime::bun_path()
-        .ok_or("Bun is not installed — restart Isengard to set it up")?;
+    let bun =
+        crate::runtime::bun_path().ok_or("Bun is not installed — restart Isengard to set it up")?;
     let _ = fs::remove_dir_all(pkg);
     fs::create_dir_all(pkg).map_err(|e| e.to_string())?;
 
@@ -994,7 +960,10 @@ mod tests {
         run_install_in(&recipe_for_command("bun").unwrap(), tmp.path()).unwrap();
         let bun = resolve_command_in("bun", tmp.path()).unwrap();
         assert!(bun.starts_with(tmp.path()), "app-local, not PATH: {bun:?}");
-        let out = std::process::Command::new(bun).arg("--version").output().unwrap();
+        let out = std::process::Command::new(bun)
+            .arg("--version")
+            .output()
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1.4.4");
     }
 

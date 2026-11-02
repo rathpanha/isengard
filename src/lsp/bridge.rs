@@ -3,8 +3,8 @@
 use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail};
 use gpui_kit::component::input::{
@@ -22,9 +22,9 @@ use lsp_types::{
     Command, CompletionContext, CompletionItem, CompletionParams, CompletionResponse,
     CompletionTextEdit, CompletionTriggerKind, DidChangeTextDocumentParams, ExecuteCommandParams,
     GotoDefinitionParams, GotoDefinitionResponse, HoverParams, Location, LocationLink,
-    PartialResultParams, Position as LspPosition, Range as LspRange, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentPositionParams, TextEdit, WorkDoneProgressParams,
-    WorkspaceEdit,
+    PartialResultParams, Position as LspPosition, Range as LspRange,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentPositionParams, TextEdit,
+    WorkDoneProgressParams, WorkspaceEdit,
 };
 
 use super::client::LspClient;
@@ -309,10 +309,7 @@ fn completion_insert_text(item: &CompletionItem) -> String {
 
 /// Kit's fallback replace range is the whole latch (`a.map`). Force a textEdit
 /// that only covers the typed segment so Accept yields `a.map`, not `map`.
-fn fix_completion_text_edits(
-    items: Vec<CompletionItem>,
-    replace: LspRange,
-) -> Vec<CompletionItem> {
+fn fix_completion_text_edits(items: Vec<CompletionItem>, replace: LspRange) -> Vec<CompletionItem> {
     items
         .into_iter()
         .map(|mut item| {
@@ -353,10 +350,7 @@ fn fix_completion_text_edits(
 }
 
 /// Resolve lazy fields (esp. `additionalTextEdits` for auto-import).
-fn resolve_completion_items(
-    client: &LspClient,
-    items: Vec<CompletionItem>,
-) -> Vec<CompletionItem> {
+fn resolve_completion_items(client: &LspClient, items: Vec<CompletionItem>) -> Vec<CompletionItem> {
     const MAX_RESOLVE: usize = 40;
     let mut resolved = 0usize;
     items
@@ -696,9 +690,9 @@ impl DefinitionProvider for DocBridge {
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
             })?;
-            Ok(goto_definition_to_links(response.unwrap_or(
-                GotoDefinitionResponse::Array(vec![]),
-            )))
+            Ok(goto_definition_to_links(
+                response.unwrap_or(GotoDefinitionResponse::Array(vec![])),
+            ))
         })
     }
 }
@@ -730,8 +724,7 @@ fn location_to_link(loc: Location) -> LocationLink {
 pub fn show_document_handler<A: 'static>(
     doc_path: std::path::PathBuf,
     app: WeakEntity<A>,
-    open: impl Fn(&mut A, &std::path::Path, lsp_types::Range, &mut Window, &mut Context<A>)
-    + 'static,
+    open: impl Fn(&mut A, &std::path::Path, lsp_types::Range, &mut Window, &mut Context<A>) + 'static,
 ) -> ShowDocumentHandler {
     let open = Rc::new(open);
     Rc::new(move |params, window, cx| {

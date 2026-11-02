@@ -141,4 +141,3 @@ impl EditorTab {
                 .is_some_and(Language::supports_rendered_preview)
     }
 }
-

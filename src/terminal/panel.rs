@@ -409,9 +409,9 @@ impl Render for TerminalPanel {
                                     title: SharedString::from(title.clone()),
                                 };
                                 h_flex()
-                                    .id(ElementId::Name(
-                                        SharedString::from(format!("term-tab-{id}")),
-                                    ))
+                                    .id(ElementId::Name(SharedString::from(format!(
+                                        "term-tab-{id}"
+                                    ))))
                                     .items_center()
                                     .gap_1()
                                     .px_2()
@@ -462,13 +462,15 @@ impl Render for TerminalPanel {
                                         .xsmall()
                                         .icon(IconName::Close)
                                         .tooltip("Close Terminal")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.close_tab(id, window, cx);
-                                            window.dispatch_action(
-                                                Box::new(crate::app::TerminalTabsChanged),
-                                                cx,
-                                            );
-                                        })),
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.close_tab(id, window, cx);
+                                                window.dispatch_action(
+                                                    Box::new(crate::app::TerminalTabsChanged),
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
                                     )
                                     .into_any_element()
                             })
@@ -521,18 +523,16 @@ impl Render for TerminalPanel {
                             .icon(IconName::Minus)
                             .tooltip("Minimize Terminal")
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(crate::app::ToggleTerminal),
-                                    cx,
-                                );
+                                window.dispatch_action(Box::new(crate::app::ToggleTerminal), cx);
                             }),
                     ),
             )
             .child(
-                div().flex_1().min_h_0().w_full().when_some(
-                    active_view,
-                    |this, view| this.child(view),
-                ),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .when_some(active_view, |this, view| this.child(view)),
             )
             .into_any_element()
     }

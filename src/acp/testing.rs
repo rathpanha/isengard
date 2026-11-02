@@ -12,15 +12,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock, ContentChunk,
-    DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
+    AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
+    ContentChunk, DeleteSessionRequest, DeleteSessionResponse, Implementation, InitializeRequest,
     InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
     NewSessionResponse, PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest,
     PromptResponse, ReadTextFileRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    ResumeSessionRequest, ResumeSessionResponse, SessionCapabilities, SessionCloseCapabilities,
-    SessionAdditionalDirectoriesCapabilities, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOption, SessionDeleteCapabilities, SessionId, SessionMode,
-    SessionModeState, SessionNotification, SessionResumeCapabilities, SessionUpdate,
+    ResumeSessionRequest, ResumeSessionResponse, SessionAdditionalDirectoriesCapabilities,
+    SessionCapabilities, SessionCloseCapabilities, SessionConfigOption,
+    SessionConfigOptionCategory, SessionConfigSelectOption, SessionDeleteCapabilities, SessionId,
+    SessionMode, SessionModeState, SessionNotification, SessionResumeCapabilities, SessionUpdate,
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
     SetSessionModeResponse, StopReason, TextContent, ToolCallUpdate, ToolCallUpdateFields,
     UsageUpdate, WriteTextFileRequest,

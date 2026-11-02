@@ -42,11 +42,7 @@ pub fn show(title: &str, body: &str, on_click: impl FnOnce(Option<String>)) -> b
     }
 }
 
-fn run(
-    title: &str,
-    body: &str,
-    on_click: impl FnOnce(Option<String>),
-) -> zbus::Result<()> {
+fn run(title: &str, body: &str, on_click: impl FnOnce(Option<String>)) -> zbus::Result<()> {
     let bus = Bus::session()?;
     let proxy = BusProxy::new(&bus, DEST, PATH, DEST)?;
     // Subscribe first so the token signal cannot slip past.
@@ -147,7 +143,8 @@ fn activate_wayland(window: &Window, token: &str) -> Option<()> {
     let RawWindowHandle::Wayland(w) = HasWindowHandle::window_handle(window).ok()?.as_raw() else {
         return None;
     };
-    let RawDisplayHandle::Wayland(d) = HasDisplayHandle::display_handle(window).ok()?.as_raw() else {
+    let RawDisplayHandle::Wayland(d) = HasDisplayHandle::display_handle(window).ok()?.as_raw()
+    else {
         return None;
     };
     // SAFETY: both pointers come from GPUI's live Wayland window on this (UI)

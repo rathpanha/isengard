@@ -10,9 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::acp::install::{
-    CLAUDE_BIN, CURSOR_BIN, agents_root, claude_bin_in, cursor_bin_in,
-};
+use crate::acp::install::{CLAUDE_BIN, CURSOR_BIN, agents_root, claude_bin_in, cursor_bin_in};
 use crate::config::AgentSettings;
 
 /// Display name until the agent reports its own `agentInfo.title`.
@@ -178,7 +176,11 @@ pub enum Resolved {
 }
 
 pub fn resolve(settings: &AgentSettings) -> Resolved {
-    resolve_in(settings, &agents_root(), std::env::var_os("PATH").as_deref())
+    resolve_in(
+        settings,
+        &agents_root(),
+        std::env::var_os("PATH").as_deref(),
+    )
 }
 
 pub fn resolve_in(
@@ -304,7 +306,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let empty = tmp.path().join("empty-path");
         assert_eq!(
-            resolve_in(&AgentSettings::default(), tmp.path(), Some(empty.as_os_str())),
+            resolve_in(
+                &AgentSettings::default(),
+                tmp.path(),
+                Some(empty.as_os_str())
+            ),
             Resolved::ClaudeNotInstalled
         );
     }
@@ -331,9 +337,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path_dir = tmp.path().join("bin");
         touch(&path_dir.join(CLAUDE_BIN));
-        let Resolved::Launch(launch) =
-            resolve_in(&AgentSettings::default(), tmp.path(), Some(path_dir.as_os_str()))
-        else {
+        let Resolved::Launch(launch) = resolve_in(
+            &AgentSettings::default(),
+            tmp.path(),
+            Some(path_dir.as_os_str()),
+        ) else {
             panic!("expected a launch");
         };
         assert_eq!(launch.command, path_dir.join(CLAUDE_BIN));
@@ -367,13 +375,15 @@ mod tests {
             subagent_model: Some("haiku".into()),
             ..AgentSettings::default()
         };
-        let Resolved::Launch(launch) =
-            resolve_in(&settings, &tmp.path().join("agents"), None)
+        let Resolved::Launch(launch) = resolve_in(&settings, &tmp.path().join("agents"), None)
         else {
             panic!("expected a launch");
         };
         assert_eq!(
-            launch.env.get("CLAUDE_CODE_SUBAGENT_MODEL").map(String::as_str),
+            launch
+                .env
+                .get("CLAUDE_CODE_SUBAGENT_MODEL")
+                .map(String::as_str),
             Some("haiku")
         );
         assert_eq!(
@@ -383,7 +393,10 @@ mod tests {
                 .map(String::as_str),
             Some("1")
         );
-        assert!(launch.claude, "the built-in adapter gets the Claude session settings");
+        assert!(
+            launch.claude,
+            "the built-in adapter gets the Claude session settings"
+        );
     }
 
     #[test]
@@ -398,8 +411,7 @@ mod tests {
             command: Some(CURSOR_COMMAND.into()),
             ..AgentSettings::default()
         };
-        let Resolved::Launch(launch) =
-            resolve_in(&settings, &agents, Some(path_dir.as_os_str()))
+        let Resolved::Launch(launch) = resolve_in(&settings, &agents, Some(path_dir.as_os_str()))
         else {
             panic!("expected a launch");
         };
@@ -423,7 +435,10 @@ mod tests {
 
     #[test]
     fn builtin_agent_and_with_builtin_round_trip() {
-        assert_eq!(builtin_agent(&AgentSettings::default()), Some(BuiltinAgent::Claude));
+        assert_eq!(
+            builtin_agent(&AgentSettings::default()),
+            Some(BuiltinAgent::Claude)
+        );
         let cursor = with_builtin(&AgentSettings::default(), BuiltinAgent::Cursor);
         assert_eq!(builtin_agent(&cursor), Some(BuiltinAgent::Cursor));
         assert_eq!(agent_slot_id(&cursor), CURSOR_COMMAND);

@@ -24,7 +24,10 @@ enum Staged {
     /// The binary at this path was replaced; restart to run it.
     Installed(PathBuf),
     /// A verified package is waiting at this path.
-    Package { path: PathBuf, manager: &'static str },
+    Package {
+        path: PathBuf,
+        manager: &'static str,
+    },
 }
 
 /// Live progress inside the download dialog.
@@ -83,7 +86,11 @@ impl Render for InstallView {
 
 impl IsengardApp {
     /// Startup check: at most once a day, silent unless a newer version exists.
-    pub(super) fn check_for_updates_on_start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn check_for_updates_on_start(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Tests must never touch the network.
         if cfg!(test) || !self.config.updates.check {
             return;
@@ -202,10 +209,12 @@ impl IsengardApp {
         };
         let hint = match (&asset, &kind) {
             (Some(_), _) => None,
-            (None, InstallKind::Manual) => {
-                Some("This copy of Isengard can't update itself. Download the new version from the release page.")
-            }
-            (None, _) => Some("Automatic install isn't available for this release. Download it from the release page."),
+            (None, InstallKind::Manual) => Some(
+                "This copy of Isengard can't update itself. Download the new version from the release page.",
+            ),
+            (None, _) => Some(
+                "Automatic install isn't available for this release. Download it from the release page.",
+            ),
         };
         let release = Rc::new(release);
         let app = cx.entity().downgrade();
@@ -282,7 +291,9 @@ impl IsengardApp {
                                     };
                                     let (release, kind) = ((*rel_primary).clone(), kind.clone());
                                     _ = app_primary.update(cx, |this, cx| {
-                                        this.start_update_download(release, kind, asset, window, cx);
+                                        this.start_update_download(
+                                            release, kind, asset, window, cx,
+                                        );
                                     });
                                 }),
                         ),
@@ -341,7 +352,9 @@ impl IsengardApp {
         let weak_view = view.downgrade();
         cx.spawn(async move |_, cx| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(150)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
                 let done = weak_view
                     .update(cx, |view, cx| {
                         cx.notify();
@@ -410,7 +423,12 @@ impl IsengardApp {
         .detach();
     }
 
-    pub(super) fn show_update_restart(&mut self, exe: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_update_restart(
+        &mut self,
+        exe: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let app = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, window, _| {
             let app = app.clone();
@@ -452,7 +470,12 @@ impl IsengardApp {
     }
 
     /// Quit (through the usual unsaved-changes prompts) and start `exe` again.
-    pub(super) fn restart_into(&mut self, exe: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn restart_into(
+        &mut self,
+        exe: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.relaunch_exe = Some(exe);
         if self.confirm_quit(window, cx) {
             self.quit(cx);
@@ -578,21 +601,29 @@ impl IsengardApp {
         });
         let (app_enter, package_enter, input_enter) =
             (cx.entity().downgrade(), package.clone(), input.clone());
-        cx.subscribe_in(&input, window, move |_, _, event: &InputEvent, window, cx| {
-            if matches!(event, InputEvent::PressEnter { .. }) {
-                // This runs inside the input's own update: reading it or
-                // dropping its dialog here is a re-entrant lease. Wait for
-                // the emit to finish.
-                let (app, package, input) = (app_enter.clone(), package_enter.clone(), input_enter.clone());
-                window.defer(cx, move |window, cx| {
-                    let password = input.read(cx).value().to_string();
-                    window.close_dialog(cx);
-                    _ = app.update(cx, |this, cx| {
-                        this.start_package_install(package, manager, password, window, cx);
+        cx.subscribe_in(
+            &input,
+            window,
+            move |_, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    // This runs inside the input's own update: reading it or
+                    // dropping its dialog here is a re-entrant lease. Wait for
+                    // the emit to finish.
+                    let (app, package, input) = (
+                        app_enter.clone(),
+                        package_enter.clone(),
+                        input_enter.clone(),
+                    );
+                    window.defer(cx, move |window, cx| {
+                        let password = input.read(cx).value().to_string();
+                        window.close_dialog(cx);
+                        _ = app.update(cx, |this, cx| {
+                            this.start_package_install(package, manager, password, window, cx);
+                        });
                     });
-                });
-            }
-        })
+                }
+            },
+        )
         .detach();
         let app = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, window, cx| {
@@ -657,7 +688,10 @@ impl IsengardApp {
         // After the package replaces the file, current_exe() reads "… (deleted)".
         let exe = std::env::current_exe()
             .ok()
-            .and_then(|p| p.to_str().map(|s| s.trim_end_matches(" (deleted)").to_string()))
+            .and_then(|p| {
+                p.to_str()
+                    .map(|s| s.trim_end_matches(" (deleted)").to_string())
+            })
             .map_or_else(|| PathBuf::from("/usr/bin/isengard"), PathBuf::from);
         let lines = Arc::new(Mutex::new(Vec::<String>::new()));
         let view = cx.new(|_| InstallView {
@@ -679,7 +713,9 @@ impl IsengardApp {
         let weak_view = view.downgrade();
         cx.spawn(async move |_, cx| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(150)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
                 let done = weak_view
                     .update(cx, |view, cx| {
                         cx.notify();
