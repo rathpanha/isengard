@@ -16,3 +16,34 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     }
     cmd
 }
+
+/// `git` command with the user's shell `SSH_AUTH_SOCK`. A GUI launched from the
+/// desktop doesn't see exports from `~/.bashrc`, so SSH pushes would use the
+/// session default agent (wrong keys) instead of the one the terminal uses.
+pub fn git_command() -> Command {
+    let mut cmd = command("git");
+    #[cfg(unix)]
+    if let Some(sock) = shell_ssh_auth_sock() {
+        cmd.env("SSH_AUTH_SOCK", sock);
+    }
+    cmd
+}
+
+#[cfg(unix)]
+fn shell_ssh_auth_sock() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static SOCK: OnceLock<Option<String>> = OnceLock::new();
+    SOCK.get_or_init(|| {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let out = Command::new(shell)
+            .args(["-ic", "printf '<<%s>>' \"$SSH_AUTH_SOCK\""])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let sock = text.rsplit_once("<<")?.1.split_once(">>")?.0.trim();
+        (!sock.is_empty()).then(|| sock.to_owned())
+    })
+    .as_deref()
+}

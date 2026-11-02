@@ -304,7 +304,9 @@ src/
 ├── menus.rs             native menus + AppMenuBar (Windows/Linux)
 ├── config.rs            AppConfig (serde JSON) + recents + sessions + window geometry
 ├── process.rs           `process::command`: `Command::new` + Windows `CREATE_NO_WINDOW`;
-│                        spawn every console child through it (GUI-subsystem builds)
+│                        spawn every console child through it (GUI-subsystem builds);
+│                        `git_command`: same + unix `SSH_AUTH_SOCK` read once from
+│                        `$SHELL -ic` (desktop launches miss `~/.bashrc` exports)
 ├── runtime.rs           Bun, the only JS runtime: `bun_path` (app-local → PATH →
 │                        `~/.bun/bin`), `run_on_bun` (rewrites a `#!…node` script,
 │                        or our `lsp/bin` sh wrapper around one, to `bun <script>`),

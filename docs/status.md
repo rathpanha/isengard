@@ -119,7 +119,9 @@ What works today:
   Co-Authored-By / Generated-with / Claude-Session trailers) / Commit from
   selection;
   Open File + discard;
-  Pull(N)/Push(N); side-by-side diff preview (scroll locked; active row
+  Pull(N)/Push(N) (git runs with the interactive shell's `SSH_AUTH_SOCK` on
+  unix, so SSH agents set in `~/.bashrc` work from a desktop launch);
+  side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still
   dirty); refreshes when the agent touches the worktree **or** a turn
   ends, and when `.git` repo state changes (HEAD, index, refs, merge / rebase
