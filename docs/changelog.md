@@ -5,7 +5,7 @@ status, architecture, or design. See [README.md](README.md).
 
 - **2026-11-02** — Git push/pull over SSH now works when launched from the
   desktop: `process::git_command` sets `SSH_AUTH_SOCK` from the user's
-  interactive shell (cached once; unix only), since GUI launches don't see
+  interactive shell (network subcommands only; looked up once on a startup thread; unix only), since GUI launches don't see
   `~/.bashrc` exports (e.g. Proton Pass agent with multiple keys).
 - **2026-11-02** — Linux: clicking the agent-finished notification raises the
   window. The notification is posted over D-Bus (`src/notify_linux.rs`, zbus;

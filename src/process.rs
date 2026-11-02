@@ -17,16 +17,30 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
-/// `git` command with the user's shell `SSH_AUTH_SOCK`. A GUI launched from the
-/// desktop doesn't see exports from `~/.bashrc`, so SSH pushes would use the
-/// session default agent (wrong keys) instead of the one the terminal uses.
-pub fn git_command() -> Command {
+/// `git` command; for network subcommands (`push`, `pull`, …) it carries the
+/// user's shell `SSH_AUTH_SOCK`. A GUI launched from the desktop doesn't see
+/// exports from `~/.bashrc`, so SSH pushes would use the session default agent
+/// (wrong keys) instead of the one the terminal uses.
+pub fn git_command(args: &[&str]) -> Command {
     let mut cmd = command("git");
     #[cfg(unix)]
-    if let Some(sock) = shell_ssh_auth_sock() {
+    if matches!(args.first(), Some(&("push" | "pull" | "fetch" | "clone")))
+        && let Some(sock) = shell_ssh_auth_sock()
+    {
         cmd.env("SSH_AUTH_SOCK", sock);
     }
+    #[cfg(not(unix))]
+    let _ = args;
     cmd
+}
+
+/// Start the (slow) shell lookup in the background so the first network git
+/// call doesn't pay for it.
+pub fn prewarm_git_env() {
+    #[cfg(unix)]
+    std::thread::spawn(|| {
+        shell_ssh_auth_sock();
+    });
 }
 
 #[cfg(unix)]
