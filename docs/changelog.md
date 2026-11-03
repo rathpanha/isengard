@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-03** — Release prep v0.2.6 (agent plans open in the editor):
+  version bump, `docs/releases/v0.2.6.md`, status release lines.
 - **2026-11-03** — Cursor `create_plan` also opens its plan in the editor; the
   chat card keeps only Build it / Reject.
 - **2026-11-03** — Claude plan approval (`ExitPlanMode`) now opens the plan
