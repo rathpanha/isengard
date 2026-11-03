@@ -187,7 +187,9 @@ What works today:
   row-click to open; Git discard removes those paths; strip state persists
   in the workspace session and is spliced back after `session/load` /
   editor restart), plan checklist, inline
-  permission buttons, Stop (`.danger()`, `session/cancel`), New Chat.
+  permission buttons (a Claude plan approval also opens the plan as a rendered
+  Markdown tab, saved to `<cache dir>/isengard/plans/`), Stop (`.danger()`,
+  `session/cancel`), New Chat.
   While a turn runs, Spinner + activity (tool title, or Thinking/Writing/…)
   appear at the bottom of the transcript only (header stays the session
   title; status square still turns warning). Long chats keep ~half-pane

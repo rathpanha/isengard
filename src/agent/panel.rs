@@ -88,6 +88,9 @@ pub enum AgentPanelEvent {
     AttachPath(PathBuf),
     /// Open these paths in editor tabs (file-change summary row click).
     OpenPaths(Vec<PathBuf>),
+    /// Claude asked to approve a plan — open its markdown file in a rendered
+    /// preview tab.
+    OpenPlan(PathBuf),
     /// Agent changed the worktree (write / edit / delete / shell) — refresh Git.
     WorkspaceTouched,
     Hide,
@@ -4930,6 +4933,21 @@ impl AgentPanel {
             reply,
         } = ask;
         let id = tool_call.tool_call_id.clone();
+        // Claude's plan approval (`ExitPlanMode`) carries the plan markdown in
+        // its raw input; open it as a rendered tab so the user can review it
+        // before picking an option.
+        if !self.is_cursor_agent()
+            && let Some(plan) = tool_call
+                .fields
+                .raw_input
+                .as_ref()
+                .and_then(|v| v.get("plan"))
+                .and_then(|p| p.as_str())
+                .filter(|p| !p.trim().is_empty())
+            && let Some(path) = save_plan_file(&id.to_string(), plan)
+        {
+            cx.emit(AgentPanelEvent::OpenPlan(path));
+        }
         self.update_tool_call(tool_call, cx);
         // Cursor Mode (Agent/Plan/Ask) does not gate approval — every tool
         // hits `session/request_permission`. Without a client policy the UI
@@ -5213,6 +5231,23 @@ fn pick_silent_model_id(
         .find(|c| display_context_label(choices, c).as_deref() == prefer_ctx)
         .or_else(|| in_family.first().copied())
         .map(|c| c.id.clone())
+}
+
+/// Write a Claude plan to `<cache dir>/isengard/plans/<tool call id>.md` so it
+/// can open in an editor tab. Tests never touch the user's cache.
+fn save_plan_file(tool_call_id: &str, plan: &str) -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let name: String = tool_call_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let dir = dirs::cache_dir()?.join("isengard").join("plans");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("plan-{name}.md"));
+    std::fs::write(&path, plan).ok()?;
+    Some(path)
 }
 
 /// Prefer AllowAlways, then AllowOnce — Cursor ACP option ids vary; match by kind.

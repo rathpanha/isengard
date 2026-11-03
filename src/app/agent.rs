@@ -333,6 +333,10 @@ impl IsengardApp {
                     }
                 }
             }
+            AgentPanelEvent::OpenPlan(path) if is_current => {
+                self.open_file(path, true, window, cx);
+                self.set_rendered_preview(true, window, cx);
+            }
             AgentPanelEvent::WorkspaceTouched => {
                 self.git.update(cx, |git, cx| git.refresh(window, cx));
             }
