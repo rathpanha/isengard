@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-03** — Cursor `create_plan` also opens its plan in the editor; the
+  chat card keeps only Build it / Reject.
 - **2026-11-03** — Claude plan approval (`ExitPlanMode`) now opens the plan
   markdown in a rendered preview tab (`AgentPanelEvent::OpenPlan`) so it can be
   reviewed before choosing an option.

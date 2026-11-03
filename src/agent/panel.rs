@@ -258,6 +258,8 @@ struct CursorPlanEntry {
     name: Option<SharedString>,
     overview: Option<SharedString>,
     plan: Entity<TextViewState>,
+    /// The plan opened in an editor tab, so the card shows only the actions.
+    in_editor: bool,
     todos: Vec<(SharedString, CursorPlanTodoStatus)>,
     /// `None` after Build / Reject / cancel.
     reply: Option<flume::Sender<CursorCreatePlanOutcome>>,
@@ -3877,12 +3879,18 @@ impl AgentPanel {
             reply,
         } = ask;
         let plan_view = cx.new(|cx| TextViewState::markdown(&plan, cx).selectable(true));
+        let file = save_plan_file(&tool_call_id, &plan);
+        let in_editor = file.is_some();
+        if let Some(path) = file {
+            cx.emit(AgentPanelEvent::OpenPlan(path));
+        }
         self.push_entry(
             Entry::CursorPlan(CursorPlanEntry {
                 tool_call_id,
                 name: name.map(Into::into),
                 overview: overview.map(Into::into),
                 plan: plan_view,
+                in_editor,
                 todos: todos
                     .into_iter()
                     .map(|t| (SharedString::from(t.content), t.status))
@@ -6472,14 +6480,16 @@ fn render_cursor_plan(
                     .child(overview.clone()),
             )
         })
-        .child(
-            div()
-                .w_full()
-                .min_w_0()
-                .text_sm()
-                .child(TextView::new(&plan.plan).style(crate::theme::text_view_style(cx))),
-        )
-        .when(!plan.todos.is_empty(), |col| {
+        .when(!plan.in_editor, |col| {
+            col.child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .text_sm()
+                    .child(TextView::new(&plan.plan).style(crate::theme::text_view_style(cx))),
+            )
+        })
+        .when(!plan.in_editor && !plan.todos.is_empty(), |col| {
             col.child(v_flex().w_full().gap_1().children(plan.todos.iter().map(
                 |(content, status)| {
                     let (color, done) = match status {
