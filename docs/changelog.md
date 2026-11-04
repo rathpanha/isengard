@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-04** — Release prep v0.2.7 (one window per folder): version bump,
+  `docs/releases/v0.2.7.md`, status release lines.
 - **2026-11-04** — Launching `isengard <path>` for a folder/workspace already open
   in a running window raises that window (and opens the file, if one was given)
   instead of starting a second process (`src/instance.rs`).
