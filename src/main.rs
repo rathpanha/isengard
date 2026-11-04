@@ -9,6 +9,7 @@ mod config;
 mod editor;
 mod file_tree;
 mod git;
+mod instance;
 mod lsp;
 mod menus;
 mod notify;
@@ -122,6 +123,13 @@ fn main() {
     // `isengard <folder>` opens a folder, `isengard <x.isengard-workspace>` a workspace,
     // and `isengard <file>` opens its parent folder and the file.
     let initial_path = std::env::args_os().nth(1).map(PathBuf::from);
+    // Already open in another running window: raise that one instead.
+    if initial_path
+        .as_deref()
+        .is_some_and(instance::forward_to_running)
+    {
+        return;
+    }
 
     gpui_kit::application()
         .with_assets(AppAssets)

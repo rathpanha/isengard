@@ -293,6 +293,9 @@ src/
 ├── update.rs            release lookup (GitHub API), install-kind detection,
 │                        asset pick, download + minisign/SHA-256 verify,
 │                        in-place / MacApp / WinExe / package install (no UI)
+├── instance.rs          single window per folder/workspace: registry in
+│                        `<data dir>/isengard/instances/<pid>` + loopback "raise"
+│                        listener; `main` forwards a CLI path and exits on `ok`
 ├── watch.rs             `FsWatcher`: non-recursive watches per dir (skips
 │                        `node_modules`/… so Linux inotify does not blow up)
 │                        → flume of `FsChange`

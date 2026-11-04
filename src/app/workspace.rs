@@ -75,6 +75,9 @@ impl IsengardApp {
         self.file_tree.set_folders(self.workspace.folders(), cx);
         self.refresh_git_panel(window, cx);
         self.restart_fs_watch(window, cx);
+        if let Some(instance) = &self.instance {
+            instance.set_workspace(Some(&self.workspace));
+        }
         window.set_window_title(&self.window_title());
         self.refresh_menus(cx);
         // Workspace `settings` overlay font / format-on-save (not written to config.json).

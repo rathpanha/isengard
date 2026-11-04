@@ -25,6 +25,34 @@ enum TabAction {
 }
 
 impl IsengardApp {
+    /// Registers this window so a later launch of the same folder/workspace
+    /// raises it instead of starting another process.
+    pub(super) fn start_instance_listener(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+        let Some((registration, requests)) = crate::instance::Registration::start() else {
+            return;
+        };
+        self.instance = Some(registration);
+        cx.spawn_in(window, async move |this, window| {
+            while let Ok(request) = requests.recv_async().await {
+                let alive = this
+                    .update_in(window, |this, window, cx| {
+                        window.activate_window();
+                        if let Some(file) = request.file {
+                            this.open_file(&file, true, window, cx);
+                        }
+                    })
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// (Re)start watching the current roots. Called from `workspace_changed`.
     pub(super) fn restart_fs_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.fs_watch = None;

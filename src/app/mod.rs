@@ -280,6 +280,8 @@ pub struct IsengardApp {
     fs_watch: Option<crate::watch::FsWatcher>,
     /// Bumps on every restart so a replaced watcher's pump stops applying.
     fs_watch_gen: u64,
+    /// Lets a second launch of an already-open folder raise this window.
+    instance: Option<crate::instance::Registration>,
     /// Open dirty files whose disk text diverged (warned once each).
     disk_conflicts: std::collections::HashSet<PathBuf>,
     _subscriptions: Vec<Subscription>,
@@ -489,6 +491,7 @@ impl IsengardApp {
             lsp: LspHost::default(),
             fs_watch: None,
             fs_watch_gen: 0,
+            instance: None,
             disk_conflicts: std::collections::HashSet::new(),
             _subscriptions: vec![
                 tree_subscription,
@@ -508,6 +511,7 @@ impl IsengardApp {
                 });
             }));
         app.start_lsp_event_pump(cx);
+        app.start_instance_listener(window, cx);
 
         // Otherwise start on the welcome screen.
         match initial_path {
