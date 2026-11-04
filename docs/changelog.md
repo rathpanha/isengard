@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-04** — Release prep v0.2.8 (Vue, Angular and more languages): version
+  bump, `docs/releases/v0.2.8.md`, status release lines.
 - **2026-11-04** — ~30 more languages detected (Angular, SCSS/Less, Prisma, Dart,
   Haskell, Terraform, Nix, Elm, …) with server specs and npm Install recipes
   where available; dotfiles like `.bashrc`/`Gemfile` mapped.
