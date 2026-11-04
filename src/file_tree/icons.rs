@@ -167,8 +167,9 @@ fn load_icon(name: &str) -> Arc<Image> {
         return image.clone();
     }
 
-    let file = format!("{name}.svg");
-    let bytes = MaterialSvgs::get(&file)
+    // The theme ships some icons as `<name>.clone.svg` (e.g. `folder-redis`).
+    let bytes = MaterialSvgs::get(&format!("{name}.svg"))
+        .or_else(|| MaterialSvgs::get(&format!("{name}.clone.svg")))
         .map(|f| f.data.into_owned())
         .or_else(|| {
             // Missing association target → generic file glyph.
@@ -232,6 +233,12 @@ mod tests {
             resolve_icon_name(Path::new("Cargo.toml"), false, false, false, false),
             "toml_light"
         );
+    }
+
+    #[test]
+    fn clone_named_svgs_are_found() {
+        assert!(MaterialSvgs::get("folder-redis.clone.svg").is_some());
+        assert!(!Arc::ptr_eq(&load_icon("folder-redis"), &load_icon("file")));
     }
 
     #[test]
