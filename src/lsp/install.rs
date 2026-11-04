@@ -310,6 +310,130 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
                 }],
             },
         },
+        "vue-language-server" => InstallRecipe {
+            name: "vue-language-server",
+            summary: "Vue language server (Volar).",
+            pkg_id: "vue-language-server",
+            bin_names: &["vue-language-server"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "typescript",
+                        version: "5.7.3",
+                    },
+                    NpmSpec {
+                        name: "@vue/language-server",
+                        version: "3.3.14",
+                    },
+                ],
+            },
+        },
+        "ngserver" => InstallRecipe {
+            name: "angular-language-server",
+            summary: "Angular language server.",
+            pkg_id: "angular-language-server",
+            bin_names: &["ngserver"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "typescript",
+                        version: "5.7.3",
+                    },
+                    NpmSpec {
+                        name: "@angular/language-service",
+                        version: "19.2.0",
+                    },
+                    NpmSpec {
+                        name: "@angular/language-server",
+                        version: "19.2.0",
+                    },
+                ],
+            },
+        },
+        "prisma-language-server" => InstallRecipe {
+            name: "prisma-language-server",
+            summary: "Prisma language server.",
+            pkg_id: "prisma-language-server",
+            bin_names: &["prisma-language-server"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "@prisma/language-server",
+                        version: "31.13.0",
+                    },
+                ],
+            },
+        },
+        "elm-language-server" => InstallRecipe {
+            name: "elm-language-server",
+            summary: "Elm language server.",
+            pkg_id: "elm-language-server",
+            bin_names: &["elm-language-server"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "@elm-tooling/elm-language-server",
+                        version: "2.8.0",
+                    },
+                ],
+            },
+        },
+        "purescript-language-server" => InstallRecipe {
+            name: "purescript-language-server",
+            summary: "PureScript language server.",
+            pkg_id: "purescript-language-server",
+            bin_names: &["purescript-language-server"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "purescript-language-server",
+                        version: "0.18.5",
+                    },
+                ],
+            },
+        },
+        "nomicfoundation-solidity-language-server" => InstallRecipe {
+            name: "solidity-language-server",
+            summary: "Solidity language server.",
+            pkg_id: "solidity-language-server",
+            bin_names: &["nomicfoundation-solidity-language-server"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "@nomicfoundation/solidity-language-server",
+                        version: "0.9.3",
+                    },
+                ],
+            },
+        },
+        "intelephense" => InstallRecipe {
+            name: "intelephense",
+            summary: "PHP language server.",
+            pkg_id: "intelephense",
+            bin_names: &["intelephense"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "intelephense",
+                        version: "1.18.5",
+                    },
+                ],
+            },
+        },
+        "perlnavigator" => InstallRecipe {
+            name: "perlnavigator",
+            summary: "Perl language server.",
+            pkg_id: "perlnavigator",
+            bin_names: &["perlnavigator"],
+            fetch: FetchKind::Npm {
+                packages: &[
+                    NpmSpec {
+                        name: "perlnavigator-server",
+                        version: "0.8.12",
+                    },
+                ],
+            },
+        },
         "astro-ls" => InstallRecipe {
             name: "astro-ls",
             summary: "Astro language server.",

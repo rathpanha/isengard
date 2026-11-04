@@ -165,6 +165,126 @@ const ASTRO: ServerSpec = ServerSpec {
     args: &["--stdio"],
     language_id: "astro",
 };
+const VUE: ServerSpec = ServerSpec {
+    command: "vue-language-server",
+    args: &["--stdio"],
+    language_id: "vue",
+};
+const ANGULAR: ServerSpec = ServerSpec {
+    command: "ngserver",
+    args: &["--stdio"],
+    language_id: "html",
+};
+const SCSS: ServerSpec = ServerSpec {
+    command: "vscode-css-language-server",
+    args: &["--stdio"],
+    language_id: "scss",
+};
+const LESS: ServerSpec = ServerSpec {
+    command: "vscode-css-language-server",
+    args: &["--stdio"],
+    language_id: "less",
+};
+const PRISMA: ServerSpec = ServerSpec {
+    command: "prisma-language-server",
+    args: &["--stdio"],
+    language_id: "prisma",
+};
+const XML: ServerSpec = ServerSpec {
+    command: "lemminx",
+    args: &[],
+    language_id: "xml",
+};
+const DART: ServerSpec = ServerSpec {
+    command: "dart",
+    args: &["language-server", "--protocol=lsp"],
+    language_id: "dart",
+};
+const HASKELL: ServerSpec = ServerSpec {
+    command: "haskell-language-server-wrapper",
+    args: &["--lsp"],
+    language_id: "haskell",
+};
+const OCAML: ServerSpec = ServerSpec {
+    command: "ocamllsp",
+    args: &[],
+    language_id: "ocaml",
+};
+const R_LANG: ServerSpec = ServerSpec {
+    command: "R",
+    args: &["--slave", "-e", "languageserver::run()"],
+    language_id: "r",
+};
+const PERL: ServerSpec = ServerSpec {
+    command: "perlnavigator",
+    args: &["--stdio"],
+    language_id: "perl",
+};
+const CLOJURE: ServerSpec = ServerSpec {
+    command: "clojure-lsp",
+    args: &[],
+    language_id: "clojure",
+};
+const ERLANG: ServerSpec = ServerSpec {
+    command: "erlang_ls",
+    args: &[],
+    language_id: "erlang",
+};
+const NIM: ServerSpec = ServerSpec {
+    command: "nimlangserver",
+    args: &[],
+    language_id: "nim",
+};
+const TERRAFORM: ServerSpec = ServerSpec {
+    command: "terraform-ls",
+    args: &["serve"],
+    language_id: "terraform",
+};
+const NIX: ServerSpec = ServerSpec {
+    command: "nil",
+    args: &[],
+    language_id: "nix",
+};
+const GLEAM: ServerSpec = ServerSpec {
+    command: "gleam",
+    args: &["lsp"],
+    language_id: "gleam",
+};
+const OBJC: ServerSpec = ServerSpec {
+    command: "clangd",
+    args: &[],
+    language_id: "objective-c",
+};
+const LATEX: ServerSpec = ServerSpec {
+    command: "texlab",
+    args: &[],
+    language_id: "latex",
+};
+const TYPST: ServerSpec = ServerSpec {
+    command: "tinymist",
+    args: &[],
+    language_id: "typst",
+};
+const ELM: ServerSpec = ServerSpec {
+    command: "elm-language-server",
+    args: &[],
+    language_id: "elm",
+};
+const PURESCRIPT: ServerSpec = ServerSpec {
+    command: "purescript-language-server",
+    args: &["--stdio"],
+    language_id: "purescript",
+};
+const SOLIDITY: ServerSpec = ServerSpec {
+    command: "nomicfoundation-solidity-language-server",
+    args: &["--stdio"],
+    language_id: "solidity",
+};
+const FSHARP: ServerSpec = ServerSpec {
+    command: "fsautocomplete",
+    args: &[],
+    language_id: "fsharp",
+};
 const MARKDOWN: ServerSpec = ServerSpec {
     command: "marksman",
     args: &["server"],
@@ -197,6 +317,37 @@ pub fn config_key(language: Language) -> &'static str {
         Language::Dockerfile => "dockerfile",
         Language::Svg => "svg",
         Language::PlainText => "plaintext",
+        Language::Angular => "angular",
+        Language::Scss => "scss",
+        Language::Less => "less",
+        Language::Prisma => "prisma",
+        Language::Xml => "xml",
+        Language::Dart => "dart",
+        Language::Haskell => "haskell",
+        Language::OCaml => "ocaml",
+        Language::Julia => "julia",
+        Language::R => "r",
+        Language::Perl => "perl",
+        Language::Clojure => "clojure",
+        Language::Erlang => "erlang",
+        Language::Nim => "nim",
+        Language::Terraform => "terraform",
+        Language::Nix => "nix",
+        Language::Gleam => "gleam",
+        Language::PowerShell => "powershell",
+        Language::Groovy => "groovy",
+        Language::ObjectiveC => "objective-c",
+        Language::Latex => "latex",
+        Language::Typst => "typst",
+        Language::Elm => "elm",
+        Language::PureScript => "purescript",
+        Language::Solidity => "solidity",
+        Language::Ini => "ini",
+        Language::Pug => "pug",
+        Language::Handlebars => "handlebars",
+        Language::CoffeeScript => "coffeescript",
+        Language::FSharp => "fsharp",
+
         other => other.highlighter_name(),
     }
 }
@@ -231,16 +382,47 @@ pub fn default_server(language: Language) -> Option<&'static ServerSpec> {
         Language::Elixir => &ELIXIR,
         Language::Svelte => &SVELTE,
         Language::Astro => &ASTRO,
+        Language::Vue => &VUE,
         Language::Markdown => &MARKDOWN,
         Language::CMake => &CMAKE,
         Language::Proto => &PROTO,
         Language::GraphQL => &GRAPHQL,
         Language::Sql => &SQL,
+        Language::Angular => &ANGULAR,
+        Language::Scss => &SCSS,
+        Language::Less => &LESS,
+        Language::Prisma => &PRISMA,
+        Language::Xml => &XML,
+        Language::Dart => &DART,
+        Language::Haskell => &HASKELL,
+        Language::OCaml => &OCAML,
+        Language::R => &R_LANG,
+        Language::Perl => &PERL,
+        Language::Clojure => &CLOJURE,
+        Language::Erlang => &ERLANG,
+        Language::Nim => &NIM,
+        Language::Terraform => &TERRAFORM,
+        Language::Nix => &NIX,
+        Language::Gleam => &GLEAM,
+        Language::ObjectiveC => &OBJC,
+        Language::Latex => &LATEX,
+        Language::Typst => &TYPST,
+        Language::Elm => &ELM,
+        Language::PureScript => &PURESCRIPT,
+        Language::Solidity => &SOLIDITY,
+        Language::FSharp => &FSHARP,
         Language::Diff
         | Language::Make
         | Language::Ejs
         | Language::Erb
         | Language::Svg
+        | Language::Julia
+        | Language::PowerShell
+        | Language::Groovy
+        | Language::Ini
+        | Language::Pug
+        | Language::Handlebars
+        | Language::CoffeeScript
         | Language::PlainText => return None,
     })
 }
@@ -253,7 +435,9 @@ pub fn catalog_commands() -> Vec<&'static str> {
     let languages = [
         Astro, Bash, C, CMake, CSharp, Cpp, Css, Diff, Dockerfile, Ejs, Elixir, Erb, Go, GraphQL,
         Html, Java, JavaScript, Json, Kotlin, Lua, Make, Markdown, Svg, Php, Proto, Python, Ruby,
-        Rust, Scala, Sql, Svelte, Swift, Toml, Tsx, TypeScript, Yaml, Zig, PlainText,
+        Rust, Scala, Sql, Svelte, Swift, Toml, Tsx, TypeScript, Vue, Yaml, Zig, PlainText, Angular,
+        Scss, Less, Prisma, Xml, Dart, Haskell, OCaml, R, Perl, Clojure, Erlang, Nim, Terraform, Nix,
+        Gleam, ObjectiveC, Latex, Typst, Elm, PureScript, Solidity, FSharp,
     ];
     let mut set = std::collections::BTreeSet::new();
     for language in languages {
@@ -262,6 +446,20 @@ pub fn catalog_commands() -> Vec<&'static str> {
         }
     }
     set.into_iter().collect()
+}
+
+/// ngserver loads `typescript` and `@angular/language-service` from probe
+/// locations; point both at the app-local install.
+fn angular_probe_args() -> Vec<String> {
+    let dir = super::install::pkg_dir(&super::install::lsp_root(), "angular-language-server")
+        .join("node_modules");
+    let dir = dir.to_string_lossy().into_owned();
+    vec![
+        "--tsProbeLocations".into(),
+        dir.clone(),
+        "--ngProbeLocations".into(),
+        dir,
+    ]
 }
 
 /// Resolve spawn info from defaults + [`LspSettings`].
@@ -289,9 +487,13 @@ pub fn resolve(language: Language, settings: &LspSettings) -> Option<ResolvedSer
     let args = override_cfg
         .and_then(|o| o.args.clone())
         .unwrap_or_else(|| {
-            default
+            let mut args: Vec<String> = default
                 .map(|d| d.args.iter().map(|s| (*s).to_string()).collect())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            if command == "ngserver" {
+                args.extend(angular_probe_args());
+            }
+            args
         });
 
     Some(ResolvedServerSpec {
@@ -325,6 +527,33 @@ mod tests {
         assert_eq!(ts.language_id, "typescript");
         assert_eq!(js.language_id, "javascript");
         assert_eq!(tsx.language_id, "typescriptreact");
+    }
+
+    #[test]
+    fn vue_uses_vue_language_server() {
+        let spec = resolve(Language::Vue, &LspSettings::default()).unwrap();
+        assert_eq!(spec.command, "vue-language-server");
+        assert_eq!(spec.language_id, "vue");
+    }
+
+    #[test]
+    fn aliased_languages_have_distinct_config_keys() {
+        let all = [
+            Language::Html,
+            Language::Angular,
+            Language::Css,
+            Language::Scss,
+            Language::Less,
+            Language::Toml,
+            Language::Ini,
+            Language::C,
+            Language::ObjectiveC,
+        ];
+        let keys: std::collections::BTreeSet<_> = all.iter().map(|l| config_key(*l)).collect();
+        assert_eq!(keys.len(), all.len());
+        let angular = resolve(Language::Angular, &LspSettings::default()).unwrap();
+        assert_eq!(angular.command, "ngserver");
+        assert!(angular.args.contains(&"--ngProbeLocations".to_string()));
     }
 
     #[test]

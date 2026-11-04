@@ -46,8 +46,40 @@ pub enum Language {
     Toml,
     Tsx,
     TypeScript,
+    /// Vue single-file component; highlighter aliases to HTML (no Vue grammar in the kit).
+    Vue,
     Yaml,
     Zig,
+    Angular,
+    Scss,
+    Less,
+    Prisma,
+    Xml,
+    Dart,
+    Haskell,
+    OCaml,
+    Julia,
+    R,
+    Perl,
+    Clojure,
+    Erlang,
+    Nim,
+    Terraform,
+    Nix,
+    Gleam,
+    PowerShell,
+    Groovy,
+    ObjectiveC,
+    Latex,
+    Typst,
+    Elm,
+    PureScript,
+    Solidity,
+    Ini,
+    Pug,
+    Handlebars,
+    CoffeeScript,
+    FSharp,
     PlainText,
 }
 
@@ -69,6 +101,14 @@ impl Language {
                 return Language::Bash;
             }
             "cargo.lock" => return Language::Toml,
+            ".bashrc" | ".bash_profile" | ".bash_aliases" | ".zshrc" | ".zprofile" | ".zshenv"
+            | ".profile" => return Language::Bash,
+            ".babelrc" | ".eslintrc" | ".prettierrc" | ".swcrc" => return Language::Json,
+            ".editorconfig" | ".gitconfig" | ".npmrc" => return Language::Ini,
+            "gemfile" | "rakefile" | "podfile" | "brewfile" | "vagrantfile" => {
+                return Language::Ruby;
+            }
+            "jenkinsfile" => return Language::Groovy,
             "bun.lock" | "package-lock.json" | "composer.lock" => return Language::Json,
             "pnpm-lock.yaml" | "pnpm-lock.yml" => return Language::Yaml,
             "yarn.lock" => return Language::Bash,
@@ -87,6 +127,9 @@ impl Language {
             .unwrap_or_default();
 
         // Compound suffixes that `Path::extension` only sees partially.
+        if file_name.ends_with(".component.html") {
+            return Language::Angular;
+        }
         if file_name.ends_with(".html.erb") || file_name.ends_with(".js.erb") {
             return Language::Erb;
         }
@@ -97,8 +140,10 @@ impl Language {
             "c" | "h" => Language::C,
             "cmake" => Language::CMake,
             "cs" => Language::CSharp,
-            "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" | "h++" | "c++" => Language::Cpp,
-            "css" | "scss" => Language::Css,
+            "cpp" | "cc" | "cxx" | "cu" | "cuh" | "hpp" | "hh" | "hxx" | "h++" | "c++" => Language::Cpp,
+            "css" => Language::Css,
+            "scss" => Language::Scss,
+            "less" => Language::Less,
             "diff" | "patch" => Language::Diff,
             "dockerfile" => Language::Dockerfile,
             "ejs" => Language::Ejs,
@@ -129,8 +174,37 @@ impl Language {
             "toml" => Language::Toml,
             "tsx" => Language::Tsx,
             "ts" | "mts" | "cts" => Language::TypeScript,
+            "vue" => Language::Vue,
             "yml" | "yaml" => Language::Yaml,
             "zig" | "zon" => Language::Zig,
+            "prisma" => Language::Prisma,
+            "xml" | "xsd" | "xsl" | "xslt" | "plist" | "csproj" | "fsproj" | "vbproj" | "props"
+            | "targets" | "xaml" | "rss" | "atom" => Language::Xml,
+            "dart" => Language::Dart,
+            "hs" | "lhs" => Language::Haskell,
+            "ml" | "mli" => Language::OCaml,
+            "jl" => Language::Julia,
+            "r" => Language::R,
+            "pl" | "pm" => Language::Perl,
+            "clj" | "cljs" | "cljc" | "edn" => Language::Clojure,
+            "erl" | "hrl" => Language::Erlang,
+            "nim" | "nims" => Language::Nim,
+            "tf" | "tfvars" | "hcl" => Language::Terraform,
+            "nix" => Language::Nix,
+            "gleam" => Language::Gleam,
+            "ps1" | "psm1" | "psd1" => Language::PowerShell,
+            "groovy" | "gradle" => Language::Groovy,
+            "m" | "mm" => Language::ObjectiveC,
+            "tex" | "sty" | "cls" | "bib" => Language::Latex,
+            "typ" => Language::Typst,
+            "elm" => Language::Elm,
+            "purs" => Language::PureScript,
+            "sol" => Language::Solidity,
+            "ini" | "cfg" | "conf" | "properties" => Language::Ini,
+            "pug" | "jade" => Language::Pug,
+            "hbs" | "handlebars" => Language::Handlebars,
+            "coffee" => Language::CoffeeScript,
+            "fs" | "fsx" | "fsi" => Language::FSharp,
             _ => Language::PlainText,
         }
     }
@@ -175,8 +249,40 @@ impl Language {
             Language::Toml => "toml",
             Language::Tsx => "tsx",
             Language::TypeScript => "typescript",
+            // No Vue grammar; HTML highlighting is the closest available.
+            Language::Vue => "html",
             Language::Yaml => "yaml",
             Language::Zig => "zig",
+            Language::Angular => "html",
+            Language::Scss => "css",
+            Language::Less => "css",
+            Language::Prisma => "text",
+            Language::Xml => "html",
+            Language::Dart => "text",
+            Language::Haskell => "text",
+            Language::OCaml => "text",
+            Language::Julia => "text",
+            Language::R => "text",
+            Language::Perl => "text",
+            Language::Clojure => "text",
+            Language::Erlang => "text",
+            Language::Nim => "text",
+            Language::Terraform => "text",
+            Language::Nix => "text",
+            Language::Gleam => "text",
+            Language::PowerShell => "text",
+            Language::Groovy => "text",
+            Language::ObjectiveC => "c",
+            Language::Latex => "text",
+            Language::Typst => "text",
+            Language::Elm => "text",
+            Language::PureScript => "text",
+            Language::Solidity => "text",
+            Language::Ini => "text",
+            Language::Pug => "html",
+            Language::Handlebars => "html",
+            Language::CoffeeScript => "javascript",
+            Language::FSharp => "text",
             Language::PlainText => "text",
         }
     }
@@ -218,8 +324,39 @@ impl Language {
             Language::Toml => "TOML",
             Language::Tsx => "TSX",
             Language::TypeScript => "TypeScript",
+            Language::Vue => "Vue",
             Language::Yaml => "YAML",
             Language::Zig => "Zig",
+            Language::Angular => "Angular",
+            Language::Scss => "SCSS",
+            Language::Less => "Less",
+            Language::Prisma => "Prisma",
+            Language::Xml => "XML",
+            Language::Dart => "Dart",
+            Language::Haskell => "Haskell",
+            Language::OCaml => "OCaml",
+            Language::Julia => "Julia",
+            Language::R => "R",
+            Language::Perl => "Perl",
+            Language::Clojure => "Clojure",
+            Language::Erlang => "Erlang",
+            Language::Nim => "Nim",
+            Language::Terraform => "Terraform",
+            Language::Nix => "Nix",
+            Language::Gleam => "Gleam",
+            Language::PowerShell => "PowerShell",
+            Language::Groovy => "Groovy",
+            Language::ObjectiveC => "Objective-C",
+            Language::Latex => "LaTeX",
+            Language::Typst => "Typst",
+            Language::Elm => "Elm",
+            Language::PureScript => "PureScript",
+            Language::Solidity => "Solidity",
+            Language::Ini => "INI",
+            Language::Pug => "Pug",
+            Language::Handlebars => "Handlebars",
+            Language::CoffeeScript => "CoffeeScript",
+            Language::FSharp => "F#",
             Language::PlainText => "Plain Text",
         }
     }
@@ -255,6 +392,16 @@ mod tests {
             Language::Markdown
         );
         assert_eq!(Language::from_path(Path::new("icon.svg")), Language::Svg);
+        assert_eq!(Language::from_path(Path::new("App.vue")), Language::Vue);
+        assert_eq!(
+            Language::from_path(Path::new("app.component.html")),
+            Language::Angular
+        );
+        assert_eq!(Language::from_path(Path::new("a.scss")), Language::Scss);
+        assert_eq!(Language::from_path(Path::new("main.dart")), Language::Dart);
+        assert_eq!(Language::from_path(Path::new("main.tf")), Language::Terraform);
+        assert_eq!(Language::from_path(Path::new("Gemfile")), Language::Ruby);
+        assert_eq!(Language::from_path(Path::new(".bashrc")), Language::Bash);
         assert_eq!(Language::from_path(Path::new("Makefile")), Language::Make);
         assert_eq!(
             Language::from_path(Path::new("CMakeLists.txt")),

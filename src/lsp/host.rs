@@ -913,6 +913,16 @@ fn initialization_options(command: &str) -> Option<Value> {
             }
         }));
     }
+    // Volar needs the TypeScript SDK that Install put next to it.
+    if command.contains("vue-language-server") {
+        let tsdk = super::install::pkg_dir(&super::install::lsp_root(), "vue-language-server")
+            .join("node_modules")
+            .join("typescript")
+            .join("lib");
+        if tsdk.is_dir() {
+            return Some(json!({ "typescript": { "tsdk": tsdk } }));
+        }
+    }
     None
 }
 

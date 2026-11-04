@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-04** — ~30 more languages detected (Angular, SCSS/Less, Prisma, Dart,
+  Haskell, Terraform, Nix, Elm, …) with server specs and npm Install recipes
+  where available; dotfiles like `.bashrc`/`Gemfile` mapped.
+- **2026-11-04** — `.vue` files are now a Vue language (HTML highlighting) with a
+  `vue-language-server` (`@vue/language-server` + `typescript`) Install recipe, so
+  opening one offers the install like other servers.
 - **2026-11-04** — Release prep v0.2.7 (one window per folder): version bump,
   `docs/releases/v0.2.7.md`, status release lines.
 - **2026-11-04** — Launching `isengard <path>` for a folder/workspace already open

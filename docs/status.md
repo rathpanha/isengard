@@ -69,7 +69,15 @@ What works today:
   `…/isengard/runtime/bun-cache`). Existing npm-era installs keep working until
   Remove + Install; they run on Bun too once it is present. Only the agent
   adapter is verified on Bun so far — the language servers are untested.
-  `pylsp` / `clangd` / etc. stay PATH-only (no Install).
+  `pylsp` / `clangd` / etc. stay PATH-only (no Install). Also detected (HTML /
+  CSS / plain-text highlighting where Kit has no grammar): Angular
+  (`*.component.html`, `ngserver` Install), SCSS / Less (CSS server), Prisma,
+  Elm, PureScript, Solidity, Perl, PHP (Install); PATH-only servers for XML,
+  Dart, Haskell, OCaml, R, Clojure, Erlang, Nim, Terraform, Nix, Gleam,
+  Objective-C, LaTeX, Typst, F#; highlight-only for Julia, PowerShell, Groovy,
+  INI, Pug, Handlebars, CoffeeScript. All untested against real servers. Vue (`.vue`, HTML
+  highlighting) uses `vue-language-server`; TS-in-`<script>` forwarding to
+  tsserver is not wired, so script features are limited (untested).
   **Bun** (pinned 1.4.4, `lsp/bin/bun`): first launch without it (not app-local,
   not on `PATH`, not `~/.bun/bin`) shows a non-dismissable **Set up Bun** dialog
   (Install / Quit). Windows `.cmd` shims are not moved to Bun yet.
