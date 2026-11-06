@@ -193,6 +193,9 @@ Add a row here whenever a new shared component is created.
   folder and a file can't reorder roots. No-op positions get no highlight. Every row consumes the drop (no `can_drop`):
   a refused drop is ignored inside the handler, so it can't fall through to the
   panel's blank-space handler or leave the hover painted.
+- **Tree multi-select:** Ctrl/Cmd+click toggles a row (marked rows use the
+  `ListItem` selected fill); a plain click clears. Dragging a marked row moves
+  all marked rows (preview reads `N items`).
 - **Tree cut / copy / paste:** row and blank-space context menus list Cut ·
   Copy · Paste (Paste disabled while the clipboard is empty; Cut disabled on a
   workspace root). `⌘X`/`⌘C`/`⌘V` act on the selection while the Tree has focus.

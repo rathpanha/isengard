@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-06** — Tree multi-select: the first Ctrl-click keeps the previously selected row; marked rows get the active fill.
+- **2026-11-06** — File tree multi-select: Ctrl/Cmd+click toggles rows; Cut /
+  Copy / Paste, Delete and drag-to-move act on all selected rows.
 - **2026-11-06** — Tree rows show a Scissors (cut, row dimmed) / Copy icon while on the clipboard.
 - **2026-11-06** — File tree Cut / Copy / Paste (context menu + `⌘X`/`⌘C`/`⌘V`
   while the Tree is focused); copies never overwrite (`name copy.ext`).

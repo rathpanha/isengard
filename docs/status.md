@@ -34,6 +34,11 @@ What works today:
   parent folders roll up); indent guides (design owns the pixel rules).
   Context menu: files Cut / Copy / Paste / Reveal in File Manager (Finder / File Explorer) / Rename /
   Delete; folders New File / New Folder / Cut / Copy / Paste / Reveal / Rename / Delete (multi-root roots also Remove Folder from Workspace; roots can't be cut).
+  **Multi-select:** Ctrl/Cmd+click toggles rows (the previously selected row
+  joins on the first click; no open / expand while Ctrl is held; a plain click
+  clears it; workspace roots can't be marked). Cut / Copy / Paste, Delete
+  (one Trash toast) and drag-to-move act on every marked row (nested picks fold
+  into their folder). No Shift range-select yet.
   **Cut / Copy / Paste** (menu or `⌘X`/`⌘C`/`⌘V` with the Tree focused; one
   in-app clipboard, not the OS one): paste into the folder row, a file row's
   parent, or the root (no selection / blank-space menu). Cut + paste = move

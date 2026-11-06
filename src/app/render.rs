@@ -1097,6 +1097,8 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_move_path))
             .on_action(cx.listener(Self::on_reorder_root))
             .on_action(cx.listener(Self::on_toggle_dir))
+            .on_action(cx.listener(Self::on_toggle_mark))
+            .on_action(cx.listener(Self::on_clear_marks))
             .on_action(cx.listener(Self::on_delete_path))
             .on_action(cx.listener(Self::on_reveal_path))
             .on_action(cx.listener(Self::on_new_file_in))

@@ -429,7 +429,10 @@ src/
   `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
   the tree's context menu. Same pattern for `RenamePath` / `DeletePath` /
-  `NewFileIn` / `NewFolderIn` (plus `CutPath` / `CopyPath` / `PastePath`; the
+  `NewFileIn` / `NewFolderIn` (plus `ToggleMark` / `ClearMarks` — the Ctrl-click
+  multi-selection lives on `FileTreePanel::marked` because Kit's `Tree` is
+  single-select; row mouse-down dispatches them, `targets_for` /
+  `selection_targets` resolve what an action applies to; plus `CutPath` / `CopyPath` / `PastePath`; the
   clipboard is `IsengardApp::tree_clipboard`, `FileTreePanel::set_can_paste`
   only gates the menu item; keys `secondary-x/c/v` in the `Tree` context). These are defined in `ui/file_tree.rs`
   (the dispatcher) and handled in `app/` — `ui/` never imports `app`. Blank-space New File/Folder uses a panel

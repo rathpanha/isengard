@@ -497,14 +497,16 @@ fn tree_copy_and_cut_paste(cx: &mut TestAppContext) {
 
     // Copy a file into a folder; the source stays and the tab is untouched.
     h.with_app(cx, |app, w, cx| {
-        app.set_tree_clipboard(file.clone(), false, w, cx)
+        app.set_tree_clipboard(vec![file.clone()], false, w, cx)
     });
     let mark = h.with_app(cx, |app, _, _| {
-        app.file_tree
-            .clipboard()
-            .map(|(p, cut)| (p.to_path_buf(), cut))
+        app.file_tree.clipboard().map(|(p, cut)| (p.to_vec(), cut))
     });
-    assert_eq!(mark, Some((file.clone(), false)), "row is marked as copied");
+    assert_eq!(
+        mark,
+        Some((vec![file.clone()], false)),
+        "row is marked as copied"
+    );
     let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
     assert!(r.is_ok(), "{r:?}");
     assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "hello");
@@ -520,7 +522,7 @@ fn tree_copy_and_cut_paste(cx: &mut TestAppContext) {
 
     // Copy a folder next to itself: deep copy named "dir copy".
     h.with_app(cx, |app, w, cx| {
-        app.set_tree_clipboard(dir.clone(), false, w, cx)
+        app.set_tree_clipboard(vec![dir.clone()], false, w, cx)
     });
     let root = h.dir.path().to_path_buf();
     let r = h.with_app(cx, |app, w, cx| app.paste_path(&root, w, cx));
@@ -533,7 +535,7 @@ fn tree_copy_and_cut_paste(cx: &mut TestAppContext) {
 
     // Cut + paste moves (open tab follows) and empties the clipboard.
     h.with_app(cx, |app, w, cx| {
-        app.set_tree_clipboard(file.clone(), true, w, cx)
+        app.set_tree_clipboard(vec![file.clone()], true, w, cx)
     });
     let r = h.with_app(cx, |app, w, cx| app.paste_path(&dir, w, cx));
     assert!(r.is_ok(), "{r:?}");
@@ -545,18 +547,92 @@ fn tree_copy_and_cut_paste(cx: &mut TestAppContext) {
 
     // Pasting a cut into its own folder is a quiet no-op.
     h.with_app(cx, |app, w, cx| {
-        app.set_tree_clipboard(dir.join("a.txt"), true, w, cx)
+        app.set_tree_clipboard(vec![dir.join("a.txt")], true, w, cx)
     });
     let r = h.with_app(cx, |app, w, cx| app.paste_path(&dir, w, cx));
     assert!(r.is_ok() && dir.join("a.txt").exists());
 
     // Workspace roots cannot be cut: the clipboard keeps its previous entry.
     h.with_app(cx, |app, w, cx| {
-        app.set_tree_clipboard(root.clone(), true, w, cx)
+        app.set_tree_clipboard(vec![root.clone()], true, w, cx)
     });
     let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
     assert!(r.is_err(), "still the earlier cut, which collides in dst");
     assert!(root.exists() && !dst.join(root.file_name().unwrap()).exists());
+}
+
+#[gpui_kit::test]
+fn tree_multi_select_acts_on_every_marked_row(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let a = h.file("a.txt", "a");
+    let b = h.file("b.txt", "b");
+    let c = h.file("c.txt", "c");
+    let dst = h.folder("dst");
+    h.open_folder(h.dir.path(), cx);
+
+    // Ctrl-click a, then b: both marked; a plain click clears them.
+    h.with_app(cx, |app, w, cx| {
+        // A real Ctrl-click moves the selection to `b` first, handing over `a`.
+        app.file_tree.select_path(&b, cx);
+        let click = crate::ui::file_tree::ToggleMark {
+            path: b.clone(),
+            prev: Some(a.clone()),
+        };
+        app.on_toggle_mark(&click, w, cx);
+    });
+    let targets = h.with_app(cx, |app, _, cx| app.file_tree.selection_targets(cx));
+    assert_eq!(targets.len(), 2, "{targets:?}");
+    // The workspace root never joins the selection.
+    let root = h.dir.path().to_path_buf();
+    h.with_app(cx, |app, w, cx| {
+        let click = crate::ui::file_tree::ToggleMark {
+            path: root.clone(),
+            prev: None,
+        };
+        app.on_toggle_mark(&click, w, cx)
+    });
+    let targets = h.with_app(cx, |app, _, cx| app.file_tree.selection_targets(cx));
+    assert_eq!(targets.len(), 2);
+
+    // Cut both, paste into a folder: both move.
+    let marked = h.with_app(cx, |app, _, cx| app.file_tree.selection_targets(cx));
+    h.with_app(cx, |app, w, cx| app.set_tree_clipboard(marked, true, w, cx));
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(dst.join("a.txt").exists() && dst.join("b.txt").exists());
+    assert!(!a.exists() && !b.exists() && c.exists());
+
+    // Delete several at once (c plus the pasted a).
+    h.with_app(cx, |app, w, cx| {
+        app.file_tree.clear_marks(cx);
+        app.file_tree.select_path(&dst.join("a.txt"), cx);
+        let click = crate::ui::file_tree::ToggleMark {
+            path: dst.join("a.txt"),
+            prev: Some(c.clone()),
+        };
+        app.on_toggle_mark(&click, w, cx);
+    });
+    let targets = h.with_app(cx, |app, _, cx| app.file_tree.selection_targets(cx));
+    h.with_app(cx, |app, w, cx| app.delete_paths(&targets, w, cx));
+    assert!(!c.exists() && !dst.join("a.txt").exists() && dst.join("b.txt").exists());
+}
+
+#[test]
+fn top_level_folds_nested_paths_into_their_folder() {
+    use crate::ui::file_tree::top_level;
+    use std::path::PathBuf;
+    let paths: Vec<PathBuf> = ["/w/d", "/w/d/x.txt", "/w/y.txt", "/w/dd"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    let top = top_level(&paths);
+    assert_eq!(
+        top,
+        ["/w/d", "/w/y.txt", "/w/dd"]
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

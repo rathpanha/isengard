@@ -107,8 +107,9 @@ pub(super) use crate::ui::components::{
     center_dialog, notify_error, notify_success, notify_warning,
 };
 pub(super) use crate::ui::file_tree::{
-    CopyPath, CutPath, DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn, PastePath,
-    RemoveWorkspaceFolder, RenamePath, ReorderRoot, RevealPath, ToggleDir, TreeEditTarget,
+    ClearMarks, CopyPath, CutPath, DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn,
+    PastePath, RemoveWorkspaceFolder, RenamePath, ReorderRoot, RevealPath, ToggleDir, ToggleMark,
+    TreeEditTarget,
 };
 pub(super) use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
 pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};

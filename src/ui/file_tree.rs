@@ -83,6 +83,21 @@ pub struct ToggleDir {
     pub expand: bool,
 }
 
+/// Ctrl/Cmd+click: adds or removes a row from the multi-selection.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct ToggleMark {
+    pub path: PathBuf,
+    /// The row that was selected just before this click (becomes part of the
+    /// selection on the first Ctrl-click).
+    pub prev: Option<PathBuf>,
+}
+
+/// Plain click: drops the multi-selection.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct ClearMarks;
+
 /// Moves `from` into the directory `to_dir` (tree drag-and-drop).
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]
@@ -104,6 +119,9 @@ pub struct ReorderRoot {
 #[derive(Clone, Debug)]
 pub struct TreeEntryDrag {
     pub path: PathBuf,
+    /// Every top-level path the drag moves: the whole multi-selection when the
+    /// dragged row is part of it, else just `path`.
+    pub paths: Vec<PathBuf>,
     pub label: SharedString,
     pub is_dir: bool,
     pub dark: bool,
@@ -135,8 +153,22 @@ impl Render for TreeDragPreview {
                 false,
                 self.drag.dark,
             ))
-            .child(self.drag.label.clone())
+            .child(if self.drag.paths.len() > 1 {
+                SharedString::from(format!("{} items", self.drag.paths.len()))
+            } else {
+                self.drag.label.clone()
+            })
     }
+}
+
+/// Drops paths that live inside another path of the set (moving / deleting the
+/// folder already covers them), keeping order.
+pub fn top_level(paths: &[PathBuf]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .filter(|p| !paths.iter().any(|q| q != *p && p.starts_with(q)))
+        .cloned()
+        .collect()
 }
 
 /// Whether dragging `from` into `to_dir` is a real move: not onto itself, not
@@ -206,7 +238,10 @@ pub struct FileTreePanel {
     /// Ancestor folders with a rolled-up dirty letter for label tint.
     git_folder_status: HashMap<PathBuf, char>,
     /// The tree clipboard (path, is_cut): gates Paste and marks the source row.
-    clipboard: Option<(PathBuf, bool)>,
+    clipboard: Option<(Vec<PathBuf>, bool)>,
+    /// Ctrl/Cmd-click multi-selection (never workspace roots). Empty = just the
+    /// Kit single selection.
+    marked: Vec<PathBuf>,
 }
 
 impl FileTreePanel {
@@ -219,18 +254,63 @@ impl FileTreePanel {
             git_file_status: HashMap::new(),
             git_folder_status: HashMap::new(),
             clipboard: None,
+            marked: Vec::new(),
         }
     }
 
     /// Row currently marked cut (`true`) or copied (`false`), if any.
     #[cfg(test)]
-    pub fn clipboard(&self) -> Option<(&Path, bool)> {
-        self.clipboard.as_ref().map(|(p, cut)| (p.as_path(), *cut))
+    pub fn clipboard(&self) -> Option<(&[PathBuf], bool)> {
+        self.clipboard.as_ref().map(|(p, cut)| (p.as_slice(), *cut))
+    }
+
+    /// Adds / removes `path` from the multi-selection. The first Ctrl-click also
+    /// pulls in the row that was selected before it.
+    pub fn toggle_mark(&mut self, path: &Path, prev: Option<PathBuf>, cx: &mut App) {
+        if self.marked.is_empty()
+            && let Some(prev) = prev
+            && prev != path
+            && !self.roots.iter().any(|r| r.path() == prev)
+        {
+            self.marked.push(prev);
+        }
+        if let Some(ix) = self.marked.iter().position(|p| p == path) {
+            self.marked.remove(ix);
+        } else {
+            self.marked.push(path.to_path_buf());
+        }
+        self.state.update(cx, |_, cx| cx.notify());
+    }
+
+    pub fn clear_marks(&mut self, cx: &mut App) {
+        if !self.marked.is_empty() {
+            self.marked.clear();
+            self.state.update(cx, |_, cx| cx.notify());
+        }
+    }
+
+    /// What an action on `path` applies to: the whole multi-selection when `path`
+    /// is in it, else just `path`. Nested paths are folded into their folder.
+    pub fn targets_for(&self, path: &Path) -> Vec<PathBuf> {
+        if self.marked.len() > 1 && self.marked.iter().any(|p| p == path) {
+            top_level(&self.marked)
+        } else {
+            vec![path.to_path_buf()]
+        }
+    }
+
+    /// Targets of a keyboard action: the multi-selection, else the selected row.
+    pub fn selection_targets(&self, cx: &App) -> Vec<PathBuf> {
+        if self.marked.len() > 1 {
+            top_level(&self.marked)
+        } else {
+            self.selected_path(cx).into_iter().collect()
+        }
     }
 
     /// Mirrors the app's tree clipboard (it lives on the app) so Paste is offered
     /// and the cut / copied row shows an indicator.
-    pub fn set_clipboard(&mut self, clipboard: Option<(PathBuf, bool)>, cx: &mut App) {
+    pub fn set_clipboard(&mut self, clipboard: Option<(Vec<PathBuf>, bool)>, cx: &mut App) {
         self.clipboard = clipboard;
         self.state.update(cx, |_, cx| cx.notify());
     }
@@ -483,6 +563,7 @@ impl FileTreePanel {
         let blank_menu_blocked = Rc::new(Cell::new(false));
         let clipboard = self.clipboard.clone();
         let can_paste = clipboard.is_some();
+        let marked = Rc::new(self.marked.clone());
         let on_open_file = Rc::new(on_open_file);
         let tree_state = self.state.clone();
         let edit_id = edit.map(|(target, _)| target.row_id());
@@ -569,8 +650,16 @@ impl FileTreePanel {
                 && !is_missing_root;
             let row_is_root = multi_root && entry.depth() == 0;
             let root_paths = root_paths.clone();
+            let is_marked = !is_placeholder && !is_creating && marked.contains(&path);
+            let has_marks = !marked.is_empty();
+            let mark_path = path.clone();
             let drag_payload = TreeEntryDrag {
                 path: path.clone(),
+                paths: if is_marked && marked.len() > 1 {
+                    top_level(&marked)
+                } else {
+                    vec![path.clone()]
+                },
                 label: item.label.clone(),
                 is_dir,
                 dark: cx.theme().is_dark(),
@@ -585,13 +674,21 @@ impl FileTreePanel {
             };
             let clip_mark = clipboard
                 .as_ref()
-                .filter(|(clip, _)| !is_placeholder && !is_creating && *clip == path)
+                .filter(|(clip, _)| !is_placeholder && !is_creating && clip.contains(&path))
                 .map(|(_, cut)| *cut);
             let guides = guide_masks.get(ix).cloned().unwrap_or_default();
             let guide_color = cx.theme().sidebar_border;
             let muted = cx.theme().muted_foreground;
 
+            // Kit re-applies `.selected()` from its single selection after this
+            // callback, so marked rows get the same active fill directly.
+            let marked_bg = if cx.theme().list.active_highlight {
+                cx.theme().list_active
+            } else {
+                cx.theme().accent
+            };
             ListItem::new(ix)
+                .when(is_marked, |item| item.bg(marked_bg))
                 .w_full()
                 .min_w_0()
                 // Kit's ListItem defaults to py_1 / px_3 — py gaps break
@@ -609,11 +706,32 @@ impl FileTreePanel {
                     let blank_menu_blocked = blank_menu_blocked_row.clone();
                     item.on_mouse_down(MouseButton::Left, {
                         let tree_state = tree_state.clone();
-                        move |_, window, cx| {
+                        move |ev: &MouseDownEvent, window, cx| {
+                            // Read before moving the selection: the first
+                            // Ctrl-click keeps the row that was selected.
+                            let prev = tree_state
+                                .read(cx)
+                                .selected_item()
+                                .map(|item| item.id.as_ref())
+                                .map(|id| id.strip_suffix(PLACEHOLDER_SUFFIX).unwrap_or(id))
+                                .map(PathBuf::from);
                             tree_state.update(cx, |state, cx| {
                                 state.focus(window, cx);
                                 state.set_selected_index(Some(ix), cx);
                             });
+                            // Ctrl/Cmd-click builds a multi-selection; a plain
+                            // click starts over.
+                            if ev.modifiers.secondary() {
+                                window.dispatch_action(
+                                    Box::new(ToggleMark {
+                                        path: mark_path.clone(),
+                                        prev,
+                                    }),
+                                    cx,
+                                );
+                            } else if has_marks {
+                                window.dispatch_action(Box::new(ClearMarks), cx);
+                            }
                             // Kit expands a folder on mouse-down, before we
                             // know whether this press is a drag. Keep it from
                             // seeing the press; folders toggle on click below.
@@ -645,7 +763,7 @@ impl FileTreePanel {
                                 // Roots only reorder, and only onto another root.
                                 row_is_root && reorder_allowed(&root_paths, &d.path, Some(&dir))
                             } else {
-                                move_allowed(&d.path, &dir)
+                                d.paths.iter().any(|p| move_allowed(p, &dir))
                             }
                         })
                     };
@@ -670,13 +788,15 @@ impl FileTreePanel {
                                 cx,
                             );
                         } else {
-                            window.dispatch_action(
-                                Box::new(MovePath {
-                                    from: d.path.clone(),
-                                    to_dir: dir.clone(),
-                                }),
-                                cx,
-                            );
+                            for from in d.paths.iter().filter(|p| move_allowed(p, &dir)) {
+                                window.dispatch_action(
+                                    Box::new(MovePath {
+                                        from: from.clone(),
+                                        to_dir: dir.clone(),
+                                    }),
+                                    cx,
+                                );
+                            }
                         }
                     })
                 })
@@ -761,6 +881,10 @@ impl FileTreePanel {
                 )
                 .when(!is_editing, |item| {
                     item.on_click(move |ev: &ClickEvent, window, cx| {
+                        // Ctrl/Cmd-click only selects: no open, no expand.
+                        if ev.modifiers().secondary() {
+                            return;
+                        }
                         if toggle_on_click {
                             window.dispatch_action(
                                 Box::new(ToggleDir {
@@ -906,14 +1030,16 @@ impl FileTreePanel {
                                 cx,
                             );
                         }
-                    } else if move_allowed(&d.path, &root) {
-                        window.dispatch_action(
-                            Box::new(MovePath {
-                                from: d.path.clone(),
-                                to_dir: root.clone(),
-                            }),
-                            cx,
-                        );
+                    } else {
+                        for from in d.paths.iter().filter(|p| move_allowed(p, &root)) {
+                            window.dispatch_action(
+                                Box::new(MovePath {
+                                    from: from.clone(),
+                                    to_dir: root.clone(),
+                                }),
+                                cx,
+                            );
+                        }
                     }
                 })
             })

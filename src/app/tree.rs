@@ -5,7 +5,7 @@ use super::*;
 /// What Cut / Copy left for Paste in the file tree.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TreeClipboard {
-    path: PathBuf,
+    paths: Vec<PathBuf>,
     cut: bool,
 }
 
@@ -335,6 +335,31 @@ impl IsengardApp {
         self.persist_session(cx);
     }
 
+    pub(super) fn on_toggle_mark(
+        &mut self,
+        action: &ToggleMark,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Workspace roots stay out of the multi-selection (no bulk remove/move).
+        if self.path_in_workspace(&action.path) && !self.workspace.folders().contains(&action.path)
+        {
+            self.file_tree
+                .toggle_mark(&action.path, action.prev.clone(), cx);
+            cx.notify();
+        }
+    }
+
+    pub(super) fn on_clear_marks(
+        &mut self,
+        _: &ClearMarks,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.file_tree.clear_marks(cx);
+        cx.notify();
+    }
+
     pub(super) fn on_move_path(
         &mut self,
         action: &MovePath,
@@ -349,29 +374,49 @@ impl IsengardApp {
         }
     }
 
-    /// Remembers `path` for Paste; a cut is only a move once pasted.
+    /// Remembers `paths` for Paste; a cut is only a move once pasted.
     pub(super) fn set_tree_clipboard(
         &mut self,
-        path: PathBuf,
+        paths: Vec<PathBuf>,
         cut: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.path_in_workspace(&path) {
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|p| self.path_in_workspace(p))
+            .collect();
+        if paths.is_empty() {
             return;
         }
-        if cut && self.workspace.folders().contains(&path) {
+        if cut && paths.iter().any(|p| self.workspace.folders().contains(p)) {
             return notify_error("Workspace folders cannot be moved.", window, cx);
         }
         self.tree_clipboard = Some(TreeClipboard {
-            path: path.clone(),
+            paths: paths.clone(),
             cut,
         });
-        self.file_tree.set_clipboard(Some((path, cut)), cx);
+        self.file_tree.set_clipboard(Some((paths, cut)), cx);
         cx.notify();
     }
 
+    /// Stores the clipboard (and the row marks) after a paste.
+    fn set_clipboard_paths(&mut self, left: Vec<PathBuf>, cut: bool, cx: &mut Context<Self>) {
+        if left.is_empty() {
+            self.tree_clipboard = None;
+            self.file_tree.set_clipboard(None, cx);
+        } else {
+            self.tree_clipboard = Some(TreeClipboard {
+                paths: left.clone(),
+                cut,
+            });
+            self.file_tree.set_clipboard(Some((left, cut)), cx);
+        }
+    }
+
     /// Pastes the tree clipboard into `target` (a folder) or `target`'s parent.
+    /// Items are handled one by one; the first failure is reported (with a
+    /// count) and a cut keeps only the items that did not move.
     pub(super) fn paste_path(
         &mut self,
         target: &Path,
@@ -386,25 +431,36 @@ impl IsengardApp {
         } else {
             target.parent().ok_or("Cannot paste here.")?
         };
-        if !clip.path.exists() {
-            self.tree_clipboard = None;
-            self.file_tree.set_clipboard(None, cx);
-            return Err(format!(
-                "{} no longer exists.",
-                document::file_name(&clip.path)
-            ));
+        let mut failed: Vec<(PathBuf, String)> = Vec::new();
+        for path in &clip.paths {
+            let result = if !path.exists() {
+                Err(format!("{} no longer exists.", document::file_name(path)))
+            } else if clip.cut {
+                // Pasting a cut back where it came from changes nothing.
+                if path.parent() == Some(dir) {
+                    continue;
+                }
+                self.move_path(path, dir, window, cx)
+            } else {
+                self.copy_path(path, dir, cx)
+            };
+            if let Err(err) = result {
+                failed.push((path.clone(), err));
+            }
         }
         if clip.cut {
-            // Pasting a cut back where it came from changes nothing.
-            if clip.path.parent() == Some(dir) {
-                return Ok(());
-            }
-            self.move_path(&clip.path, dir, window, cx)?;
-            self.tree_clipboard = None;
-            self.file_tree.set_clipboard(None, cx);
-            Ok(())
-        } else {
-            self.copy_path(&clip.path, dir, cx)
+            let left = failed
+                .iter()
+                .map(|(p, _)| p.clone())
+                .filter(|p| p.exists())
+                .collect();
+            self.set_clipboard_paths(left, true, cx);
+            self.file_tree.clear_marks(cx);
+        }
+        match failed.split_first() {
+            None => Ok(()),
+            Some(((_, err), [])) => Err(err.clone()),
+            Some(((_, err), rest)) => Err(format!("{err} (+{} more failed)", rest.len())),
         }
     }
 
@@ -451,7 +507,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_tree_clipboard(action.0.clone(), true, window, cx);
+        let targets = self.file_tree.targets_for(&action.0);
+        self.set_tree_clipboard(targets, true, window, cx);
     }
 
     pub(super) fn on_copy_path(
@@ -460,7 +517,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_tree_clipboard(action.0.clone(), false, window, cx);
+        let targets = self.file_tree.targets_for(&action.0);
+        self.set_tree_clipboard(targets, false, window, cx);
     }
 
     pub(super) fn on_paste_path(
@@ -480,9 +538,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.file_tree.selected_path(cx) {
-            self.set_tree_clipboard(path, true, window, cx);
-        }
+        let targets = self.file_tree.selection_targets(cx);
+        self.set_tree_clipboard(targets, true, window, cx);
     }
 
     pub(super) fn on_copy_selected_tree_item(
@@ -491,9 +548,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.file_tree.selected_path(cx) {
-            self.set_tree_clipboard(path, false, window, cx);
-        }
+        let targets = self.file_tree.selection_targets(cx);
+        self.set_tree_clipboard(targets, false, window, cx);
     }
 
     /// Paste into the selection's folder, else the first workspace root.
@@ -515,9 +571,10 @@ impl IsengardApp {
         }
     }
 
-    pub(super) fn delete_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    /// Trashes one path (closing its tabs); no toast. `false` = it failed or was refused.
+    fn trash_one(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.path_in_workspace(path) {
-            return;
+            return false;
         }
         let open: Vec<PathBuf> = self
             .tabs
@@ -529,7 +586,8 @@ impl IsengardApp {
             self.close_tabs(&open, window, cx);
         }
         if let Err(err) = trash::delete(path) {
-            return notify_error(format!("Move to Trash failed: {err}"), window, cx);
+            notify_error(format!("Move to Trash failed: {err}"), window, cx);
+            return false;
         }
         let was_root = self.workspace.remove_folder(path);
         if was_root {
@@ -538,7 +596,31 @@ impl IsengardApp {
         } else if let Some(parent) = path.parent() {
             self.file_tree.refresh_dir(parent, cx);
         }
-        notify_success("Moved to Trash", window, cx);
+        true
+    }
+
+    /// Moves every path to the OS Trash with one toast (a multi-selection).
+    pub(super) fn delete_paths(
+        &mut self,
+        paths: &[PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut done = 0;
+        for path in paths {
+            if self.trash_one(path, window, cx) {
+                done += 1;
+            }
+        }
+        self.file_tree.clear_marks(cx);
+        if done > 0 {
+            let msg = if done == 1 {
+                "Moved to Trash".to_string()
+            } else {
+                format!("Moved {done} items to Trash")
+            };
+            notify_success(msg, window, cx);
+        }
         self.persist_session(cx);
         cx.notify();
     }
@@ -611,7 +693,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_path(&action.0, window, cx);
+        let targets = self.file_tree.targets_for(&action.0);
+        self.delete_paths(&targets, window, cx);
     }
 
     pub(super) fn on_reveal_path(
@@ -664,9 +747,8 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.file_tree.selected_path(cx) {
-            self.delete_path(&path, window, cx);
-        }
+        let targets = self.file_tree.selection_targets(cx);
+        self.delete_paths(&targets, window, cx);
     }
 }
 
