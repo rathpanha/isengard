@@ -126,7 +126,7 @@ On macOS, `./scripts/package-macos.sh` builds `Isengard.app` (hand-assembled
 from `packaging/macos/Info.plist.in`, `Isengard.icns`, a `lipo` universal binary
 of `aarch64`/`x86_64-apple-darwin`; `TARGETS=…` overrides) and writes
 `isengard-<ver>-macos-universal.{tar.gz,dmg}` + `SHA256SUMS` under
-`dist/macos/`. The same workflow's `macos` job (runner `macos-14`) runs it and
+`dist/macos/`. The same workflow's `macos` job (runner `macos-15`) runs it and
 feeds the shared `publish` job, which runs only when Linux, macOS **and**
 Windows all succeeded (no release with a missing platform; if one job fails or
 is cancelled, "Re-run failed jobs" on the run keeps the others' artifacts).

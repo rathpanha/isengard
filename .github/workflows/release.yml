@@ -109,7 +109,7 @@ jobs:
   # self-signed certificate when MACOS_CERT_P12 is set, else ad-hoc (the
   # Keychain then re-asks for access after every update).
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
