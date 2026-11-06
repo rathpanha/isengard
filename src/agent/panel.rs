@@ -4603,14 +4603,19 @@ impl AgentPanel {
                 self.pending_title = None;
                 match open {
                     SessionOpen::Load(id) | SessionOpen::Resume(id) => {
-                        // Deleted outside Isengard (or never stored): forget it.
+                        // Keep it in the index: after a forced quit the agent may not
+                        // have flushed the transcript yet, and forgetting the chat
+                        // here would lose it for good. Delete is explicit.
                         log::warn!("agent: could not reopen chat {id}: {message}");
-                        self.chats.retain(|c| c.id != id);
                         self.active = None;
                         self.transcript_of = None;
                         cx.emit(AgentPanelEvent::ChatsChanged);
                         self.open_active(cx);
-                        self.push_notice("That chat is no longer available.", false, cx);
+                        self.push_notice(
+                            "Could not reopen that chat; it stays in the chat list.",
+                            false,
+                            cx,
+                        );
                     }
                     SessionOpen::New => self.status = Status::Failed(message.into()),
                 }

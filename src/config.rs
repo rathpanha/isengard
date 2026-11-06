@@ -573,7 +573,10 @@ impl AppConfig {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        // Temp + rename so a forced quit mid-write cannot truncate the file.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
