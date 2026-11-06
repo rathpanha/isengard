@@ -3,6 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-06** — Tree rows show a Scissors (cut, row dimmed) / Copy icon while on the clipboard.
+- **2026-11-06** — File tree Cut / Copy / Paste (context menu + `⌘X`/`⌘C`/`⌘V`
+  while the Tree is focused); copies never overwrite (`name copy.ext`).
 - **2026-11-04** — Release prep v0.2.8 (Vue, Angular and more languages): version
   bump, `docs/releases/v0.2.8.md`, status release lines.
 - **2026-11-04** — ~30 more languages detected (Angular, SCSS/Less, Prisma, Dart,

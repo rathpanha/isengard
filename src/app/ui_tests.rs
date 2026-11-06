@@ -481,6 +481,84 @@ fn tree_move_relocates_files_and_remaps_open_tabs(cx: &mut TestAppContext) {
     assert!(r.is_err());
 }
 
+#[gpui_kit::test]
+fn tree_copy_and_cut_paste(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let file = h.file("a.txt", "hello");
+    h.file("dir/inner.txt", "inner");
+    let dir = h.dir.path().join("dir");
+    let dst = h.folder("dst");
+    h.open_folder(h.dir.path(), cx);
+    h.open(&file, cx);
+
+    // Paste with an empty clipboard is refused.
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
+    assert!(r.is_err());
+
+    // Copy a file into a folder; the source stays and the tab is untouched.
+    h.with_app(cx, |app, w, cx| {
+        app.set_tree_clipboard(file.clone(), false, w, cx)
+    });
+    let mark = h.with_app(cx, |app, _, _| {
+        app.file_tree
+            .clipboard()
+            .map(|(p, cut)| (p.to_path_buf(), cut))
+    });
+    assert_eq!(mark, Some((file.clone(), false)), "row is marked as copied");
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "hello");
+    assert!(file.exists() && h.tab(&file, cx).is_some());
+
+    // Pasting again (clipboard survives a copy), and onto a file (→ its parent),
+    // never overwrites: names get " copy" / " copy 2".
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst.join("a.txt"), w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(dst.join("a copy.txt").exists() && dst.join("a copy 2.txt").exists());
+
+    // Copy a folder next to itself: deep copy named "dir copy".
+    h.with_app(cx, |app, w, cx| {
+        app.set_tree_clipboard(dir.clone(), false, w, cx)
+    });
+    let root = h.dir.path().to_path_buf();
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&root, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(root.join("dir copy/inner.txt").exists() && dir.join("inner.txt").exists());
+
+    // A folder cannot be pasted into itself.
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dir, w, cx));
+    assert!(r.is_err());
+
+    // Cut + paste moves (open tab follows) and empties the clipboard.
+    h.with_app(cx, |app, w, cx| {
+        app.set_tree_clipboard(file.clone(), true, w, cx)
+    });
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dir, w, cx));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(!file.exists() && dir.join("a.txt").exists());
+    assert!(h.tab(&dir.join("a.txt"), cx).is_some());
+    assert!(h.with_app(cx, |app, _, _| app.file_tree.clipboard().is_none()));
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dir, w, cx));
+    assert!(r.is_err(), "clipboard is spent after a cut paste");
+
+    // Pasting a cut into its own folder is a quiet no-op.
+    h.with_app(cx, |app, w, cx| {
+        app.set_tree_clipboard(dir.join("a.txt"), true, w, cx)
+    });
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dir, w, cx));
+    assert!(r.is_ok() && dir.join("a.txt").exists());
+
+    // Workspace roots cannot be cut: the clipboard keeps its previous entry.
+    h.with_app(cx, |app, w, cx| {
+        app.set_tree_clipboard(root.clone(), true, w, cx)
+    });
+    let r = h.with_app(cx, |app, w, cx| app.paste_path(&dst, w, cx));
+    assert!(r.is_err(), "still the earlier cut, which collides in dst");
+    assert!(root.exists() && !dst.join(root.file_name().unwrap()).exists());
+}
+
 #[test]
 fn reorder_allowed_skips_noop_drops() {
     use crate::ui::file_tree::reorder_allowed;

@@ -429,7 +429,9 @@ src/
   `RemoveWorkspaceFolder(PathBuf)` is a data-carrying action
   (`#[derive(Action)] #[action(namespace = isengard, no_json)]`) dispatched from
   the tree's context menu. Same pattern for `RenamePath` / `DeletePath` /
-  `NewFileIn` / `NewFolderIn`. These five are defined in `ui/file_tree.rs`
+  `NewFileIn` / `NewFolderIn` (plus `CutPath` / `CopyPath` / `PastePath`; the
+  clipboard is `IsengardApp::tree_clipboard`, `FileTreePanel::set_can_paste`
+  only gates the menu item; keys `secondary-x/c/v` in the `Tree` context). These are defined in `ui/file_tree.rs`
   (the dispatcher) and handled in `app/` — `ui/` never imports `app`. Blank-space New File/Folder uses a panel
   `ContextMenuExt` around the tree (row menus suppress it). A thin
   toolbar above the tree dispatches the same actions (parent from

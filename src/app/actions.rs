@@ -49,6 +49,10 @@ actions!(
         RenameSelectedTreeItem,
         /// Move the tree selection to Trash (Delete/Backspace while Tree focused).
         DeleteSelectedTreeItem,
+        /// Cut / copy / paste the tree selection (`⌘X` / `⌘C` / `⌘V` while Tree focused).
+        CutSelectedTreeItem,
+        CopySelectedTreeItem,
+        PasteIntoTreeSelection,
         About,
         /// Look for a newer release now (Isengard menu).
         CheckForUpdates,
@@ -147,6 +151,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("f2", RenameSelectedTreeItem, Some("Tree")),
         KeyBinding::new("delete", DeleteSelectedTreeItem, Some("Tree")),
         KeyBinding::new("backspace", DeleteSelectedTreeItem, Some("Tree")),
+        KeyBinding::new("secondary-x", CutSelectedTreeItem, Some("Tree")),
+        KeyBinding::new("secondary-c", CopySelectedTreeItem, Some("Tree")),
+        KeyBinding::new("secondary-v", PasteIntoTreeSelection, Some("Tree")),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
     // App-level fallbacks: title-bar menus restore whatever had focus (tree /

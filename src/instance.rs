@@ -113,8 +113,7 @@ impl Registration {
                 if BufReader::new(&stream).read_line(&mut line).is_err() {
                     continue;
                 }
-                let Some(rest) = line.trim_end_matches(['\r', '\n']).strip_prefix("raise\t")
-                else {
+                let Some(rest) = line.trim_end_matches(['\r', '\n']).strip_prefix("raise\t") else {
                     continue;
                 };
                 let file = (!rest.is_empty()).then(|| PathBuf::from(rest));

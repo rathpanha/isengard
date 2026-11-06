@@ -436,8 +436,8 @@ pub fn catalog_commands() -> Vec<&'static str> {
         Astro, Bash, C, CMake, CSharp, Cpp, Css, Diff, Dockerfile, Ejs, Elixir, Erb, Go, GraphQL,
         Html, Java, JavaScript, Json, Kotlin, Lua, Make, Markdown, Svg, Php, Proto, Python, Ruby,
         Rust, Scala, Sql, Svelte, Swift, Toml, Tsx, TypeScript, Vue, Yaml, Zig, PlainText, Angular,
-        Scss, Less, Prisma, Xml, Dart, Haskell, OCaml, R, Perl, Clojure, Erlang, Nim, Terraform, Nix,
-        Gleam, ObjectiveC, Latex, Typst, Elm, PureScript, Solidity, FSharp,
+        Scss, Less, Prisma, Xml, Dart, Haskell, OCaml, R, Perl, Clojure, Erlang, Nim, Terraform,
+        Nix, Gleam, ObjectiveC, Latex, Typst, Elm, PureScript, Solidity, FSharp,
     ];
     let mut set = std::collections::BTreeSet::new();
     for language in languages {

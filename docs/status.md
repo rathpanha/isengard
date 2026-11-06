@@ -32,8 +32,14 @@ What works today:
   gitignored rows shown muted; dirty git paths tint the label (modified/
   rename → warning, new/untracked → success, deleted/conflict → danger;
   parent folders roll up); indent guides (design owns the pixel rules).
-  Context menu: files Reveal in File Manager (Finder / File Explorer) / Rename /
-  Delete; folders New File / New Folder / Reveal / Rename / Delete (multi-root roots also Remove Folder from Workspace).
+  Context menu: files Cut / Copy / Paste / Reveal in File Manager (Finder / File Explorer) / Rename /
+  Delete; folders New File / New Folder / Cut / Copy / Paste / Reveal / Rename / Delete (multi-root roots also Remove Folder from Workspace; roots can't be cut).
+  **Cut / Copy / Paste** (menu or `⌘X`/`⌘C`/`⌘V` with the Tree focused; one
+  in-app clipboard, not the OS one): paste into the folder row, a file row's
+  parent, or the root (no selection / blank-space menu). Cut + paste = move
+  (open tabs follow, clipboard then empties; same-folder paste is a no-op);
+  the source row shows a Scissors (dimmed) / Copy icon; copy keeps the clipboard, deep-copies folders, and never overwrites — a taken
+  name becomes `a copy.txt`, `a copy 2.txt`. A folder can't go into itself.
   Right-click empty space in the tree panel → New File / New Folder at
   the workspace root (sole root when single-root; first root when multi).
   Mini toolbar above the tree: New File / New Folder (selection's dir,

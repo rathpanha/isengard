@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui_kit::assets::IconName as LucideIcon;
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _,
+    ActiveTheme as _, Icon, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
@@ -47,6 +47,22 @@ const REVEAL_LABEL: &str = if cfg!(target_os = "macos") {
 #[derive(Action, Clone, PartialEq, Deserialize)]
 #[action(namespace = isengard, no_json)]
 pub struct DeletePath(pub PathBuf);
+
+/// Puts a tree path on the tree clipboard to be moved by Paste (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct CutPath(pub PathBuf);
+
+/// Puts a tree path on the tree clipboard to be copied by Paste (context menu).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct CopyPath(pub PathBuf);
+
+/// Pastes the tree clipboard next to / into this path (context menu): a folder
+/// receives it, a file's parent does.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct PastePath(pub PathBuf);
 
 /// Creates a new file inside this directory (tree context menu).
 #[derive(Action, Clone, PartialEq, Deserialize)]
@@ -189,6 +205,8 @@ pub struct FileTreePanel {
     git_file_status: HashMap<PathBuf, char>,
     /// Ancestor folders with a rolled-up dirty letter for label tint.
     git_folder_status: HashMap<PathBuf, char>,
+    /// The tree clipboard (path, is_cut): gates Paste and marks the source row.
+    clipboard: Option<(PathBuf, bool)>,
 }
 
 impl FileTreePanel {
@@ -200,7 +218,21 @@ impl FileTreePanel {
             creating: None,
             git_file_status: HashMap::new(),
             git_folder_status: HashMap::new(),
+            clipboard: None,
         }
+    }
+
+    /// Row currently marked cut (`true`) or copied (`false`), if any.
+    #[cfg(test)]
+    pub fn clipboard(&self) -> Option<(&Path, bool)> {
+        self.clipboard.as_ref().map(|(p, cut)| (p.as_path(), *cut))
+    }
+
+    /// Mirrors the app's tree clipboard (it lives on the app) so Paste is offered
+    /// and the cut / copied row shows an indicator.
+    pub fn set_clipboard(&mut self, clipboard: Option<(PathBuf, bool)>, cx: &mut App) {
+        self.clipboard = clipboard;
+        self.state.update(cx, |_, cx| cx.notify());
     }
 
     /// Tint explorer labels from Source Control porcelain (files + parent folders).
@@ -449,6 +481,8 @@ impl FileTreePanel {
         // Row + panel ContextMenus both hover (Normal hitboxes); row right-click
         // sets this so the blank-space menu builder returns empty.
         let blank_menu_blocked = Rc::new(Cell::new(false));
+        let clipboard = self.clipboard.clone();
+        let can_paste = clipboard.is_some();
         let on_open_file = Rc::new(on_open_file);
         let tree_state = self.state.clone();
         let edit_id = edit.map(|(target, _)| target.row_id());
@@ -549,6 +583,10 @@ impl FileTreePanel {
             } else {
                 base_path.parent().map(Path::to_path_buf)
             };
+            let clip_mark = clipboard
+                .as_ref()
+                .filter(|(clip, _)| !is_placeholder && !is_creating && *clip == path)
+                .map(|(_, cut)| *cut);
             let guides = guide_masks.get(ix).cloned().unwrap_or_default();
             let guide_color = cx.theme().sidebar_border;
             let muted = cx.theme().muted_foreground;
@@ -674,6 +712,7 @@ impl FileTreePanel {
                                 .overflow_hidden()
                                 .py_0p5()
                                 .when(git_ignored && !is_editing, |this| this.opacity(0.6))
+                                .when(clip_mark == Some(true), |this| this.opacity(0.5))
                                 .children(icon)
                                 .child(
                                     div()
@@ -697,7 +736,27 @@ impl FileTreePanel {
                                             ),
                                             None => this.child(item.label.clone()),
                                         }),
-                                ),
+                                )
+                                .when_some(clip_mark, |this, cut| {
+                                    // Same 16px box as the leading icon, so the
+                                    // glyph centres on the row's text line.
+                                    this.child(
+                                        h_flex()
+                                            .size_4()
+                                            .flex_shrink_0()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_color(muted)
+                                            .child(
+                                                Icon::new(if cut {
+                                                    LucideIcon::Scissors
+                                                } else {
+                                                    LucideIcon::Copy
+                                                })
+                                                .xsmall(),
+                                            ),
+                                    )
+                                }),
                         ),
                 )
                 .when(!is_editing, |item| {
@@ -733,6 +792,10 @@ impl FileTreePanel {
                     .separator();
             }
             menu = menu
+                .menu_with_disabled("Cut", Box::new(CutPath(path.clone())), is_workspace_root)
+                .menu("Copy", Box::new(CopyPath(path.clone())))
+                .menu_with_disabled("Paste", Box::new(PastePath(path.clone())), !can_paste)
+                .separator()
                 .menu(REVEAL_LABEL, Box::new(RevealPath(path.clone())))
                 .separator()
                 .menu("Rename", Box::new(RenamePath(path.clone())))
@@ -863,7 +926,9 @@ impl FileTreePanel {
                 };
                 tree_state_blank.update(cx, |state, cx| state.focus(window, cx));
                 menu.menu("New File", Box::new(NewFileIn(root.clone())))
-                    .menu("New Folder", Box::new(NewFolderIn(root)))
+                    .menu("New Folder", Box::new(NewFolderIn(root.clone())))
+                    .separator()
+                    .menu_with_disabled("Paste", Box::new(PastePath(root)), !can_paste)
             })
             .child(tree_el);
 

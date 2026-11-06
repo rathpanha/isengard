@@ -107,8 +107,8 @@ pub(super) use crate::ui::components::{
     center_dialog, notify_error, notify_success, notify_warning,
 };
 pub(super) use crate::ui::file_tree::{
-    DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn, RemoveWorkspaceFolder, RenamePath,
-    ReorderRoot, RevealPath, ToggleDir, TreeEditTarget,
+    CopyPath, CutPath, DeletePath, FileTreePanel, MovePath, NewFileIn, NewFolderIn, PastePath,
+    RemoveWorkspaceFolder, RenamePath, ReorderRoot, RevealPath, ToggleDir, TreeEditTarget,
 };
 pub(super) use crate::ui::tab_drag::{EditorTabDrag, TabDragPreview};
 pub(super) use crate::workspace::{WORKSPACE_EXTENSION, Workspace};
@@ -128,12 +128,12 @@ pub(super) type AfterSaveAll = Rc<dyn Fn(&mut IsengardApp, &mut Window, &mut Con
 pub use actions::init;
 pub use actions::{
     About, AddFolderToWorkspace, AddSelectionToAgent, CheckForUpdates, CloseAllTabs,
-    CloseOtherTabs, CloseTab, CloseTabAt, CloseWorkspace, DecreaseFontSize, DeleteSelectedTreeItem,
-    FindInFiles, FormatDocument, IncreaseFontSize, NewAgentChat, NewFile, NewTerminal,
-    NewWorkspace, NextTab, OpenFile, OpenFolder, OpenWorkspace, PrevTab, Quit,
-    RenameSelectedTreeItem, RenameSymbol, ResetFontSize, Save, SaveAll, SaveAs, SaveWorkspaceAs,
-    ShowFileTree, ShowGit, TerminalTabsChanged, ToggleAgentPanel, TogglePreview, ToggleSidebar,
-    ToggleTerminal,
+    CloseOtherTabs, CloseTab, CloseTabAt, CloseWorkspace, CopySelectedTreeItem,
+    CutSelectedTreeItem, DecreaseFontSize, DeleteSelectedTreeItem, FindInFiles, FormatDocument,
+    IncreaseFontSize, NewAgentChat, NewFile, NewTerminal, NewWorkspace, NextTab, OpenFile,
+    OpenFolder, OpenWorkspace, PasteIntoTreeSelection, PrevTab, Quit, RenameSelectedTreeItem,
+    RenameSymbol, ResetFontSize, Save, SaveAll, SaveAs, SaveWorkspaceAs, ShowFileTree, ShowGit,
+    TerminalTabsChanged, ToggleAgentPanel, TogglePreview, ToggleSidebar, ToggleTerminal,
 };
 
 #[derive(Clone, Copy)]
@@ -274,6 +274,8 @@ pub struct IsengardApp {
     session_persist_generation: u64,
     /// Inline rename / new-file / new-folder field over a tree row (not a modal).
     tree_edit: Option<TreeInlineEdit>,
+    /// Path cut / copied in the tree, waiting for Paste (`app/tree.rs`).
+    tree_clipboard: Option<tree::TreeClipboard>,
     /// Language servers for the current workspace (rust-analyzer MVP).
     lsp: LspHost,
     /// OS watcher over the workspace roots (`app/watch.rs`).
@@ -488,6 +490,7 @@ impl IsengardApp {
             window_geometry_generation: 0,
             session_persist_generation: 0,
             tree_edit: None,
+            tree_clipboard: None,
             lsp: LspHost::default(),
             fs_watch: None,
             fs_watch_gen: 0,

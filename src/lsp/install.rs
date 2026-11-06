@@ -356,12 +356,10 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             pkg_id: "prisma-language-server",
             bin_names: &["prisma-language-server"],
             fetch: FetchKind::Npm {
-                packages: &[
-                    NpmSpec {
-                        name: "@prisma/language-server",
-                        version: "31.13.0",
-                    },
-                ],
+                packages: &[NpmSpec {
+                    name: "@prisma/language-server",
+                    version: "31.13.0",
+                }],
             },
         },
         "elm-language-server" => InstallRecipe {
@@ -370,12 +368,10 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             pkg_id: "elm-language-server",
             bin_names: &["elm-language-server"],
             fetch: FetchKind::Npm {
-                packages: &[
-                    NpmSpec {
-                        name: "@elm-tooling/elm-language-server",
-                        version: "2.8.0",
-                    },
-                ],
+                packages: &[NpmSpec {
+                    name: "@elm-tooling/elm-language-server",
+                    version: "2.8.0",
+                }],
             },
         },
         "purescript-language-server" => InstallRecipe {
@@ -384,12 +380,10 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             pkg_id: "purescript-language-server",
             bin_names: &["purescript-language-server"],
             fetch: FetchKind::Npm {
-                packages: &[
-                    NpmSpec {
-                        name: "purescript-language-server",
-                        version: "0.18.5",
-                    },
-                ],
+                packages: &[NpmSpec {
+                    name: "purescript-language-server",
+                    version: "0.18.5",
+                }],
             },
         },
         "nomicfoundation-solidity-language-server" => InstallRecipe {
@@ -398,12 +392,10 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             pkg_id: "solidity-language-server",
             bin_names: &["nomicfoundation-solidity-language-server"],
             fetch: FetchKind::Npm {
-                packages: &[
-                    NpmSpec {
-                        name: "@nomicfoundation/solidity-language-server",
-                        version: "0.9.3",
-                    },
-                ],
+                packages: &[NpmSpec {
+                    name: "@nomicfoundation/solidity-language-server",
+                    version: "0.9.3",
+                }],
             },
         },
         "intelephense" => InstallRecipe {
@@ -412,12 +404,10 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             pkg_id: "intelephense",
             bin_names: &["intelephense"],
             fetch: FetchKind::Npm {
-                packages: &[
-                    NpmSpec {
-                        name: "intelephense",
-                        version: "1.18.5",
-                    },
-                ],
+                packages: &[NpmSpec {
+                    name: "intelephense",
+                    version: "1.18.5",
+                }],
             },
         },
         "perlnavigator" => InstallRecipe {
@@ -426,12 +416,10 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             pkg_id: "perlnavigator",
             bin_names: &["perlnavigator"],
             fetch: FetchKind::Npm {
-                packages: &[
-                    NpmSpec {
-                        name: "perlnavigator-server",
-                        version: "0.8.12",
-                    },
-                ],
+                packages: &[NpmSpec {
+                    name: "perlnavigator-server",
+                    version: "0.8.12",
+                }],
             },
         },
         "astro-ls" => InstallRecipe {

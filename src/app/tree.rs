@@ -2,6 +2,13 @@
 use super::tab::TabBody;
 use super::*;
 
+/// What Cut / Copy left for Paste in the file tree.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TreeClipboard {
+    path: PathBuf,
+    cut: bool,
+}
+
 impl IsengardApp {
     pub(super) fn begin_inline_rename(
         &mut self,
@@ -342,6 +349,172 @@ impl IsengardApp {
         }
     }
 
+    /// Remembers `path` for Paste; a cut is only a move once pasted.
+    pub(super) fn set_tree_clipboard(
+        &mut self,
+        path: PathBuf,
+        cut: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.path_in_workspace(&path) {
+            return;
+        }
+        if cut && self.workspace.folders().contains(&path) {
+            return notify_error("Workspace folders cannot be moved.", window, cx);
+        }
+        self.tree_clipboard = Some(TreeClipboard {
+            path: path.clone(),
+            cut,
+        });
+        self.file_tree.set_clipboard(Some((path, cut)), cx);
+        cx.notify();
+    }
+
+    /// Pastes the tree clipboard into `target` (a folder) or `target`'s parent.
+    pub(super) fn paste_path(
+        &mut self,
+        target: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(clip) = self.tree_clipboard.clone() else {
+            return Err("Nothing to paste.".into());
+        };
+        let dir = if target.is_dir() {
+            target
+        } else {
+            target.parent().ok_or("Cannot paste here.")?
+        };
+        if !clip.path.exists() {
+            self.tree_clipboard = None;
+            self.file_tree.set_clipboard(None, cx);
+            return Err(format!(
+                "{} no longer exists.",
+                document::file_name(&clip.path)
+            ));
+        }
+        if clip.cut {
+            // Pasting a cut back where it came from changes nothing.
+            if clip.path.parent() == Some(dir) {
+                return Ok(());
+            }
+            self.move_path(&clip.path, dir, window, cx)?;
+            self.tree_clipboard = None;
+            self.file_tree.set_clipboard(None, cx);
+            Ok(())
+        } else {
+            self.copy_path(&clip.path, dir, cx)
+        }
+    }
+
+    /// Copies `from` into the folder `to_dir` under a name that is not taken yet
+    /// (`a copy.txt`, `a copy 2.txt`, …) — never overwrites.
+    pub(super) fn copy_path(
+        &mut self,
+        from: &Path,
+        to_dir: &Path,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if !self.path_in_workspace(from) || !self.path_in_workspace(to_dir) {
+            return Err("Path is not in the workspace.".into());
+        }
+        if !to_dir.is_dir() {
+            return Err("Paste target is not a folder.".into());
+        }
+        if to_dir.starts_with(from) {
+            return Err("Cannot copy a folder into itself.".into());
+        }
+        let Some(name) = from.file_name() else {
+            return Err("Cannot copy this path.".into());
+        };
+        let new_path = unique_copy_path(to_dir, name, from.is_dir());
+        if let Err(err) = copy_recursive(from, &new_path) {
+            // `new_path` did not exist before, so clearing it is safe.
+            let _ = if new_path.is_dir() {
+                std::fs::remove_dir_all(&new_path)
+            } else {
+                std::fs::remove_file(&new_path)
+            };
+            return Err(format!("Copy failed: {err}"));
+        }
+        self.file_tree.refresh_dir(to_dir, cx);
+        self.file_tree.select_path(&new_path, cx);
+        self.persist_session(cx);
+        cx.notify();
+        Ok(())
+    }
+
+    pub(super) fn on_cut_path(
+        &mut self,
+        action: &CutPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_tree_clipboard(action.0.clone(), true, window, cx);
+    }
+
+    pub(super) fn on_copy_path(
+        &mut self,
+        action: &CopyPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_tree_clipboard(action.0.clone(), false, window, cx);
+    }
+
+    pub(super) fn on_paste_path(
+        &mut self,
+        action: &PastePath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(err) = self.paste_path(&action.0, window, cx) {
+            notify_error(err, window, cx);
+        }
+    }
+
+    pub(super) fn on_cut_selected_tree_item(
+        &mut self,
+        _: &CutSelectedTreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.file_tree.selected_path(cx) {
+            self.set_tree_clipboard(path, true, window, cx);
+        }
+    }
+
+    pub(super) fn on_copy_selected_tree_item(
+        &mut self,
+        _: &CopySelectedTreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.file_tree.selected_path(cx) {
+            self.set_tree_clipboard(path, false, window, cx);
+        }
+    }
+
+    /// Paste into the selection's folder, else the first workspace root.
+    pub(super) fn on_paste_into_tree_selection(
+        &mut self,
+        _: &PasteIntoTreeSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target) = self
+            .file_tree
+            .selected_path(cx)
+            .or_else(|| self.workspace.folders().first().cloned())
+        else {
+            return;
+        };
+        if let Err(err) = self.paste_path(&target, window, cx) {
+            notify_error(err, window, cx);
+        }
+    }
+
     pub(super) fn delete_path(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         if !self.path_in_workspace(path) {
             return;
@@ -538,4 +711,68 @@ fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
         })
     };
     if spawned { Ok(()) } else { open_dir(parent) }
+}
+
+/// `dir/name` when free, else `dir/<stem> copy[ N].<ext>`.
+fn unique_copy_path(dir: &Path, name: &std::ffi::OsStr, is_dir: bool) -> PathBuf {
+    let direct = dir.join(name);
+    if !direct.exists() {
+        return direct;
+    }
+    let as_path = Path::new(name);
+    let (stem, ext) = if is_dir {
+        (name.to_string_lossy().into_owned(), None)
+    } else {
+        (
+            as_path
+                .file_stem()
+                .unwrap_or(name)
+                .to_string_lossy()
+                .into_owned(),
+            as_path
+                .extension()
+                .map(|e| e.to_string_lossy().into_owned()),
+        )
+    };
+    let mut n = 1;
+    loop {
+        let suffix = if n == 1 {
+            " copy".to_string()
+        } else {
+            format!(" copy {n}")
+        };
+        let candidate = match &ext {
+            Some(ext) => format!("{stem}{suffix}.{ext}"),
+            None => format!("{stem}{suffix}"),
+        };
+        let path = dir.join(candidate);
+        if !path.exists() {
+            return path;
+        }
+        n += 1;
+    }
+}
+
+/// Copies a file, symlink (unix) or folder tree; `to` must not exist.
+fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(from)?;
+    if meta.is_dir() {
+        std::fs::create_dir(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else if meta.file_type().is_symlink() {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(std::fs::read_link(from)?, to)
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::copy(from, to).map(|_| ())
+        }
+    } else {
+        std::fs::copy(from, to).map(|_| ())
+    }
 }

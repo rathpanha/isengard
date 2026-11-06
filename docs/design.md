@@ -193,6 +193,10 @@ Add a row here whenever a new shared component is created.
   folder and a file can't reorder roots. No-op positions get no highlight. Every row consumes the drop (no `can_drop`):
   a refused drop is ignored inside the handler, so it can't fall through to the
   panel's blank-space handler or leave the hover painted.
+- **Tree cut / copy / paste:** row and blank-space context menus list Cut ·
+  Copy · Paste (Paste disabled while the clipboard is empty; Cut disabled on a
+  workspace root). `⌘X`/`⌘C`/`⌘V` act on the selection while the Tree has focus.
+  The source row shows a trailing muted `xsmall` Lucide `Scissors` (cut; row also at 50% opacity) or `Copy` (copied) until pasted / replaced. No toast, no confirm; errors toast. A copy never overwrites (` copy` suffix).
 - **File icons (tree + editor tabs + agent mentions):** full Material Icon
   Theme under `assets/icons/material/` (MIT; see its `LICENSE`) with
   associations from `assets/icons/material-icons.json`, via

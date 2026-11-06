@@ -90,8 +90,9 @@ gpui_kit::assets::icon_assets!(
         Zap,
         Users,
         SlidersHorizontal,
-        Bug,    // Mode Debug (when an agent advertises it)
-        Layers, // Mode Multitask (when an agent advertises it)
+        Bug,      // Mode Debug (when an agent advertises it)
+        Layers,   // Mode Multitask (when an agent advertises it)
+        Scissors, // File tree: row marked as cut (Copy is in the default set)
     ]
 );
 

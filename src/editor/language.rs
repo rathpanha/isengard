@@ -140,7 +140,9 @@ impl Language {
             "c" | "h" => Language::C,
             "cmake" => Language::CMake,
             "cs" => Language::CSharp,
-            "cpp" | "cc" | "cxx" | "cu" | "cuh" | "hpp" | "hh" | "hxx" | "h++" | "c++" => Language::Cpp,
+            "cpp" | "cc" | "cxx" | "cu" | "cuh" | "hpp" | "hh" | "hxx" | "h++" | "c++" => {
+                Language::Cpp
+            }
             "css" => Language::Css,
             "scss" => Language::Scss,
             "less" => Language::Less,
@@ -399,7 +401,10 @@ mod tests {
         );
         assert_eq!(Language::from_path(Path::new("a.scss")), Language::Scss);
         assert_eq!(Language::from_path(Path::new("main.dart")), Language::Dart);
-        assert_eq!(Language::from_path(Path::new("main.tf")), Language::Terraform);
+        assert_eq!(
+            Language::from_path(Path::new("main.tf")),
+            Language::Terraform
+        );
         assert_eq!(Language::from_path(Path::new("Gemfile")), Language::Ruby);
         assert_eq!(Language::from_path(Path::new(".bashrc")), Language::Bash);
         assert_eq!(Language::from_path(Path::new("Makefile")), Language::Make);
