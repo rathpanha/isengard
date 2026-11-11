@@ -463,8 +463,8 @@ impl TerminalRenderer {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         term: &Term<GpuiEventProxy>,
-        // Hovered URL underline: `(line, start_col, end_col_exclusive)`.
-        hovered_link: Option<(i32, usize, usize)>,
+        // Hovered URL underline: `(line, start_col, end_col_exclusive)` per row.
+        hovered_link: Vec<(i32, usize, usize)>,
         window: &mut Window,
         _cx: &mut App,
     ) {
@@ -761,10 +761,10 @@ impl TerminalRenderer {
         }
 
         // Continuous hover underline under the URL span (clear air below glyphs).
-        if let Some((hl, start, end)) = hovered_link
-            && end > start
-            && (0..num_lines as i32).contains(&(hl + display_offset))
-        {
+        for (hl, start, end) in hovered_link {
+            if end <= start || !(0..num_lines as i32).contains(&(hl + display_offset)) {
+                continue;
+            }
             let thickness = px(1.0);
             let gap_below_text = px(5.0);
             let base_height = self.cell_height / self.line_height_multiplier;

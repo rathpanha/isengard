@@ -60,6 +60,7 @@ use alacritty_terminal::selection::{
     Selection as AlacSelection, SelectionType as AlacSelectionType,
 };
 use alacritty_terminal::term::TermMode;
+use alacritty_terminal::term::cell::Flags;
 use gpui_kit::component::input::{Copy as EditCopy, Paste as EditPaste};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::{ClipboardItem, Edges, prelude::FluentBuilder as _, *};
@@ -88,9 +89,9 @@ struct TermHitLayout {
 /// Hovered hyperlink span for underline + pointer cursor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HoveredLink {
-    line: i32,
-    start_col: usize,
-    end_col: usize,
+    /// `(line, start_col, end_col_exclusive)` per grid row; a URL soft-wrapped
+    /// across rows has one segment per row.
+    segments: Vec<(i32, usize, usize)>,
     url: String,
 }
 
@@ -961,22 +962,44 @@ impl TerminalView {
                     }
                 }
                 return Some(HoveredLink {
-                    line: point.line.0,
-                    start_col: start,
-                    end_col: end,
+                    segments: vec![(point.line.0, start, end)],
                     url: uri,
                 });
             }
+            // Join soft-wrapped rows so a URL broken by the terminal width is
+            // detected as one link.
             let cols = grid.columns();
-            let mut line = String::with_capacity(cols);
-            for col in 0..cols {
-                line.push(grid[AlacPoint::new(point.line, Column(col))].c);
+            let wraps = |line: Line| {
+                grid[AlacPoint::new(line, Column(cols - 1))]
+                    .flags
+                    .contains(Flags::WRAPLINE)
+            };
+            let mut first = point.line;
+            while first > grid.topmost_line() && wraps(first - 1) {
+                first -= 1;
             }
-            find_url_span_at(&line, point.column.0).map(|(start, end, url)| HoveredLink {
-                line: point.line.0,
-                start_col: start,
-                end_col: end,
-                url: url.to_string(),
+            let mut last = point.line;
+            while last < grid.bottommost_line() && wraps(last) {
+                last += 1;
+            }
+            let mut text = String::with_capacity(cols * ((last.0 - first.0) as usize + 1));
+            for l in first.0..=last.0 {
+                for col in 0..cols {
+                    text.push(grid[AlacPoint::new(Line(l), Column(col))].c);
+                }
+            }
+            let idx = (point.line.0 - first.0) as usize * cols + point.column.0;
+            find_url_span_at(&text, idx).map(|(start, end, url)| {
+                let mut segments = Vec::new();
+                for row in start / cols..=(end - 1) / cols {
+                    let from = start.max(row * cols) - row * cols;
+                    let to = end.min((row + 1) * cols) - row * cols;
+                    segments.push((first.0 + row as i32, from, to));
+                }
+                HoveredLink {
+                    segments,
+                    url: url.to_string(),
+                }
             })
         })
     }
@@ -1232,7 +1255,8 @@ impl Render for TerminalView {
         let hovered_link = self
             .hovered_link
             .as_ref()
-            .map(|link| (link.line, link.start_col, link.end_col));
+            .map(|link| link.segments.clone())
+            .unwrap_or_default();
         let over_link = self.hovered_link.is_some();
 
         div()
