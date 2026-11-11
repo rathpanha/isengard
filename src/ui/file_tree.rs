@@ -258,6 +258,16 @@ impl FileTreePanel {
         }
     }
 
+    /// Visible row labels in order (tests).
+    #[cfg(test)]
+    pub fn visible_labels(&self, cx: &App) -> Vec<String> {
+        let state = self.state.read(cx);
+        (0..)
+            .map_while(|ix| state.entry(ix))
+            .map(|e| e.item().label.to_string())
+            .collect()
+    }
+
     /// Row currently marked cut (`true`) or copied (`false`), if any.
     #[cfg(test)]
     pub fn clipboard(&self) -> Option<(&[PathBuf], bool)> {
@@ -1093,11 +1103,20 @@ fn toolbar_create_parent(
 }
 
 fn to_tree_item(node: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
+    tree_item(node, creating, true)
+}
+
+/// `compact`: show a chain of single-directory folders as one row (the row
+/// stands for the deepest folder). Workspace roots never compact.
+fn tree_item(node: &FsNode, creating: Option<(&Path, bool)>, compact: bool) -> TreeItem {
+    let (label, node) = match node {
+        FsNode::Dir { .. } if compact => node.compact(),
+        _ => (node.name().to_owned(), node),
+    };
     let id = node.path().to_string_lossy().into_owned();
     match node {
-        FsNode::File { name, .. } => TreeItem::new(id, name.clone()),
+        FsNode::File { .. } => TreeItem::new(id, label),
         FsNode::Dir {
-            name,
             children,
             expanded,
             path,
@@ -1114,9 +1133,7 @@ fn to_tree_item(node: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
             if creating.is_some_and(|(p, _)| p == path.as_path()) {
                 inject_creating_row(&mut kids, path, creating.unwrap().1);
             }
-            TreeItem::new(id, name.clone())
-                .children(kids)
-                .expanded(*expanded)
+            TreeItem::new(id, label).children(kids).expanded(*expanded)
         }
     }
 }
@@ -1125,7 +1142,7 @@ fn to_tree_item(node: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
 /// is shown disabled with a "(missing)" label.
 fn to_root_item(root: &FsNode, creating: Option<(&Path, bool)>) -> TreeItem {
     if root.path().is_dir() {
-        to_tree_item(root, creating)
+        tree_item(root, creating, false)
     } else {
         TreeItem::new(
             root.path().to_string_lossy().into_owned(),

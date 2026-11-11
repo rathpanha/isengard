@@ -26,9 +26,44 @@ struct TerminalTab {
     cwd: PathBuf,
     /// One-off program tabs (agent login) are not restored with the session.
     persist: bool,
+    /// Build / run task tab (see [`TerminalPanel::running_tasks`]).
+    task: Option<TaskState>,
     view: Entity<TerminalView>,
     /// Kept so the PTY stays alive for the life of the tab.
     _session: PtySession,
+}
+
+/// What the panel knows about a Maven / Gradle / service tab.
+#[derive(Debug, Clone, Default)]
+struct TaskState {
+    /// The program has not exited yet.
+    running: bool,
+    /// Port the program said it listens on (Spring Boot, Quarkus, …).
+    port: Option<u16>,
+}
+
+/// A task tab whose program is still running (the Run menu's "Running" list).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningTask {
+    pub id: usize,
+    pub title: String,
+    pub port: Option<u16>,
+}
+
+/// Port a server announced in its output, e.g. `Tomcat started on port 8080 (http)`
+/// or `Listening on: http://localhost:8080`.
+pub fn detect_port(text: &str) -> Option<u16> {
+    use std::sync::LazyLock;
+    static ANSI: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]").unwrap());
+    static PORT: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)(?:started on ports?(?:\(s\))?:?\s+|listening on:?\s+https?://[^\s:/]+:)(\d{2,5})\b",
+        )
+        .unwrap()
+    });
+    let clean = ANSI.replace_all(text, "");
+    PORT.captures(&clean)?.get(1)?.as_str().parse().ok()
 }
 
 /// Host view for the integrated terminal: tab strip + active [`TerminalView`].
@@ -37,6 +72,8 @@ pub struct TerminalPanel {
     tabs: Vec<TerminalTab>,
     active: usize,
     next_id: usize,
+    /// Extra env for new plain shells (e.g. `JAVA_HOME` of the project JDK).
+    shell_env: Vec<(String, String)>,
 }
 
 impl TerminalPanel {
@@ -46,6 +83,72 @@ impl TerminalPanel {
             tabs: Vec::new(),
             active: 0,
             next_id: 1,
+            shell_env: Vec::new(),
+        }
+    }
+
+    /// Env applied to shells opened from now on (existing tabs keep theirs).
+    pub fn set_shell_env(&mut self, env: Vec<(String, String)>) {
+        self.shell_env = env;
+    }
+
+    #[cfg(test)]
+    pub fn shell_env(&self) -> &[(String, String)] {
+        &self.shell_env
+    }
+
+    /// Task tabs whose program is still running, oldest first.
+    pub fn running_tasks(&self) -> Vec<RunningTask> {
+        self.tabs
+            .iter()
+            .filter_map(|t| {
+                let task = t.task.as_ref().filter(|task| task.running)?;
+                Some(RunningTask {
+                    id: t.id,
+                    title: t.title.clone(),
+                    port: task.port,
+                })
+            })
+            .collect()
+    }
+
+    /// Ctrl+C to one task tab.
+    pub fn interrupt_task(&mut self, id: usize, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.iter().find(|t| t.id == id && t.task.is_some()) {
+            tab.view.update(cx, |view, _| view.interrupt());
+        }
+    }
+
+    /// Ctrl+C to every running task tab; returns how many there were.
+    pub fn interrupt_tasks(&mut self, cx: &mut Context<Self>) -> usize {
+        let ids: Vec<usize> = self.running_tasks().iter().map(|t| t.id).collect();
+        for id in &ids {
+            self.interrupt_task(*id, cx);
+        }
+        ids.len()
+    }
+
+    fn set_task_port(&mut self, id: usize, port: u16, cx: &mut Context<Self>) {
+        if let Some(task) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.id == id)
+            .and_then(|t| t.task.as_mut())
+        {
+            task.port = Some(port);
+            cx.notify();
+        }
+    }
+
+    fn set_task_closed(&mut self, id: usize, cx: &mut Context<Self>) {
+        if let Some(task) = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.id == id)
+            .and_then(|t| t.task.as_mut())
+        {
+            task.running = false;
+            cx.notify();
         }
     }
 
@@ -142,7 +245,7 @@ impl TerminalPanel {
         self.tabs.clear();
         self.active = 0;
         for cwd in cwds.iter().filter(|p| p.is_dir()) {
-            if let Ok(tab) = self.spawn_tab(cwd.clone(), None, cx) {
+            if let Ok(tab) = self.spawn_tab(cwd.clone(), None, false, cx) {
                 self.tabs.push(tab);
             }
         }
@@ -166,7 +269,7 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let tab = self.spawn_tab(cwd, None, cx)?;
+        let tab = self.spawn_tab(cwd, None, false, cx)?;
         self.push_active(tab, window, cx);
         Ok(())
     }
@@ -182,8 +285,29 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let mut tab = self.spawn_tab(cwd, Some((command, Box::new(on_exit))), cx)?;
+        let mut tab = self.spawn_tab(cwd, Some((command, Box::new(on_exit))), false, cx)?;
         tab.title = title;
+        self.push_active(tab, window, cx);
+        Ok(())
+    }
+
+    /// Like [`Self::add_command_session`], but the tab counts as a build / run
+    /// task: it shows in [`Self::running_tasks`] (with the port it announces)
+    /// until its program exits.
+    pub fn add_task_session(
+        &mut self,
+        cwd: PathBuf,
+        title: String,
+        command: &TerminalCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let mut tab = self.spawn_tab(cwd, Some((command, Box::new(|_, _| {}))), true, cx)?;
+        tab.title = title;
+        tab.task = Some(TaskState {
+            running: true,
+            port: None,
+        });
         self.push_active(tab, window, cx);
         Ok(())
     }
@@ -283,6 +407,7 @@ impl TerminalPanel {
         &mut self,
         cwd: PathBuf,
         command: Option<(&TerminalCommand, ExitHook)>,
+        task: bool,
         cx: &mut Context<Self>,
     ) -> Result<TerminalTab, String> {
         let cols = 80u16;
@@ -292,13 +417,14 @@ impl TerminalPanel {
             Some((command, hook)) => (Some(command), Some(hook)),
             None => (None, None),
         };
-        let (session, writer, reader) = match PtySession::spawn(&cwd, command, cols, rows) {
-            Ok(parts) => parts,
-            Err(err) => {
-                log::error!("terminal: failed to spawn PTY: {err:#}");
-                return Err(format!("Failed to start terminal: {err:#}"));
-            }
-        };
+        let (session, writer, reader) =
+            match PtySession::spawn(&cwd, command, &self.shell_env, cols, rows) {
+                Ok(parts) => parts,
+                Err(err) => {
+                    log::error!("terminal: failed to spawn PTY: {err:#}");
+                    return Err(format!("Failed to start terminal: {err:#}"));
+                }
+            };
 
         let master = session.master_handle();
         let config = TerminalConfig {
@@ -312,6 +438,8 @@ impl TerminalPanel {
             colors: palette_from_theme(cx),
         };
 
+        let id = self.next_id;
+        let panel = cx.entity().downgrade();
         let view = cx.new(|cx| {
             let view =
                 TerminalView::new(writer, reader, config, cx).with_resize_callback(move |c, r| {
@@ -322,13 +450,42 @@ impl TerminalPanel {
                         pixel_height: 0,
                     });
                 });
+            let view = if task {
+                // Task tabs report the port the program announces and when it ends.
+                let (out_panel, closed_panel) = (panel.clone(), panel);
+                let mut tail = String::new();
+                let mut found = false;
+                view.with_taps(
+                    move |bytes, cx| {
+                        if found {
+                            return;
+                        }
+                        tail.push_str(&String::from_utf8_lossy(bytes));
+                        if let Some(port) = detect_port(&tail) {
+                            found = true;
+                            _ = out_panel.update(cx, |p, cx| p.set_task_port(id, port, cx));
+                        } else if tail.len() > 4096 {
+                            // Keep a tail: a line may be split across chunks.
+                            let mut cut = tail.len() - 1024;
+                            while !tail.is_char_boundary(cut) {
+                                cut += 1;
+                            }
+                            tail.drain(..cut);
+                        }
+                    },
+                    move |cx| {
+                        _ = closed_panel.update(cx, |p, cx| p.set_task_closed(id, cx));
+                    },
+                )
+            } else {
+                view
+            };
             match on_exit {
                 Some(hook) => view.with_exit_callback(move |window, cx| hook(window, cx)),
                 None => view,
             }
         });
 
-        let id = self.next_id;
         self.next_id += 1;
         let title = self.title_for(&cwd);
         Ok(TerminalTab {
@@ -336,6 +493,7 @@ impl TerminalPanel {
             title,
             cwd,
             persist,
+            task: None,
             view,
             _session: session,
         })
@@ -535,5 +693,36 @@ impl Render for TerminalPanel {
                     .when_some(active_view, |this, view| this.child(view)),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_port;
+
+    #[test]
+    fn detects_the_port_servers_announce() {
+        assert_eq!(
+            detect_port("Tomcat started on port 8080 (http) with context path ''"),
+            Some(8080)
+        );
+        assert_eq!(detect_port("Netty started on port 8081"), Some(8081));
+        assert_eq!(
+            detect_port("Tomcat started on port(s): 9000 (http)"),
+            Some(9000)
+        );
+        assert_eq!(
+            detect_port("Jetty started on port(s) 8090 (http/1.1)"),
+            Some(8090)
+        );
+        assert_eq!(
+            detect_port("Listening on: http://localhost:8082"),
+            Some(8082)
+        );
+        assert_eq!(
+            detect_port("\x1b[32mTomcat started on port 8083\x1b[0m (http)"),
+            Some(8083)
+        );
+        assert_eq!(detect_port("Started App in 3.2 seconds"), None);
     }
 }

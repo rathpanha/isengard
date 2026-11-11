@@ -21,6 +21,8 @@ pub struct ResolvedServerSpec {
     pub command: String,
     pub args: Vec<String>,
     pub language_id: String,
+    /// Extra environment for the server process (e.g. jdtls launcher settings).
+    pub env: Vec<(String, String)>,
 }
 
 impl ResolvedServerSpec {
@@ -500,6 +502,7 @@ pub fn resolve(language: Language, settings: &LspSettings) -> Option<ResolvedSer
         command,
         args,
         language_id,
+        env: Vec::new(),
     })
 }
 

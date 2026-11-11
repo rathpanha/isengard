@@ -28,6 +28,7 @@ impl PtySession {
     pub fn spawn(
         cwd: &Path,
         command: Option<&TerminalCommand>,
+        shell_env: &[(String, String)],
         cols: u16,
         rows: u16,
     ) -> Result<(Self, Box<dyn Write + Send>, Box<dyn Read + Send>)> {
@@ -56,6 +57,9 @@ impl PtySession {
                 // `shellenv`, …), which a Finder-launched app does not inherit.
                 if cfg!(target_os = "macos") {
                     cmd.arg("-l");
+                }
+                for (key, value) in shell_env {
+                    cmd.env(key, value);
                 }
                 cmd
             }
@@ -179,7 +183,7 @@ mod tests {
             env: Vec::new(),
         };
         let (session, mut writer, _reader) =
-            PtySession::spawn(Path::new("/tmp"), Some(&shell), 80, 24).unwrap();
+            PtySession::spawn(Path::new("/tmp"), Some(&shell), &[], 80, 24).unwrap();
         assert!(!session.has_foreground_process(), "idle shell prompt");
         writer.write_all(b"sleep 30\n").unwrap();
         let mut busy = false;

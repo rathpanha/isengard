@@ -10,6 +10,8 @@ mod editor;
 mod file_tree;
 mod git;
 mod instance;
+mod java_tasks;
+mod jdk;
 mod lsp;
 mod menus;
 mod notify;

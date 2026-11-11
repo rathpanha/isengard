@@ -122,6 +122,10 @@ impl IsengardApp {
     ) {
         self.lsp.set_settings(self.effective_config().lsp.clone());
         self.lsp.set_folders(self.workspace.folders().to_vec());
+        if language == Language::Java {
+            self.check_jdk(window, cx);
+            self.refresh_java_launch(window, cx);
+        }
         let text = state.read(cx).value().to_string();
         let app = cx.entity().downgrade();
         match self.lsp.attach_editor(

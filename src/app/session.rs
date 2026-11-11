@@ -117,6 +117,8 @@ impl IsengardApp {
             agent_slots: Default::default(),
             search: self.search.read(cx).session_state(cx),
             git_repos: self.git.read(cx).snapshot_session_ui(cx),
+            java_home: self.java_home.clone(),
+            java_runs: self.java_runs.clone(),
         };
         // Keep other agents' chat indexes + remembered agent; only refresh the
         // active slot (and the remembered id when not on the picker).
@@ -153,6 +155,8 @@ impl IsengardApp {
         self.terminal_height = DEFAULT_TERMINAL_HEIGHT;
         self.agent_visible = false;
         self.agent_width = DEFAULT_AGENT_WIDTH;
+        self.java_home = None;
+        self.java_runs.clear();
     }
 
     /// Reopens saved tabs (with cursor/scroll), expands dirs, and restores terminals.
@@ -167,6 +171,8 @@ impl IsengardApp {
         };
 
         self.restoring_session = true;
+        self.java_home = session.java_home.clone();
+        self.java_runs = session.java_runs.clone();
         self.sidebar_width = if session.sidebar_width >= 100. {
             session.sidebar_width
         } else {

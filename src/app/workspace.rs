@@ -83,6 +83,11 @@ impl IsengardApp {
         // Workspace `settings` overlay font / format-on-save (not written to config.json).
         theme::apply(&self.effective_config(), Some(window), cx);
         self.lsp.set_settings(self.effective_config().lsp.clone());
+        self.java_project = crate::jdk::is_java_project(self.workspace.folders());
+        self.java_builds = crate::java_tasks::detect_all(self.workspace.folders());
+        self.check_jdk(window, cx);
+        self.sync_terminal_java_env(cx);
+        self.refresh_java_services(cx);
         cx.notify();
     }
 

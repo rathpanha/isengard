@@ -3,6 +3,11 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-11** — Java Run menu: Running list with detected port + per-service stop and Stop all below it; left-aligned rows; Run File button removed (Services list replaces it).
+- **2026-11-11** — File tree: single-folder chains share one row (Java packages dotted below a source root). Java Run menu lists every runnable service up front, run in its own module.
+- **2026-11-11** — Java: Run File (Maven exec / Gradle / `java File.java`), Stop for task tabs, saved run configurations, missing-Maven/Gradle check, `JAVA_HOME` for new plain terminals.
+- **2026-11-11** — Java Run menu: status-bar Play button lists Maven / Gradle tasks and runs them in a terminal tab with the wrapper (or system tool) and the project JDK as `JAVA_HOME`.
+- **2026-11-11** — Java: JDK discovery, per-workspace JDK picker in the status bar, No JDK dialog, jdtls Install (pinned 1.57.0) + launcher that runs on a JDK 21+ and gets the project JDK as default runtime.
 - **2026-11-06** — Release prep v0.2.10 (agent chat reopen fix): version bump, `docs/releases/v0.2.10.md`, status release lines.
 - **2026-11-06** — Agent chats that fail to reopen (e.g. after a forced quit) stay in the chat list instead of being dropped; `config.json` is written atomically.
 - **2026-11-06** — Release prep v0.2.9 (tree Cut / Copy / Paste and multi-select): version

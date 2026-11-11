@@ -112,8 +112,54 @@ impl FsNode {
         let needs_load = value && children.is_none();
         if needs_load {
             self.ensure_loaded();
+            self.open_single_dir_chain();
         }
         needs_load
+    }
+
+    /// A directory whose only entry is another directory is shown on one row
+    /// (see [`Self::compact`]), so open that child right away — and its own
+    /// single child, and so on — or the row could not know how far to extend.
+    fn open_single_dir_chain(&mut self) {
+        if let Some([only]) = self.children_mut().map(Vec::as_mut_slice)
+            && only.is_dir()
+        {
+            only.set_expanded(true);
+        }
+    }
+
+    /// Follows a chain of directories that each hold exactly one loaded
+    /// directory (`co` → `istad` → `gateway`). Returns the label for the single
+    /// row that stands for the chain and the deepest directory (the row's
+    /// identity). A source-root folder (`java`, `kotlin`, …) never merges with
+    /// its child; below one, names join with `.` like a Java package.
+    pub fn compact(&self) -> (String, &FsNode) {
+        let mut names = vec![self.name()];
+        let mut cur = self;
+        while !is_source_root(cur.name())
+            && let Some([only]) = cur.children()
+            && only.is_dir()
+            && only.children().is_some()
+        {
+            names.push(only.name());
+            cur = only;
+        }
+        let mut in_package = self
+            .path()
+            .ancestors()
+            .skip(1)
+            .filter_map(|a| a.file_name())
+            .any(|n| is_source_root(&n.to_string_lossy()));
+        let mut label = String::from(names[0]);
+        let mut prev = names[0];
+        for name in &names[1..] {
+            in_package |= is_source_root(prev);
+            let dotted = in_package && is_identifier(prev) && is_identifier(name);
+            label.push(if dotted { '.' } else { '/' });
+            label.push_str(name);
+            prev = name;
+        }
+        (label, cur)
     }
 
     /// Collects paths of directories that are currently expanded.
@@ -228,6 +274,18 @@ impl FsNode {
     }
 }
 
+fn is_source_root(name: &str) -> bool {
+    matches!(name, "java" | "kotlin" | "scala" | "groovy")
+}
+
+fn is_identifier(name: &str) -> bool {
+    !name.starts_with(|c: char| c.is_ascii_digit())
+        && !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,10 +390,50 @@ mod tests {
         assert!(root.set_expanded(true), "first expand loads children");
         assert!(!root.set_expanded(true), "already loaded");
 
+        // `src` is the root's only entry, so it was opened with the root.
         let src = root.find_mut(&tmp.path().join("src")).unwrap();
-        assert!(src.set_expanded(true));
+        assert!(!src.set_expanded(true));
         let ui = root.find_mut(&tmp.path().join("src/ui")).unwrap();
         assert!(ui.is_dir());
         assert!(root.find_mut(Path::new("/elsewhere")).is_none());
+    }
+
+    #[test]
+    fn single_dir_chains_compact_into_one_package_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg = tmp.path().join("src/main/java/co/istad/gateway");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("App.java"), "").unwrap();
+        std::fs::create_dir_all(tmp.path().join("src/main/resources")).unwrap();
+
+        let mut root = FsNode::from_path(tmp.path());
+        root.expand_toward(&pkg);
+
+        // `main` has two children (java + resources): no merge there.
+        let main = root.find_mut(&tmp.path().join("src/main")).unwrap();
+        assert_eq!(main.compact().0, "main");
+        // The source root stands alone; the package chain below it is dotted.
+        let java = root.find_mut(&tmp.path().join("src/main/java")).unwrap();
+        let (label, deepest) = java.compact();
+        assert_eq!(label, "java");
+        assert_eq!(deepest.path(), tmp.path().join("src/main/java"));
+        let co = root.find_mut(&tmp.path().join("src/main/java/co")).unwrap();
+        let (label, deepest) = co.compact();
+        assert_eq!(label, "co.istad.gateway");
+        assert_eq!(deepest.path(), pkg);
+        // `src` has a single child, `main`, which is not a leaf chain end.
+        let src = root.find_mut(&tmp.path().join("src")).unwrap();
+        assert_eq!(src.compact().0, "src/main");
+    }
+
+    #[test]
+    fn chain_stops_where_a_file_or_sibling_appears() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("a/b/c")).unwrap();
+        std::fs::write(tmp.path().join("a/b/note.txt"), "").unwrap();
+        let mut root = FsNode::from_path(tmp.path());
+        root.expand_toward(&tmp.path().join("a/b/c"));
+        let a = root.find_mut(&tmp.path().join("a")).unwrap();
+        assert_eq!(a.compact().0, "a/b");
     }
 }

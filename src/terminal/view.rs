@@ -359,6 +359,8 @@ pub type ClipboardStoreCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalV
 /// });
 /// ```
 pub type ExitCallback = Box<dyn Fn(&mut Window, &mut Context<TerminalView>)>;
+type OutputTap = Box<dyn FnMut(&[u8], &mut Context<TerminalView>)>;
+type ClosedTap = Box<dyn Fn(&mut Context<TerminalView>)>;
 
 /// The main terminal view component for GPUI applications.
 ///
@@ -448,6 +450,10 @@ pub struct TerminalView {
 
     /// Callback for terminal exit events
     exit_callback: Option<ExitCallback>,
+    /// Sees every chunk of program output (after it reached the terminal state).
+    output_tap: Option<OutputTap>,
+    /// Runs when the program's output ends (the process exited).
+    closed_tap: Option<ClosedTap>,
 
     /// Content metrics from the last paint (for mouse → cell).
     hit_layout: Arc<Mutex<Option<TermHitLayout>>>,
@@ -547,6 +553,9 @@ impl TerminalView {
                         // Process bytes and notify the view
                         let result = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                             view.state.process_bytes(&bytes);
+                            if let Some(tap) = view.output_tap.as_mut() {
+                                tap(&bytes, cx);
+                            }
                             cx.notify();
                         });
                         if result.is_err() {
@@ -558,7 +567,10 @@ impl TerminalView {
                         // Channel closed - PTY has finished, send Exit event
                         let _ = exit_event_tx.send(TerminalEvent::Exit);
                         // Notify view to process the Exit event
-                        let _ = this.update(cx, |_view, cx: &mut Context<Self>| {
+                        let _ = this.update(cx, |view, cx: &mut Context<Self>| {
+                            if let Some(tap) = view.closed_tap.as_ref() {
+                                tap(cx);
+                            }
                             cx.notify();
                         });
                         break;
@@ -581,6 +593,8 @@ impl TerminalView {
             title_callback: None,
             clipboard_store_callback: None,
             exit_callback: None,
+            output_tap: None,
+            closed_tap: None,
             hit_layout: Arc::new(Mutex::new(None)),
             selecting: false,
             hovered_link: None,
@@ -722,6 +736,17 @@ impl TerminalView {
     ///     // Close the terminal tab or show exit message
     /// })
     /// ```
+    /// Observe program output and its end (task tabs: port detection, "running" state).
+    pub fn with_taps(
+        mut self,
+        output: impl FnMut(&[u8], &mut Context<TerminalView>) + 'static,
+        closed: impl Fn(&mut Context<TerminalView>) + 'static,
+    ) -> Self {
+        self.output_tap = Some(Box::new(output));
+        self.closed_tap = Some(Box::new(closed));
+        self
+    }
+
     pub fn with_exit_callback(
         mut self,
         callback: impl Fn(&mut Window, &mut Context<TerminalView>) + 'static,
@@ -1032,6 +1057,11 @@ impl TerminalView {
     }
 
     /// Types `text` at the prompt without running it (no trailing newline).
+    /// Ctrl+C: the PTY's line discipline turns it into SIGINT for the foreground job.
+    pub fn interrupt(&mut self) {
+        let _ = self.stdin_writer.lock().write_all(b"\x03");
+    }
+
     pub fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.paste_text(text, cx);
     }

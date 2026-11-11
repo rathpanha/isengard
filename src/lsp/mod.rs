@@ -10,6 +10,7 @@ mod client;
 mod edits;
 mod host;
 mod install;
+mod java;
 mod protocol;
 mod registry;
 mod uri;
@@ -25,3 +26,4 @@ pub use install::{
     InstallRecipe, bun_install, is_app_local, recipe_for_command, resolve_command, run_install,
     run_uninstall,
 };
+pub use java::{JDTLS_MIN_JAVA, JavaLaunch};

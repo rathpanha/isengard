@@ -136,6 +136,10 @@ fn default_sidebar_visible() -> bool {
     true
 }
 
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
 fn default_terminal_height() -> f32 {
     DEFAULT_TERMINAL_HEIGHT
 }
@@ -195,6 +199,34 @@ pub struct WorkspaceSession {
     /// Commit drafts / selections / box height per git root.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub git_repos: Vec<GitRepoSession>,
+    /// JDK home the user picked for this folder/workspace (`None` → auto).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub java_home: Option<PathBuf>,
+    /// Saved Maven / Gradle run configurations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub java_runs: Vec<RunConfig>,
+}
+
+/// A named Maven / Gradle invocation, e.g. `dev` → `spring-boot:run -Dspring-boot.run.profiles=dev`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunConfig {
+    pub name: String,
+    /// Build root folder it runs in (must hold the `pom.xml` / `build.gradle`).
+    pub root: PathBuf,
+    /// Everything after `mvn` / `gradle`, split like a shell would.
+    pub args: String,
+}
+
+/// JDKs are found on the user's machine, never installed by Isengard.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JavaSettings {
+    /// JDK homes added with Add JDK… (outside the folders we scan).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub homes: Vec<PathBuf>,
+    /// jdtls heap cap (`-Xmx`), e.g. `512m` / `2g`. Absent → `1g`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jdtls_xmx: Option<String>,
 }
 
 /// Agent composer choices re-applied to every chat the panel opens (new,
@@ -302,6 +334,8 @@ impl Default for WorkspaceSession {
             sidebar_panel: SidebarPanel::default(),
             search: SearchSessionState::default(),
             git_repos: Vec::new(),
+            java_home: None,
+            java_runs: Vec::new(),
         }
     }
 }
@@ -488,6 +522,9 @@ pub struct AppConfig {
     /// Language Server Protocol (IntelliSense) — see [`LspSettings`].
     #[serde(default)]
     pub lsp: LspSettings,
+    /// Java tooling — see [`JavaSettings`].
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub java: JavaSettings,
     /// Automatic update checks — see [`UpdateSettings`].
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -520,6 +557,7 @@ impl Default for AppConfig {
             agent: AgentSettings::default(),
             agent_prefs: AgentPrefs::default(),
             lsp: LspSettings::default(),
+            java: JavaSettings::default(),
             updates: UpdateSettings::default(),
             window_width: DEFAULT_WINDOW_WIDTH,
             window_height: DEFAULT_WINDOW_HEIGHT,

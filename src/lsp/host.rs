@@ -116,6 +116,8 @@ pub struct LspHost {
     events_rx: flume::Receiver<LspEvent>,
     /// Set by the app once — code actions / rename land here.
     workspace_edit_handler: Option<WorkspaceEditHandler>,
+    /// jdtls launch settings (`None` → no JDK 21+, jdtls is not started).
+    java: Option<super::java::JavaLaunch>,
 }
 
 impl Default for LspHost {
@@ -131,6 +133,7 @@ impl Default for LspHost {
             events_tx,
             events_rx,
             workspace_edit_handler: None,
+            java: None,
         }
     }
 }
@@ -147,6 +150,10 @@ impl LspHost {
 
     pub fn set_settings(&mut self, settings: LspSettings) {
         self.settings = settings;
+    }
+
+    pub fn set_java(&mut self, java: Option<super::java::JavaLaunch>) {
+        self.java = java;
     }
 
     pub fn settings(&self) -> &LspSettings {
@@ -335,9 +342,17 @@ impl LspHost {
         if document::is_untitled(path) {
             return AttachOutcome::Done;
         }
-        let Some(spec) = registry::resolve(language, &self.settings) else {
+        let Some(mut spec) = registry::resolve(language, &self.settings) else {
             return AttachOutcome::Done;
         };
+        let is_jdtls = spec.command == "jdtls";
+        if is_jdtls {
+            // No JDK 21+ → jdtls cannot run; the app already told the user.
+            let (Some(java), Some(folder)) = (&self.java, self.folders.first()) else {
+                return AttachOutcome::Done;
+            };
+            java.apply(&mut spec, folder, super::install::is_app_local("jdtls"));
+        }
         let Some(uri) = try_path_uri(path) else {
             return AttachOutcome::Done;
         };
@@ -386,7 +401,12 @@ impl LspHost {
         }
 
         let init = match self.build_init(&spec.command) {
-            Ok(init) => init,
+            Ok(mut init) => {
+                if is_jdtls && let Some(java) = &self.java {
+                    init.initialization_options = Some(java.init_options());
+                }
+                init
+            }
             Err(err) => {
                 log::warn!("LSP: {err:#}");
                 self.lifecycle.insert(

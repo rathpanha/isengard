@@ -32,6 +32,8 @@ What works today:
   gitignored rows shown muted; dirty git paths tint the label (modified/
   rename → warning, new/untracked → success, deleted/conflict → danger;
   parent folders roll up); indent guides (design owns the pixel rules).
+  **Compact folders:** single-folder chains share one row (`src/main`,
+  `co.istad.rathpanha.ecommerce.gateway` under a `java` source root) — see design.
   Context menu: files Cut / Copy / Paste / Reveal in File Manager (Finder / File Explorer) / Rename /
   Delete; folders New File / New Folder / Cut / Copy / Paste / Reveal / Rename / Delete (multi-root roots also Remove Folder from Workspace; roots can't be cut).
   **Multi-select:** Ctrl/Cmd+click toggles rows (the previously selected row
@@ -108,6 +110,84 @@ What works today:
   LSP until saved. Command-only code actions run via
   `workspace/executeCommand` (and `workspace/applyEdit` when the server
   pushes edits).
+- **Java / JDK:** Isengard never installs a JDK. It scans `JAVA_HOME`, the
+  first `java` on `PATH`, and the usual install folders
+  (`/usr/lib/jvm`, `~/.sdkman`, `~/.jdks`, macOS `JavaVirtualMachines`,
+  Windows `Program Files\Java` / Adoptium / Microsoft / Zulu / Corretto) by
+  reading each home's `release` file (needs `bin/javac`, so a JRE is skipped).
+  The scan runs on the first Java context (a `.java` tab, or a root with
+  `pom.xml` / `build.gradle*` / `settings.gradle*`) and is cached; **Re-scan**
+  refreshes. Status bar `JDK 21` item (Java contexts only) → popover listing
+  JDKs (check = active), **Add JDK…** (folder picker, saved in `config.json`
+  `java.homes`) and **Re-scan**. The choice is stored per workspace
+  (`sessions.*.java_home`); default is the saved JDK, else `JAVA_HOME`, else
+  the newest. No JDK found → one **No JDK found** dialog per run (Download JDK
+  → adoptium.net / Add JDK… / Re-scan).
+  **jdtls (Java IntelliSense):** status-bar LSP list **Install** downloads the
+  pinned Eclipse JDT LS 1.57.0 (the newest milestone that runs on JDK 21; 1.63
+  needs JDK 25) into `…/lsp/pkg/jdtls` with an Isengard launcher in `lsp/bin`.
+  Two JDKs: the **server JDK** (newest installed 21+, automatic) runs jdtls;
+  the **project JDK** (your pick) is jdtls' default runtime and every other
+  installed JDK is offered as a runtime, so Java 8/11/17 projects work. Only
+  older JDKs installed → one warning toast, jdtls is not started. Heap cap
+  `-Xmx1g` (`config.json` `java.jdtls_xmx`, e.g. `"512m"`); the per-workspace
+  index lives in `<cache dir>/isengard/jdtls-data/<hash>`. Picking another JDK
+  restarts the language servers. A `jdtls` on `PATH` is used if there is no
+  app-local one (gets `JAVA_HOME` + `-data`). Verified on Linux with JDK 21
+  (initialize round-trip via the ignored `jdtls_recipe_installs_a_launchable_server`
+  test); the Windows `.cmd` launcher, macOS, Lombok / annotation processors and
+  real Maven import progress are untested.
+  **Run menu (Maven / Gradle):** a root with `pom.xml` or `build.gradle*` /
+  `settings.gradle*` (Maven wins if both) adds a task-list button to the status
+  bar — Maven: clean, compile, test, package, clean install (+
+  `spring-boot:run` when the pom mentions spring-boot); Gradle: clean, build,
+  test (+ `bootRun` for the Spring Boot plugin, else `run` for `application`).
+  Multi-root shows one group per build root. A click opens a new terminal tab
+  titled e.g. `mvn clean install` (not restored with the session) that runs
+  the project wrapper (`mvnw` / `gradlew`) if present, else `mvn` / `gradle`
+  from the user's login shell `PATH` (Unix: `$SHELL -l -i -c`; Windows:
+  `cmd /C`, untested). Without a wrapper, a login-shell `command -v` probe
+  (5 s cap, then assumed present) runs first; missing tool → error toast
+  naming the wrapper command instead of an empty tab. The command line itself
+  exports `JAVA_HOME` + `PATH` for the selected project JDK (rc files like
+  sdkman cannot override it); no JDK → the No JDK dialog.
+  **Services:** the same menu lists every runnable class in the workspace
+  (non-test `.java` with `static void main(`, found by a background scan on
+  open and when a `.java` / `pom.xml` / `build.gradle` changes; skips `target`,
+  `build`, `out`, `dist`, `node_modules`, gitignored). Spring Boot apps
+  (`@SpringBootApplication`) come first, then by name; each row shows
+  `Class · module folder`. A click runs it in the service's own module (nearest
+  folder up to the workspace root with a `pom.xml` / Gradle build — so a
+  workspace of many microservice folders works): Spring Boot →
+  `spring-boot:run -Dspring-boot.run.main-class=<Class>` (Gradle `bootRun`),
+  others → `exec:java`, no build → `java File.java`. The tab is titled with the
+  class name. The Run button also shows when only services exist (no root
+  build file).
+  **Running list:** tasks and services that were started from the menu show
+  under a **Running** heading at the top while their program is alive: green
+  square, tab title, the port the program announced in its output (`Tomcat
+  started on port 8080`, Netty / Jetty / Undertow, `Listening on:
+  http://host:port` — first match wins; no port until it prints one), and a
+  per-row stop (Ctrl+C to that tab). A **Stop all** row sits right under the
+  list. Clicking a row shows its terminal tab. A program that exits (or was
+  stopped) leaves the list; its tab stays open with the output. The Run button
+  icon becomes a spinner while anything runs. There is no separate "Run File"
+  button — start a class from the Services list. Quitting terminates running
+  tasks like any terminal program.
+  **Run configurations:** the `+` next to a build's name opens a dialog (name +
+  raw Maven/Gradle arguments, e.g. `spring-boot:run
+  -Dspring-boot.run.profiles=dev`); saved per workspace in
+  `sessions.*.java_runs`, listed under that build with a delete ×, run like any
+  task. Same name + folder overwrites. No env / VM-option / working-dir fields
+  — put them in the argument string.
+  **Plain terminals:** new shell tabs in a Java project start with `JAVA_HOME`
+  and `PATH` set to the project JDK (tabs already open keep theirs; a shell rc
+  that exports `JAVA_HOME` still wins there — task tabs are immune).
+  **Not done: debugging.** It needs a DAP client, the `java-debug` jdtls
+  plugin, breakpoints in the editor gutter and a debug panel; Kit's `Editor`
+  has no gutter-click / breakpoint hook today (would be a vendor patch).
+  Also not done: Spring Boot detection beyond the pom / Gradle plugin text,
+  Run/Stop icons next to `main` (no code-lens UI in Kit).
 - **Terminal:** multi-tab bottom panel while a folder/workspace is open (not
   on welcome). Toggle show/hide (`Ctrl+\``); New Terminal (`Ctrl+Shift+\`` /
   header `+`) always adds a tab. Multi-root asks for root only when creating

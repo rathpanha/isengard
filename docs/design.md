@@ -215,6 +215,19 @@ Add a row here whenever a new shared component is created.
   level adds one `INDENT_COL`. Guide segments use a 1px vertical overlap;
   ListItem `py_0`/`px_0` so hover is full-bleed to the panel edge; row content
   keeps `px_3`. A narrow panel truncates labels instead of compressing the tree.
+- **Status-bar menus (Run / JDK / LSP):** rows are left-aligned full-width
+  rows with a hover fill (`menu_row` in `app/render.rs`): optional icon, label
+  (truncates), muted detail (module, `:port`), trailing ghost icon button
+  (stop, delete). Kit's label-only `Button` centres its text, so do not use it
+  for menu rows; keep `Button` for icon-only actions.
+- **Compact folders:** a folder whose only entry is another (loaded) folder
+  shares one row with it — `src/main`, and `co.istad.rathpanha.ecommerce.gateway`
+  below a `java` / `kotlin` / `scala` / `groovy` source root (dots between
+  identifier-like names, `/` otherwise). The row stands for the deepest folder
+  (selection, rename, drop, git tint, expand state). A source root never merges
+  with its child, and workspace roots never compact. Opening a folder also opens
+  its single child folder so the chain is known; a sibling or file appearing
+  splits the row on the next refresh.
 - **Gitignored entries:** still listed; icon + label at 60% opacity (not
   hidden). Matched via `ignore` + each root's `.gitignore` tree.
 - **Title bar:** macOS shows the centred window title; Windows/Linux show the

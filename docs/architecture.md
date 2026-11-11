@@ -19,6 +19,7 @@ The README is install and license only. This file is the stack map.
 | App | `IsengardApp` (`src/app/`) | Workspace, tabs, chrome, wires every subsystem |
 | Syntax | Tree-sitter (Kit `tree-sitter-languages`) + Ayu Darker | Highlight scopes; not IntelliSense |
 | IntelliSense | External LSP servers over stdio (`src/lsp/`) | Completions, diagnostics, rename, format (non-JS) |
+| JDK | User-installed JDKs found by `src/jdk.rs`; picker in `src/app/java.rs` | Per-workspace project JDK (never downloaded by Isengard) |
 | JS runtime | **Bun 1.4.4** (`src/runtime.rs`) | Package install, run npm-packaged CLIs, `bun fmt` |
 | Agent | ACP host (`src/acp/`) + panel (`src/agent/`) | External agent process; default = Claude adapter |
 | Terminal | `alacritty_terminal` + `portable-pty` (`src/terminal/`) | Bottom PTY panel (local adaptation, not crates.io gpui-terminal) |
@@ -325,12 +326,15 @@ src/
 │   ├── indent.rs        `detect_indent`: per-file tabs / 2 / 4 / 8 (footer, LSP format)
 │   ├── selection_matches.rs  soft-highlight other occurrences of the selection
 │   └── tabs.rs          TabList<T>: order/activate/reorder (unit-tested)
+├── java_tasks.rs        Maven/Gradle detection, task list, terminal command line
+├── jdk.rs               JDK discovery (`release` files), choice, Java-project detect
 ├── lsp/                 Language Server Protocol (IntelliSense)
 │   ├── host.rs          workspace servers, didOpen/Change/Close, diagnostics pump
 │   ├── client.rs        stdio JSON-RPC client (flume + background thread)
 │   ├── bridge.rs        Kit Completion/Hover/DefinitionProvider + showDocument
 │   ├── registry.rs      Language → default ServerSpec + config overrides
-│   ├── install.rs       app-local download / resolve (bin then PATH); Bun recipe
+│   ├── install.rs       app-local download / resolve (bin then PATH); Bun + jdtls recipes
+│   ├── java.rs          jdtls launch: server JDK (21+), runtimes, -Xmx, -data dir
 │   ├── edits.rs         apply TextEdit / WorkspaceEdit to buffers
 │   ├── protocol.rs      Content-Length framing
 │   └── uri.rs           file:// path ↔ Uri

@@ -28,6 +28,7 @@ mod bun;
 mod chrome;
 mod files;
 mod git;
+mod java;
 mod lsp;
 mod render;
 mod search;
@@ -243,6 +244,27 @@ pub struct IsengardApp {
     /// Controlled LSP catalog popover — install/remove must close it or focus
     /// dies on the ephemeral trigger and File > Close Folder stops working.
     lsp_catalog_open: bool,
+    /// Installed JDKs (scanned lazily on the first Java context; Re-scan refreshes).
+    jdks: Vec<crate::jdk::Jdk>,
+    jdks_scanned: bool,
+    /// The folders hold a Maven / Gradle build (recomputed on workspace change).
+    java_project: bool,
+    /// Maven / Gradle builds in the workspace roots (the status-bar Run menu).
+    java_builds: Vec<crate::java_tasks::Build>,
+    java_run_open: bool,
+    /// Every runnable `main` class in the workspace (the Run menu's Services list).
+    java_services: Vec<crate::java_tasks::Service>,
+    /// Bumps per scan so a slow, stale scan is dropped.
+    java_services_gen: u64,
+    /// Saved run configurations of this workspace (`sessions.*.java_runs`).
+    java_runs: Vec<crate::config::RunConfig>,
+    /// JDK home chosen for this workspace (`None` → newest / `JAVA_HOME`).
+    java_home: Option<PathBuf>,
+    jdk_picker_open: bool,
+    /// The "no JDK" dialog was already shown this run.
+    jdk_missing_shown: bool,
+    /// Told the user once that only JDKs older than jdtls' minimum exist.
+    jdtls_old_jdk_warned: bool,
     tabs: TabList<EditorTab>,
     app_menu_bar: Entity<AppMenuBar>,
     /// Bottom integrated terminal (lazy; created on first show).
@@ -451,6 +473,7 @@ impl IsengardApp {
         cx.set_global(actions::ActiveIsengard(cx.weak_entity()));
 
         let terminal = cx.new(|_| TerminalPanel::new(&[]));
+        let terminal_sub = cx.observe(&terminal, |_, _, cx| cx.notify());
 
         let mut app = Self {
             config,
@@ -472,6 +495,18 @@ impl IsengardApp {
             selection_match_gen: 0,
             selection_match_last_range: HashMap::new(),
             status_bar_cursor: None,
+            jdks: Vec::new(),
+            jdks_scanned: false,
+            java_project: false,
+            java_builds: Vec::new(),
+            java_run_open: false,
+            java_services: Vec::new(),
+            java_services_gen: 0,
+            java_runs: Vec::new(),
+            java_home: None,
+            jdk_picker_open: false,
+            jdk_missing_shown: false,
+            jdtls_old_jdk_warned: false,
             lsp_catalog_open: false,
             tabs: TabList::default(),
             app_menu_bar,
@@ -503,6 +538,7 @@ impl IsengardApp {
                 git_subscription,
                 bounds_sub,
                 activation_sub,
+                terminal_sub,
             ],
         };
 

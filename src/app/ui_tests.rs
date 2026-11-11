@@ -3914,6 +3914,391 @@ fn bun_setup_dialog_cannot_be_dismissed(cx: &mut TestAppContext) {
     assert!(h.has("bun-install", cx), "Esc must not close it");
 }
 
+fn fake_jdk(h: &Harness, name: &str, version: &str) -> PathBuf {
+    let bin = if cfg!(windows) {
+        ("java.exe", "javac.exe")
+    } else {
+        ("java", "javac")
+    };
+    h.file(&format!("{name}/bin/{}", bin.0), "");
+    h.file(&format!("{name}/bin/{}", bin.1), "");
+    h.file(
+        &format!("{name}/release"),
+        &format!("JAVA_VERSION=\"{version}\"\nIMPLEMENTOR=\"Test\"\n"),
+    );
+    h.dir.path().join(name)
+}
+
+#[gpui_kit::test]
+fn jdk_picker_shows_for_maven_project_and_choice_persists(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let plain = h.folder("plain");
+    h.open_folder(&plain, cx);
+    assert!(
+        !h.has("status-jdk", cx),
+        "no JDK item outside Java projects"
+    );
+
+    let proj = h.folder("proj");
+    std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
+    h.open_folder(&proj, cx);
+    assert!(h.has("status-jdk", cx), "pom.xml opens the JDK item");
+
+    let jdk17 = fake_jdk(&h, "jdk17", "17.0.9");
+    let jdk21 = fake_jdk(&h, "jdk21", "21.0.2");
+    h.with_app(cx, |app, window, cx| {
+        app.register_jdk(&jdk17, window, cx);
+        app.register_jdk(&jdk21, window, cx);
+        app.select_jdk(jdk17.canonicalize().unwrap(), window, cx);
+    });
+    let (label, saved) = cx.read(|cx| {
+        let app = h.app.read(cx);
+        let key = app.workspace.session_key().unwrap();
+        (
+            app.active_jdk().map(|j| j.short_label()),
+            app.config.session(&key).and_then(|s| s.java_home.clone()),
+        )
+    });
+    assert_eq!(label.as_deref(), Some("JDK 17"));
+    assert_eq!(saved, Some(jdk17.canonicalize().unwrap()));
+
+    h.click("status-jdk", cx);
+    assert!(h.has("jdk-pick-0", cx), "picker lists detected JDKs");
+    assert!(h.has("jdk-add", cx));
+    assert!(h.has("jdk-rescan", cx));
+}
+
+#[gpui_kit::test]
+fn java_file_with_only_old_jdk_warns_that_jdtls_needs_21(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = h.folder("proj");
+    h.open_folder(&proj, cx);
+    let jdk17 = fake_jdk(&h, "jdk17", "17.0.9");
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk17, window, cx));
+    let main = h.file("proj/Main.java", "class Main {}\n");
+    h.open(&main, cx);
+    assert!(cx.read(|cx| h.app.read(cx).jdtls_old_jdk_warned));
+}
+
+#[gpui_kit::test]
+fn java_run_menu_lists_maven_tasks_only_for_build_projects(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let plain = h.folder("plain");
+    h.open_folder(&plain, cx);
+    assert!(!h.has("status-java-run", cx));
+
+    let proj = h.folder("proj");
+    std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
+    h.open_folder(&proj, cx);
+    assert!(h.has("status-java-run", cx));
+    h.click("status-java-run", cx);
+    assert!(h.has("java-task-0-0", cx), "first Maven task is listed");
+    assert!(h.has("java-task-0-4", cx), "clean install is listed");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn running_a_task_uses_the_wrapper_and_project_jdk(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::new(cx);
+    let proj = h.folder("proj");
+    std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
+    let wrapper = proj.join("mvnw");
+    std::fs::write(&wrapper, "#!/bin/sh\necho \"$JAVA_HOME|$*\" > ran.txt\n").unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    h.open_folder(&proj, cx);
+    let jdk17 = fake_jdk(&h, "jdk17", "17.0.9");
+    h.with_app(cx, |app, window, cx| {
+        app.register_jdk(&jdk17, window, cx);
+        app.run_java_task(0, 4, window, cx); // clean install
+    });
+    let out = proj.join("ran.txt");
+    for _ in 0..100 {
+        if out.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let text = std::fs::read_to_string(&out).expect("task ran");
+    assert_eq!(
+        text.trim(),
+        format!("{}|clean install", jdk17.canonicalize().unwrap().display())
+    );
+}
+
+/// Maven project in `name` whose `mvnw` runs `body`.
+#[cfg(unix)]
+fn maven_project(h: &Harness, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let proj = h.folder(name);
+    std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
+    let wrapper = proj.join("mvnw");
+    std::fs::write(&wrapper, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    proj
+}
+
+#[cfg(unix)]
+fn wait_for(path: &Path) -> String {
+    for _ in 0..200 {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && !text.is_empty()
+        {
+            return text;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("{} never appeared", path.display());
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn run_configurations_save_run_and_delete(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = maven_project(&h, "proj", "echo \"$*\" > ran.txt");
+    h.open_folder(&proj, cx);
+    let jdk = fake_jdk(&h, "jdk21", "21.0.2");
+    h.with_app(cx, |app, window, cx| {
+        app.register_jdk(&jdk, window, cx);
+        app.save_run_config(
+            "dev".into(),
+            proj.clone(),
+            "spring-boot:run -Dspring-boot.run.profiles=dev".into(),
+            cx,
+        );
+    });
+    let saved = cx.read(|cx| {
+        let app = h.app.read(cx);
+        let key = app.workspace.session_key().unwrap();
+        app.config.session(&key).map(|s| s.java_runs.len())
+    });
+    assert_eq!(saved, Some(1), "stored in the workspace session");
+
+    h.click("status-java-run", cx);
+    assert!(h.has("java-config-0", cx), "configuration is listed");
+    h.click("java-config-0", cx);
+    assert_eq!(
+        wait_for(&proj.join("ran.txt")).trim(),
+        "spring-boot:run -Dspring-boot.run.profiles=dev"
+    );
+
+    h.with_app(cx, |app, _, cx| app.remove_run_config(0, cx));
+    assert!(cx.read(|cx| h.app.read(cx).java_runs.is_empty()));
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn stop_interrupts_a_running_task(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = maven_project(
+        &h,
+        "proj",
+        "trap 'echo stopped > stopped.txt; exit 0' INT\necho started > started.txt\nwhile true; do sleep 0.1; done",
+    );
+    h.open_folder(&proj, cx);
+    let jdk = fake_jdk(&h, "jdk21", "21.0.2");
+    h.with_app(cx, |app, window, cx| {
+        app.register_jdk(&jdk, window, cx);
+        app.run_java_task(0, 0, window, cx);
+    });
+    wait_for(&proj.join("started.txt"));
+    h.with_app(cx, |app, window, cx| app.stop_java_tasks(window, cx));
+    assert_eq!(wait_for(&proj.join("stopped.txt")).trim(), "stopped");
+}
+
+#[gpui_kit::test]
+fn plain_terminals_get_the_project_jdk_env(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = h.folder("proj");
+    std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
+    h.open_folder(&proj, cx);
+    let jdk = fake_jdk(&h, "jdk17", "17.0.9");
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk, window, cx));
+    let env = cx.read(|cx| h.app.read(cx).terminal.read(cx).shell_env().to_vec());
+    let home = jdk.canonicalize().unwrap().to_string_lossy().into_owned();
+    assert!(env.contains(&("JAVA_HOME".to_string(), home)));
+    assert!(env.iter().any(|(k, v)| k == "PATH" && v.contains("jdk17")));
+}
+
+#[gpui_kit::test]
+fn new_run_configuration_dialog_opens_from_the_menu(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = h.folder("proj");
+    std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
+    h.open_folder(&proj, cx);
+    h.click("status-java-run", cx);
+    h.click("java-config-add-0", cx);
+    assert!(h.has("java-config-save", cx));
+    assert!(h.has("java-config-cancel", cx));
+}
+
+#[gpui_kit::test]
+fn tree_shows_a_java_package_chain_on_one_row(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = h.folder("proj");
+    let pkg = proj.join("src/main/java/co/istad/rathpanha/ecommerce/gateway");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(pkg.join("AuthController.java"), "class AuthController {}").unwrap();
+    std::fs::create_dir_all(proj.join("src/main/resources")).unwrap();
+    h.open_folder(&proj, cx);
+    h.with_app(cx, |app, _, cx| {
+        app.file_tree.expand_paths(std::slice::from_ref(&pkg), cx)
+    });
+    let labels = h.with_app(cx, |app, _, cx| app.file_tree.visible_labels(cx));
+    assert!(
+        labels.contains(&"co.istad.rathpanha.ecommerce.gateway".to_string()),
+        "{labels:?}"
+    );
+    assert!(labels.contains(&"AuthController.java".to_string()));
+    assert!(
+        !labels.contains(&"istad".to_string()),
+        "no per-segment rows"
+    );
+    assert!(
+        labels.contains(&"java".to_string()),
+        "source root stays alone"
+    );
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn run_menu_lists_every_service_without_opening_a_file(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let ws = h.folder("ecommerce");
+    let gateway = maven_project(&h, "ecommerce/gateway", "echo \"$*\" > ran.txt");
+    std::fs::write(
+        gateway.join("pom.xml"),
+        "<artifactId>spring-boot-starter</artifactId>",
+    )
+    .unwrap();
+    std::fs::create_dir_all(gateway.join("src/main/java/co")).unwrap();
+    std::fs::write(
+        gateway.join("src/main/java/co/GatewayServiceApplication.java"),
+        "package co;\n@SpringBootApplication\nclass GatewayServiceApplication { public static void main(String[] a) {} }",
+    )
+    .unwrap();
+    let orders = h.folder("ecommerce/orders/src/main/java");
+    std::fs::write(
+        orders.join("OrderApplication.java"),
+        "class OrderApplication { public static void main(String[] a) {} }",
+    )
+    .unwrap();
+    h.open_folder(&ws, cx);
+    let jdk = fake_jdk(&h, "jdk21", "21.0.2");
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk, window, cx));
+    for _ in 0..50 {
+        if cx.read(|cx| h.app.read(cx).java_services.len()) == 2 {
+            break;
+        }
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    h.click("status-java-run", cx);
+    assert!(h.has("java-service-0", cx), "services are listed up front");
+    assert!(h.has("java-service-1", cx));
+    let first = cx.read(|cx| h.app.read(cx).java_services[0].name().to_string());
+    assert_eq!(first, "GatewayServiceApplication", "Spring Boot apps first");
+
+    h.click("java-service-0", cx);
+    assert_eq!(
+        wait_for(&gateway.join("ran.txt")).trim(),
+        "spring-boot:run -Dspring-boot.run.main-class=co.GatewayServiceApplication"
+    );
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn running_service_shows_port_and_stop_until_it_exits(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = maven_project(
+        &h,
+        "svc",
+        "trap 'echo stopped > stopped.txt; exit 0' INT\necho 'Tomcat started on port 8080 (http)'\necho up > up.txt\nwhile true; do sleep 0.1; done",
+    );
+    std::fs::write(
+        proj.join("pom.xml"),
+        "<artifactId>spring-boot-starter</artifactId>",
+    )
+    .unwrap();
+    std::fs::create_dir_all(proj.join("src/main/java")).unwrap();
+    std::fs::write(
+        proj.join("src/main/java/ShopApplication.java"),
+        "@SpringBootApplication\nclass ShopApplication { public static void main(String[] a) {} }",
+    )
+    .unwrap();
+    h.open_folder(&proj, cx);
+    let jdk = fake_jdk(&h, "jdk21", "21.0.2");
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk, window, cx));
+    for _ in 0..50 {
+        if cx.read(|cx| !h.app.read(cx).java_services.is_empty()) {
+            break;
+        }
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&proj.join("up.txt"));
+    // The terminal reader runs async; let it deliver the port.
+    fn running(h: &Harness, cx: &mut TestAppContext) -> Vec<crate::terminal::panel::RunningTask> {
+        cx.read(|cx| h.app.read(cx).terminal.read(cx).running_tasks())
+    }
+    for _ in 0..100 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+        if running(&h, cx).first().and_then(|t| t.port).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let tasks = running(&h, cx);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].title, "ShopApplication");
+    assert_eq!(tasks[0].port, Some(8080));
+
+    h.click("status-java-run", cx);
+    let id = tasks[0].id;
+    assert!(
+        h.has("java-stop-all", cx),
+        "Stop all sits under the running list"
+    );
+    let stop: &'static str = Box::leak(format!("java-running-stop-{id}").into_boxed_str());
+    assert!(h.has(stop, cx));
+    h.click(stop, cx);
+    assert_eq!(wait_for(&proj.join("stopped.txt")).trim(), "stopped");
+    for _ in 0..100 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+        if running(&h, cx).is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        running(&h, cx).is_empty(),
+        "an exited service leaves the Running list"
+    );
+}
+
+#[gpui_kit::test]
+fn add_jdk_rejects_non_jdk_folder(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let empty = h.folder("not-a-jdk");
+    h.with_app(cx, |app, window, cx| app.register_jdk(&empty, window, cx));
+    assert!(cx.read(|cx| h.app.read(cx).java_home.is_none()));
+}
+
+#[gpui_kit::test]
+fn missing_jdk_dialog_offers_download_add_and_rescan(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.with_app(cx, |app, window, cx| app.show_jdk_missing(window, cx));
+    assert!(h.has("jdk-download", cx));
+    assert!(h.has("jdk-add-existing", cx));
+    assert!(h.has("jdk-rescan-dialog", cx));
+}
+
 #[gpui_kit::test]
 fn commit_suggest_runs_in_parallel_across_repos(cx: &mut TestAppContext) {
     let agent = FakeAgent::new();

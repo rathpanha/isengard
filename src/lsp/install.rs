@@ -21,6 +21,9 @@ pub enum FetchKind {
         module: &'static str,
         version: &'static str,
     },
+    /// Eclipse JDT LS tarball into `pkg/jdtls` plus an Isengard launcher
+    /// (needs a user-installed JDK 21+ at run time, not at install time).
+    Jdtls,
     /// `bun add --cwd <lsp/pkg/…>` (needs Bun, see `runtime`; never global).
     Npm { packages: &'static [NpmSpec] },
 }
@@ -78,6 +81,10 @@ impl InstallRecipe {
                     self.name
                 )
             }
+            FetchKind::Jdtls => format!(
+                "Download Eclipse JDT LS {JDTLS_VERSION} into Isengard’s data folder. \
+                 Running it needs a JDK 21+ on this machine."
+            ),
             FetchKind::GoInstall { module, version } => {
                 format!("Run `go install {module}@{version}` with GOBIN set to Isengard’s lsp/bin.")
             }
@@ -459,6 +466,13 @@ pub fn recipe_for_command(command: &str) -> Option<InstallRecipe> {
             bin_names: &["zls"],
             fetch: FetchKind::Binary { select: zls_asset },
         },
+        "jdtls" => InstallRecipe {
+            name: "jdtls",
+            summary: "Java language server (needs JDK 21+).",
+            pkg_id: "jdtls",
+            bin_names: &["jdtls"],
+            fetch: FetchKind::Jdtls,
+        },
         "lua-language-server" => InstallRecipe {
             name: "lua-language-server",
             summary: "Lua language server.",
@@ -698,6 +712,7 @@ pub fn run_install_in(recipe: &InstallRecipe, root: &Path) -> Result<(), String>
                 .ok_or_else(|| format!("No download asset for {} on this OS/arch", recipe.name))?;
             install_binary(recipe, &asset, root)
         }
+        FetchKind::Jdtls => install_jdtls(recipe, root),
         FetchKind::GoInstall { module, version } => install_go(module, version, root),
         FetchKind::Npm { packages } => install_npm(recipe, packages, root),
     }
@@ -795,6 +810,70 @@ fn finish_extracted(
         let _ = fs::remove_dir_all(staging);
     }
     Ok(())
+}
+
+/// Newest milestone that still runs on JDK 21 (1.63.0 requires JavaSE 25).
+const JDTLS_VERSION: &str = "1.57.0";
+const JDTLS_BUILD: &str = "202602261110";
+
+/// jdtls ships one `config_*` folder per platform.
+fn jdtls_config_dir() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", _) => "config_win",
+        ("macos", "aarch64") => "config_mac_arm",
+        ("macos", _) => "config_mac",
+        (_, "aarch64") => "config_linux_arm",
+        _ => "config_linux",
+    }
+}
+
+/// `jdtls` launcher. Env: `ISENGARD_JAVA` (java binary), `ISENGARD_JDTLS_DATA`
+/// (workspace index dir), `ISENGARD_JDTLS_XMX` (heap cap, default 1g).
+fn jdtls_launcher(pkg: &Path, config: &str, windows: bool) -> String {
+    let pkg = pkg.display();
+    const JVM: &str = "-Declipse.application=org.eclipse.jdt.ls.core.id1 \
+-Dosgi.bundles.defaultStartLevel=4 -Declipse.product=org.eclipse.jdt.ls.core.product \
+-XX:+UseG1GC -XX:+UseStringDeduplication --add-modules=ALL-SYSTEM \
+--add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED";
+    if windows {
+        let jvm = JVM;
+        format!(
+            "@echo off\r\nsetlocal\r\nif \"%ISENGARD_JAVA%\"==\"\" set ISENGARD_JAVA=java\r\n\
+             if \"%ISENGARD_JDTLS_XMX%\"==\"\" set ISENGARD_JDTLS_XMX=1g\r\n\
+             for %%f in (\"{pkg}\\plugins\\org.eclipse.equinox.launcher_*.jar\") do set JAR=%%f\r\n\
+             \"%ISENGARD_JAVA%\" {jvm} -Xmx%ISENGARD_JDTLS_XMX% -jar \"%JAR%\" \
+             -configuration \"{pkg}\\{config}\" -data \"%ISENGARD_JDTLS_DATA%\" %*\r\n"
+        )
+    } else {
+        format!(
+            "#!/bin/sh\nJAR=$(ls \"{pkg}\"/plugins/org.eclipse.equinox.launcher_*.jar | head -n 1)\n\
+             exec \"${{ISENGARD_JAVA:-java}}\" {JVM} -Xmx\"${{ISENGARD_JDTLS_XMX:-1g}}\" \
+             -jar \"$JAR\" -configuration \"{pkg}/{config}\" \
+             -data \"${{ISENGARD_JDTLS_DATA:?}}\" \"$@\"\n"
+        )
+    }
+}
+
+fn install_jdtls(recipe: &InstallRecipe, root: &Path) -> Result<(), String> {
+    let url = format!(
+        "https://download.eclipse.org/jdtls/milestones/{JDTLS_VERSION}/\
+         jdt-language-server-{JDTLS_VERSION}-{JDTLS_BUILD}.tar.gz"
+    );
+    let bytes = download(&url)?;
+    let pkg = pkg_dir(root, recipe.pkg_id);
+    let _ = fs::remove_dir_all(&pkg);
+    fs::create_dir_all(&pkg).map_err(|e| e.to_string())?;
+    Archive::new(GzDecoder::new(bytes.as_slice()))
+        .unpack(&pkg)
+        .map_err(|e| format!("tar.gz extract: {e}"))?;
+    if !pkg.join("plugins").is_dir() {
+        return Err("jdtls archive has no plugins/ folder".into());
+    }
+    let windows = cfg!(windows);
+    let script = jdtls_launcher(&pkg, jdtls_config_dir(), windows);
+    let dest = bin_dir(root).join(if windows { "jdtls.cmd" } else { "jdtls" });
+    fs::write(&dest, script).map_err(|e| e.to_string())?;
+    set_executable(&dest)
 }
 
 fn find_member(root: &Path, member: &str) -> Option<PathBuf> {
@@ -1084,6 +1163,58 @@ mod tests {
         let r = recipe_for_command("rust-analyzer").unwrap();
         assert!(matches!(r.fetch, FetchKind::Binary { .. }));
         assert_eq!(r.bin_names, &["rust-analyzer"]);
+    }
+
+    #[test]
+    fn jdtls_launcher_wires_env_and_paths() {
+        let sh = jdtls_launcher(Path::new("/p/jdtls"), "config_linux", false);
+        assert!(sh.starts_with("#!/bin/sh"));
+        assert!(sh.contains("${ISENGARD_JAVA:-java}"));
+        assert!(sh.contains("-Xmx\"${ISENGARD_JDTLS_XMX:-1g}\""));
+        assert!(sh.contains("-configuration \"/p/jdtls/config_linux\""));
+        assert!(sh.contains("-data \"${ISENGARD_JDTLS_DATA:?}\""));
+        let cmd = jdtls_launcher(Path::new("C:\\p"), "config_win", true);
+        assert!(cmd.contains("-Xmx%ISENGARD_JDTLS_XMX%"));
+        assert!(cmd.contains("config_win"));
+    }
+
+    /// Network + a JDK 21+ (`JAVA_HOME`/PATH `java`):
+    /// `cargo test -- --ignored jdtls_recipe_installs_a_launchable_server`.
+    #[test]
+    #[ignore]
+    fn jdtls_recipe_installs_a_launchable_server() {
+        use std::io::{BufRead, BufReader, Write};
+        let tmp = tempfile::tempdir().unwrap();
+        run_install_in(&recipe_for_command("jdtls").unwrap(), tmp.path()).unwrap();
+        let launcher = resolve_command_in("jdtls", tmp.path()).unwrap();
+        assert!(launcher.starts_with(tmp.path()));
+        let data = tmp.path().join("data");
+        let mut child = std::process::Command::new(launcher)
+            .env("ISENGARD_JDTLS_DATA", &data)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"processId":null,"rootUri":null,"capabilities":{}}}"#;
+        let mut stdin = child.stdin.take().unwrap();
+        write!(stdin, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+        stdin.flush().unwrap();
+        let mut first = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut first)
+            .unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(first.starts_with("Content-Length"), "got {first:?}");
+    }
+
+    #[test]
+    fn jdtls_has_install_recipe() {
+        assert!(matches!(
+            recipe_for_command("jdtls").unwrap().fetch,
+            FetchKind::Jdtls
+        ));
     }
 
     #[test]

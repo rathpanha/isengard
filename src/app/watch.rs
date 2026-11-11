@@ -181,6 +181,15 @@ impl IsengardApp {
             .collect();
         self.file_tree.refresh_loaded_dirs(dirs, cx);
 
+        if paths.iter().any(|p| {
+            p.extension().is_some_and(|e| e == "java")
+                || p.file_name()
+                    .is_some_and(|n| n == "pom.xml" || n == "build.gradle")
+        }) {
+            self.java_builds = crate::java_tasks::detect_all(self.workspace.folders());
+            self.refresh_java_services(cx);
+        }
+
         self.git.update(cx, |git, cx| git.refresh(window, cx));
         cx.notify();
     }

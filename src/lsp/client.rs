@@ -65,6 +65,7 @@ impl LspClient {
         let (program, args) = crate::runtime::run_on_bun(command.clone().into(), spec.args.clone());
         let mut child = crate::process::command(&program)
             .args(&args)
+            .envs(spec.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
