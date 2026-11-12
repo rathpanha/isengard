@@ -834,7 +834,7 @@ impl IsengardApp {
         if agent_running || busy_terminals > 0 {
             let message = match (agent_running, busy_terminals) {
                 (true, 0) => "The agent is still running. Quitting now will stop it mid-task.".to_string(),
-                (false, 1) => "A process is still running in the terminal. Quitting now will stop it.".to_string(),
+                (false, 1) => "A process (a service, for example) is still running in the terminal. Quitting now will stop it.".to_string(),
                 (false, n) => format!("{n} terminals have running processes. Quitting now will stop them."),
                 (true, _) => "The agent and a terminal process are still running. Quitting now will stop them.".to_string(),
             };

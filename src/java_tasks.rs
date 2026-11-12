@@ -243,29 +243,47 @@ impl Service {
         simple_name(&self.main.qualified)
     }
 
-    /// Folder name of the module (or of the file's folder outside a build).
-    pub fn module_label(&self) -> String {
-        let dir = self.module.as_deref().or_else(|| self.main.file.parent());
-        dir.and_then(Path::file_name)
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+    /// Key shared by every instance of this service in the terminal panel.
+    pub fn group_key(&self) -> String {
+        format!("service:{}", self.main.file.display())
     }
 
     /// What to run in `build` (the service's own module): Spring Boot apps use
     /// the Boot plugin, everything else Maven `exec:java` / Gradle classes.
-    pub fn task(&self, build: &Build) -> Task {
+    ///
+    /// `extra_instance`: another instance next to one that already runs. A
+    /// Spring Boot service then takes a free port (`--server.port=0`) —
+    /// otherwise it would die on "port already in use", which defeats running
+    /// several copies (replicas, pods). The port it picked shows in the menu.
+    pub fn task(&self, build: &Build, extra_instance: bool) -> Task {
         let has_boot = build
             .tasks
             .iter()
             .any(|t| t.label == "spring-boot:run" || t.label == "bootRun");
         match (self.spring && has_boot, build.tool) {
-            (true, Tool::Maven) => task(
-                self.name(),
-                &[
-                    "spring-boot:run",
-                    &format!("-Dspring-boot.run.main-class={}", self.main.qualified),
-                ],
-            ),
-            (true, Tool::Gradle) => task(self.name(), &["bootRun"]),
+            (true, Tool::Maven) => {
+                let mut args = vec![
+                    "spring-boot:run".to_string(),
+                    format!("-Dspring-boot.run.main-class={}", self.main.qualified),
+                ];
+                if extra_instance {
+                    args.push("-Dspring-boot.run.arguments=--server.port=0".into());
+                }
+                Task {
+                    label: self.name().to_string(),
+                    args,
+                }
+            }
+            (true, Tool::Gradle) => {
+                let mut args = vec!["bootRun".to_string()];
+                if extra_instance {
+                    args.push("--args=--server.port=0".into());
+                }
+                Task {
+                    label: self.name().to_string(),
+                    args,
+                }
+            }
             (false, _) => {
                 let mut t = build.main_task(&self.main);
                 t.label = self.name().to_string();
@@ -273,6 +291,11 @@ impl Service {
             }
         }
     }
+}
+
+/// Group key of a Maven / Gradle task or saved run configuration.
+pub fn task_group_key(root: &Path, label: &str) -> String {
+    format!("task:{}:{label}", root.display())
 }
 
 /// Nearest folder at or above `file` (not above its workspace root) holding a build.
@@ -375,16 +398,43 @@ fn quote_arg(arg: &str) -> String {
     }
 }
 
+/// Run `cmd` in a new session. An interactive shell that inherits our
+/// controlling terminal fights other such shells for it, and bash then sends
+/// SIGTTIN to its whole process group — which is ours, so several probes at
+/// once (Start all) froze the editor. A new session has no controlling
+/// terminal: no job control, and `kill(0, …)` only reaches the probe itself.
+fn detach_from_terminal(cmd: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        // SAFETY: `setsid` is async-signal-safe and runs in the forked child
+        // before exec; it allocates nothing.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = cmd;
+}
+
 /// Is `program` (`mvn`, `gradle`) resolvable in the user's login shell? A
 /// shell that does not answer within 5s counts as "yes" — never block a run
 /// on a slow rc file.
 pub fn tool_on_path(program: &str) -> bool {
+    // Tests must not depend on (or wait for) the developer's login shell.
+    if cfg!(test) {
+        return true;
+    }
     let mut cmd = crate::process::command(default_shell());
     if cfg!(windows) {
         cmd.args(["/C", &format!("where {program}")]);
     } else {
         cmd.args(["-l", "-i", "-c", &format!("command -v {program}")]);
     }
+    detach_from_terminal(&mut cmd);
     let Ok(mut child) = cmd
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -562,12 +612,11 @@ mod tests {
             services[0].module.as_deref(),
             Some(tmp.path().join("gateway").as_path())
         );
-        assert_eq!(services[0].module_label(), "gateway");
         // `tools` has no build of its own: falls back to the aggregator pom.
         assert_eq!(services[1].module.as_deref(), Some(tmp.path()));
 
         let build = detect(services[0].module.as_ref().unwrap()).unwrap();
-        let t = services[0].task(&build);
+        let t = services[0].task(&build, false);
         assert_eq!(
             t.args,
             [
@@ -576,6 +625,31 @@ mod tests {
             ]
         );
         let root_build = detect(tmp.path()).unwrap();
-        assert_eq!(services[1].task(&root_build).args[1], "exec:java");
+        assert_eq!(services[1].task(&root_build, false).args[1], "exec:java");
+
+        // A further instance of a Spring Boot service takes a free port.
+        let more = services[0].task(&build, true);
+        assert_eq!(
+            more.args.last().unwrap(),
+            "-Dspring-boot.run.arguments=--server.port=0"
+        );
+        // Plain mains have no server port to move.
+        assert_eq!(services[1].task(&root_build, true).args.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn probe_shells_get_their_own_session() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "ps -o sid= -p $$"]);
+        detach_from_terminal(&mut cmd);
+        let out = cmd.output().unwrap();
+        let child_sid: i32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        // SAFETY: getsid(0) only reads our own session id.
+        let our_sid = unsafe { libc::getsid(0) };
+        assert_ne!(
+            child_sid, our_sid,
+            "must not share our controlling terminal"
+        );
     }
 }

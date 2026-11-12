@@ -41,6 +41,42 @@ impl IsengardApp {
         cx.notify();
     }
 
+    /// Close × on a terminal tab: ask first when it still runs something, and
+    /// stop that program when the tab goes.
+    pub(super) fn on_close_terminal_tab(
+        &mut self,
+        action: &crate::terminal::panel::CloseTerminalTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = action.id;
+        if !self.terminal.read(cx).tab_is_busy(id) {
+            return self.close_terminal_tab(id, window, cx);
+        }
+        self.open_choice_dialog(
+            "Close terminal?",
+            "A program is still running in this terminal (a service, for example). \
+             Closing it will stop the program.",
+            "Stop & Close",
+            "Keep Running",
+            move |this, window, cx| this.close_terminal_tab(id, window, cx),
+            |_, _, _| {},
+            window,
+            cx,
+        );
+    }
+
+    pub(super) fn close_terminal_tab(
+        &mut self,
+        id: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal
+            .update(cx, |term, cx| term.close_tab(id, window, cx));
+        self.on_terminal_tabs_changed(&TerminalTabsChanged, window, cx);
+    }
+
     /// Show the panel: restore existing sessions without asking, or create the first.
     pub(super) fn open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.terminal.read(cx).has_sessions() {

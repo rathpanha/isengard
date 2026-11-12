@@ -3985,13 +3985,13 @@ fn java_run_menu_lists_maven_tasks_only_for_build_projects(cx: &mut TestAppConte
     let h = Harness::new(cx);
     let plain = h.folder("plain");
     h.open_folder(&plain, cx);
-    assert!(!h.has("status-java-run", cx));
+    assert!(!h.has("status-maven", cx));
 
     let proj = h.folder("proj");
     std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
     h.open_folder(&proj, cx);
-    assert!(h.has("status-java-run", cx));
-    h.click("status-java-run", cx);
+    assert!(h.has("status-maven", cx));
+    h.click("status-maven", cx);
     assert!(h.has("java-task-0-0", cx), "first Maven task is listed");
     assert!(h.has("java-task-0-4", cx), "clean install is listed");
 }
@@ -4074,7 +4074,7 @@ fn run_configurations_save_run_and_delete(cx: &mut TestAppContext) {
     });
     assert_eq!(saved, Some(1), "stored in the workspace session");
 
-    h.click("status-java-run", cx);
+    h.click("status-maven", cx);
     assert!(h.has("java-config-0", cx), "configuration is listed");
     h.click("java-config-0", cx);
     assert_eq!(
@@ -4126,7 +4126,7 @@ fn new_run_configuration_dialog_opens_from_the_menu(cx: &mut TestAppContext) {
     let proj = h.folder("proj");
     std::fs::write(proj.join("pom.xml"), "<project/>").unwrap();
     h.open_folder(&proj, cx);
-    h.click("status-java-run", cx);
+    h.click("status-maven", cx);
     h.click("java-config-add-0", cx);
     assert!(h.has("java-config-save", cx));
     assert!(h.has("java-config-cancel", cx));
@@ -4194,7 +4194,7 @@ fn run_menu_lists_every_service_without_opening_a_file(cx: &mut TestAppContext) 
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 
-    h.click("status-java-run", cx);
+    h.click("status-java-services", cx);
     assert!(h.has("java-service-0", cx), "services are listed up front");
     assert!(h.has("java-service-1", cx));
     let first = cx.read(|cx| h.app.read(cx).java_services[0].name().to_string());
@@ -4257,13 +4257,12 @@ fn running_service_shows_port_and_stop_until_it_exits(cx: &mut TestAppContext) {
     assert_eq!(tasks[0].title, "ShopApplication");
     assert_eq!(tasks[0].port, Some(8080));
 
-    h.click("status-java-run", cx);
+    h.click("status-java-services", cx);
     let id = tasks[0].id;
-    assert!(
-        h.has("java-stop-all", cx),
-        "Stop all sits under the running list"
-    );
+    assert!(h.has("java-stop-all", cx), "Stop all is in the menu");
     let stop: &'static str = Box::leak(format!("java-running-stop-{id}").into_boxed_str());
+    assert!(!h.has(stop, cx), "instances stay folded until expanded");
+    h.click("java-service-0-toggle", cx);
     assert!(h.has(stop, cx));
     h.click(stop, cx);
     assert_eq!(wait_for(&proj.join("stopped.txt")).trim(), "stopped");
@@ -4280,6 +4279,762 @@ fn running_service_shows_port_and_stop_until_it_exits(cx: &mut TestAppContext) {
         running(&h, cx).is_empty(),
         "an exited service leaves the Running list"
     );
+}
+
+#[gpui_kit::test]
+fn long_services_menu_scrolls(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    let proj = h.folder("many");
+    h.open_folder(&proj, cx);
+    h.with_app(cx, |app, _, cx| {
+        app.java_services = (0..40)
+            .map(|i| crate::java_tasks::Service {
+                main: crate::java_tasks::MainClass {
+                    file: proj.join(format!("S{i}.java")),
+                    qualified: format!("S{i}"),
+                },
+                spring: false,
+                module: None,
+            })
+            .collect();
+        cx.notify();
+    });
+    h.click("status-java-services", cx);
+    let top = |h: &Harness, cx: &mut TestAppContext| {
+        cx.update_window(h.window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .try_find("java-service-0")
+                .map(|e| e.bounds().origin.y)
+        })
+        .unwrap()
+    };
+    let before = top(&h, cx).expect("first service row");
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.scroll(
+            "java-service-1",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-120.))),
+            cx,
+        )
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let after = top(&h, cx).expect("row still rendered");
+    assert!(after < before, "list scrolled: {before:?} -> {after:?}");
+}
+
+/// A Spring Boot module `ws/<name>` whose `mvnw` pretends to be a server on
+/// `port` and stops (writing `stopped.txt`) on INT / TERM.
+#[cfg(unix)]
+fn spring_service(h: &Harness, name: &str, port: u16) -> PathBuf {
+    let module = maven_project(
+        h,
+        &format!("ws/{name}"),
+        &format!(
+            "trap 'sleep 0.5; echo stopped > stopped.txt; exit 0' INT TERM\necho \"$*\" >> args.txt\necho 'Tomcat started on port {port} (http)'\necho up > up.txt\nwhile true; do sleep 0.1; done"
+        ),
+    );
+    std::fs::write(
+        module.join("pom.xml"),
+        "<artifactId>spring-boot-starter</artifactId>",
+    )
+    .unwrap();
+    std::fs::create_dir_all(module.join("src/main/java")).unwrap();
+    std::fs::write(
+        module.join("src/main/java/App.java"),
+        format!(
+            "@SpringBootApplication\nclass {}App {{ public static void main(String[] a) {{}} }}",
+            name
+        ),
+    )
+    .unwrap();
+    module
+}
+
+/// Opens `ws` with a JDK registered and waits for the service scan.
+#[cfg(unix)]
+fn open_services(h: &Harness, expected: usize, cx: &mut TestAppContext) -> PathBuf {
+    let ws = h.dir.path().join("ws");
+    h.open_folder(&ws, cx);
+    let jdk = fake_jdk(h, "jdk21", "21.0.2");
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk, window, cx));
+    for _ in 0..100 {
+        if cx.read(|cx| h.app.read(cx).java_services.len()) == expected {
+            break;
+        }
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    ws
+}
+
+#[cfg(unix)]
+fn running_tasks(h: &Harness, cx: &mut TestAppContext) -> Vec<crate::terminal::panel::RunningTask> {
+    cx.read(|cx| h.app.read(cx).terminal.read(cx).running_tasks())
+}
+
+/// Lets terminal output arrive (the PTY reader polls on the test clock).
+#[cfg(unix)]
+fn settle(cx: &mut TestAppContext) {
+    for _ in 0..20 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+fn stop_everything(h: &Harness, cx: &mut TestAppContext) {
+    h.with_app(cx, |app, _, cx| {
+        app.terminal.update(cx, |t, _| t.terminate_all())
+    });
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn start_all_runs_every_service_and_keeps_the_menu_open(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    let b = spring_service(&h, "beta", 8082);
+    open_services(&h, 2, cx);
+
+    h.click("status-java-services", cx);
+    assert!(h.has("java-start-all", cx));
+    h.click("java-start-all", cx);
+    wait_for(&a.join("up.txt"));
+    wait_for(&b.join("up.txt"));
+    settle(cx);
+    assert!(
+        cx.read(|cx| h.app.read(cx).java_menu.is_some()),
+        "menu stays open"
+    );
+    assert_eq!(running_tasks(&h, cx).len(), 2);
+
+    // Nothing left to start: no duplicate tabs.
+    h.click("java-start-all", cx);
+    settle(cx);
+    assert_eq!(running_tasks(&h, cx).len(), 2);
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn clicking_a_running_service_keeps_the_menu_open(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    settle(cx);
+    let id = running_tasks(&h, cx)[0].id;
+
+    h.click("status-java-services", cx);
+    h.click("java-service-0-toggle", cx);
+    let row: &'static str = Box::leak(format!("java-running-{id}").into_boxed_str());
+    h.click(row, cx);
+    assert!(
+        cx.read(|cx| h.app.read(cx).java_menu.is_some()),
+        "menu stays open"
+    );
+    stop_everything(&h, cx);
+}
+
+/// Settles until `n` instances run (their output arrives on the test clock).
+#[cfg(unix)]
+fn wait_for_running(h: &Harness, n: usize, cx: &mut TestAppContext) {
+    for _ in 0..200 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+        if running_tasks(h, cx).len() == n && running_tasks(h, cx).iter().all(|t| t.port.is_some())
+        {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    panic!("never reached {n} running instances");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn a_second_start_only_focuses_the_running_service_by_default(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    wait_for_running(&h, 1, cx);
+
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    settle(cx);
+    assert_eq!(running_tasks(&h, cx).len(), 1, "no second instance");
+    assert_eq!(
+        std::fs::read_to_string(a.join("args.txt"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn allow_multiple_instances_starts_numbered_instances_on_a_free_port(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.click("status-java-services", cx);
+    h.click("java-service-0-multi", cx);
+    let key = cx.read(|cx| h.app.read(cx).java_services[0].group_key());
+    assert!(cx.read(|cx| h.app.read(cx).java_multi_services.contains(&key)));
+    let saved = cx.read(|cx| {
+        let app = h.app.read(cx);
+        let session = app.workspace.session_key().unwrap();
+        app.config
+            .session(&session)
+            .map(|s| s.java_multi_services.clone())
+    });
+    assert_eq!(saved, Some(vec![key]), "kept per folder / workspace");
+
+    h.with_app(cx, |app, window, cx| {
+        app.run_java_service(0, window, cx);
+        app.run_java_service(0, window, cx);
+    });
+    wait_for_running(&h, 2, cx);
+    let tasks = running_tasks(&h, cx);
+    assert_eq!(tasks[0].title, "App");
+    assert_eq!(tasks[1].title, "App (2)");
+    assert_eq!(tasks[0].group, tasks[1].group, "one service, two instances");
+    let args = std::fs::read_to_string(a.join("args.txt")).unwrap();
+    let lines: Vec<&str> = args.lines().collect();
+    assert_eq!(lines.len(), 2);
+    // Both shells start at once, so the file order is not the start order.
+    let moved: Vec<&&str> = lines
+        .iter()
+        .filter(|l| l.contains("-Dspring-boot.run.arguments=--server.port=0"))
+        .collect();
+    assert_eq!(
+        moved.len(),
+        1,
+        "only the extra instance takes a free port: {lines:?}"
+    );
+    assert_eq!(
+        lines.iter().filter(|l| l.contains("server.port")).count(),
+        1,
+        "the first instance keeps its configured port"
+    );
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn multiple_instances_are_a_per_service_choice(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    let b = spring_service(&h, "beta", 8082);
+    open_services(&h, 2, cx);
+    let (alpha, beta) = cx.read(|cx| {
+        let services = h.app.read(cx).java_services.clone();
+        let find = |dir: &Path| {
+            services
+                .iter()
+                .position(|s| s.main.file.starts_with(dir))
+                .unwrap()
+        };
+        (find(&a), find(&b))
+    });
+    let alpha_key = cx.read(|cx| h.app.read(cx).java_services[alpha].group_key());
+    h.with_app(cx, |app, _, cx| app.set_java_multi(&alpha_key, true, cx));
+
+    h.with_app(cx, |app, window, cx| {
+        for _ in 0..2 {
+            app.run_java_service(alpha, window, cx);
+            app.run_java_service(beta, window, cx);
+        }
+    });
+    wait_for(&a.join("up.txt"));
+    wait_for(&b.join("up.txt"));
+    settle(cx);
+    let count = |dir: &Path| {
+        std::fs::read_to_string(dir.join("args.txt"))
+            .map(|t| t.lines().count())
+            .unwrap_or(0)
+    };
+    assert_eq!(count(&a), 2, "alpha is ticked: two instances");
+    assert_eq!(
+        count(&b),
+        1,
+        "beta is not: the second start only focuses it"
+    );
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn only_the_play_button_starts_a_service_and_the_menu_stays_open(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    let b = spring_service(&h, "beta", 8082);
+    open_services(&h, 2, cx);
+    h.click("status-java-services", cx);
+
+    // Clicking the row (not its play button) starts nothing.
+    h.click("java-service-0-row", cx);
+    settle(cx);
+    assert!(running_tasks(&h, cx).is_empty());
+    assert!(!a.join("up.txt").exists() && !b.join("up.txt").exists());
+
+    // Play starts it and leaves the menu open for the next one.
+    h.click("java-service-0", cx);
+    assert!(
+        cx.read(|cx| h.app.read(cx).java_menu.is_some()),
+        "stays open"
+    );
+    h.click("java-service-1", cx);
+    assert!(
+        cx.read(|cx| h.app.read(cx).java_menu.is_some()),
+        "still open"
+    );
+    wait_for(&a.join("up.txt"));
+    wait_for(&b.join("up.txt"));
+    settle(cx);
+    assert_eq!(
+        running_tasks(&h, cx).len(),
+        2,
+        "both started from one open menu"
+    );
+    stop_everything(&h, cx);
+}
+
+/// Pumps the test clock until `done` holds (or fails after ~4s).
+#[cfg(unix)]
+fn pump_until(
+    cx: &mut TestAppContext,
+    what: &str,
+    mut done: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    for _ in 0..200 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+        if done(cx) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn a_service_is_starting_until_it_is_ready(cx: &mut TestAppContext) {
+    use crate::terminal::panel::TaskPhase;
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = maven_project(
+        &h,
+        "ws/slow",
+        "trap 'exit 0' INT TERM\nsleep 1\necho 'Tomcat started on port 8085 (http)'\necho up > up.txt\nwhile true; do sleep 0.1; done",
+    );
+    std::fs::write(
+        a.join("pom.xml"),
+        "<artifactId>spring-boot-starter</artifactId>",
+    )
+    .unwrap();
+    std::fs::create_dir_all(a.join("src/main/java")).unwrap();
+    std::fs::write(
+        a.join("src/main/java/Slow.java"),
+        "@SpringBootApplication\nclass Slow { public static void main(String[] a) {} }",
+    )
+    .unwrap();
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    assert_eq!(
+        running_tasks(&h, cx)[0].phase,
+        TaskPhase::Starting,
+        "spinner while starting"
+    );
+    assert!(
+        cx.read(|cx| h.app.read(cx).java_launching.is_empty()),
+        "the tab exists"
+    );
+
+    wait_for(&a.join("up.txt"));
+    pump_until(cx, "the port", |cx| running_tasks(&h, cx)[0].port.is_some());
+    assert_eq!(running_tasks(&h, cx)[0].phase, TaskPhase::Running);
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn stopping_shows_progress_and_closes_the_terminal(cx: &mut TestAppContext) {
+    use crate::terminal::panel::TaskPhase;
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    wait_for_running(&h, 1, cx);
+    let id = running_tasks(&h, cx)[0].id;
+
+    h.click("status-java-services", cx);
+    h.click("java-service-0-toggle", cx);
+    let stop: &'static str = Box::leak(format!("java-running-stop-{id}").into_boxed_str());
+    h.click(stop, cx);
+    assert_eq!(
+        running_tasks(&h, cx)[0].phase,
+        TaskPhase::Stopping,
+        "spinner while stopping"
+    );
+
+    assert_eq!(wait_for(&a.join("stopped.txt")).trim(), "stopped");
+    pump_until(cx, "the terminal to close", |cx| {
+        !cx.read(|cx| h.app.read(cx).terminal.read(cx).has_sessions())
+    });
+    assert!(running_tasks(&h, cx).is_empty());
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn restart_stops_the_service_and_starts_it_again(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    wait_for_running(&h, 1, cx);
+    let old = running_tasks(&h, cx)[0].id;
+
+    h.click("status-java-services", cx);
+    h.click("java-service-0-restart", cx);
+    pump_until(cx, "the new instance", |cx| {
+        let tasks = running_tasks(&h, cx);
+        tasks.len() == 1 && tasks[0].id != old && tasks[0].port.is_some()
+    });
+    let started = std::fs::read_to_string(a.join("args.txt")).unwrap();
+    assert_eq!(started.lines().count(), 2, "started twice");
+    assert_eq!(
+        running_tasks(&h, cx)[0].title,
+        "App",
+        "no (2): the old tab is gone"
+    );
+    assert!(
+        cx.read(|cx| h.app.read(cx).java_menu.is_some()),
+        "menu stays open"
+    );
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn restarting_the_first_instance_keeps_its_port_and_the_extra_one_its_own(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    let key = cx.read(|cx| h.app.read(cx).java_services[0].group_key());
+    h.with_app(cx, |app, _, cx| app.set_java_multi(&key, true, cx));
+    h.with_app(cx, |app, window, cx| {
+        app.run_java_service(0, window, cx);
+        app.run_java_service(0, window, cx);
+    });
+    wait_for_running(&h, 2, cx);
+    let first = running_tasks(&h, cx)
+        .into_iter()
+        .find(|t| !t.extra)
+        .expect("a primary instance")
+        .id;
+
+    h.with_app(cx, |app, _, cx| app.restart_java_task(first, cx));
+    pump_until(cx, "the restarted instance", |cx| {
+        let tasks = running_tasks(&h, cx);
+        tasks.len() == 2 && tasks.iter().all(|t| t.id != first && t.port.is_some())
+    });
+    let args = std::fs::read_to_string(a.join("args.txt")).unwrap();
+    assert_eq!(args.lines().count(), 3);
+    assert_eq!(
+        args.lines().filter(|l| l.contains("server.port")).count(),
+        1,
+        "the restarted primary did not turn into a free-port instance: {args}"
+    );
+    assert_eq!(running_tasks(&h, cx).iter().filter(|t| t.extra).count(), 1);
+    stop_everything(&h, cx);
+}
+
+/// A service with no wrapper: `mvn` comes from the JDK's `bin`, so the launch
+/// waits for the tool probe and has no tab yet.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn a_double_click_during_a_pending_launch_starts_one_instance(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    std::fs::remove_file(a.join("mvnw")).unwrap();
+    let jdk = fake_jdk(&h, "jdk21", "21.0.2");
+    let mvn = jdk.join("bin/mvn");
+    std::fs::write(
+        &mvn,
+        "#!/bin/sh\ntrap 'exit 0' INT TERM\necho \"$*\" >> args.txt\necho 'Tomcat started on port 8080 (http)'\nwhile true; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&mvn, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let ws = h.dir.path().join("ws");
+    h.open_folder(&ws, cx);
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk, window, cx));
+    pump_until(cx, "the scan", |cx| {
+        cx.read(|cx| h.app.read(cx).java_services.len() == 1)
+    });
+
+    h.with_app(cx, |app, window, cx| {
+        app.run_java_service(0, window, cx);
+        assert!(
+            !app.java_launching.is_empty(),
+            "pending until the tab exists"
+        );
+        app.run_java_service(0, window, cx);
+    });
+    pump_until(cx, "the instance", |cx| running_tasks(&h, cx).len() == 1);
+    settle(cx);
+    assert_eq!(
+        running_tasks(&h, cx).len(),
+        1,
+        "the second click did not start another"
+    );
+    assert!(cx.read(|cx| h.app.read(cx).java_launching.is_empty()));
+    stop_everything(&h, cx);
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn instances_fold_under_their_service_and_stop_together(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    let key = cx.read(|cx| h.app.read(cx).java_services[0].group_key());
+    h.with_app(cx, |app, _, cx| app.set_java_multi(&key, true, cx));
+    h.with_app(cx, |app, window, cx| {
+        app.run_java_service(0, window, cx);
+        app.run_java_service(0, window, cx);
+    });
+    wait_for(&a.join("up.txt"));
+    wait_for_running(&h, 2, cx);
+    let ids: Vec<usize> = running_tasks(&h, cx).iter().map(|t| t.id).collect();
+
+    h.click("status-java-services", cx);
+    let row =
+        |id: usize| -> &'static str { Box::leak(format!("java-running-{id}").into_boxed_str()) };
+    assert!(
+        h.has("java-service-0-toggle", cx),
+        "one accordion per service"
+    );
+    assert!(!h.has(row(ids[0]), cx) && !h.has(row(ids[1]), cx), "folded");
+
+    h.click("java-service-0-toggle", cx);
+    assert!(
+        h.has(row(ids[0]), cx) && h.has(row(ids[1]), cx),
+        "both listed"
+    );
+    h.click("java-service-0-toggle", cx);
+    assert!(!h.has(row(ids[0]), cx), "folds again");
+
+    h.click("java-service-0-stop", cx);
+    for _ in 0..200 {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+        if running_tasks(&h, cx).is_empty() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    stop_everything(&h, cx);
+    panic!("Stop on the service must stop every instance");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn closing_a_terminal_with_a_running_service_asks_then_stops_it(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    settle(cx);
+    let id = running_tasks(&h, cx)[0].id;
+    let close: &'static str = Box::leak(format!("term-tab-close-{id}").into_boxed_str());
+
+    h.click(close, cx);
+    assert!(h.has("dialog-secondary", cx), "asks before closing");
+    h.click("dialog-cancel", cx);
+    assert_eq!(
+        running_tasks(&h, cx).len(),
+        1,
+        "Keep Running leaves it alone"
+    );
+    assert!(!a.join("stopped.txt").exists());
+
+    h.click(close, cx);
+    h.click("dialog-secondary", cx);
+    assert_eq!(wait_for(&a.join("stopped.txt")).trim(), "stopped");
+    assert!(running_tasks(&h, cx).is_empty(), "the tab is gone");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn closing_the_folder_with_a_running_service_asks_then_stops_it(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    settle(cx);
+
+    h.with_app(cx, |app, window, cx| {
+        app.request_switch(crate::app::Switch::Close, window, cx)
+    });
+    assert!(
+        h.has("dialog-secondary", cx),
+        "asks before closing the folder"
+    );
+    h.click("dialog-cancel", cx);
+    assert!(
+        cx.read(|cx| !h.app.read(cx).workspace.is_empty()),
+        "still open"
+    );
+    assert_eq!(running_tasks(&h, cx).len(), 1);
+    assert!(!a.join("stopped.txt").exists());
+
+    h.with_app(cx, |app, window, cx| {
+        app.request_switch(crate::app::Switch::Close, window, cx)
+    });
+    h.click("dialog-secondary", cx);
+    assert!(
+        cx.read(|cx| h.app.read(cx).workspace.is_empty()),
+        "folder closed"
+    );
+    assert_eq!(wait_for(&a.join("stopped.txt")).trim(), "stopped");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn switching_folders_with_a_running_service_asks_first(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    let other = h.folder("other");
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    settle(cx);
+
+    h.open_folder(&other, cx);
+    assert!(h.has("dialog-secondary", cx), "open_folder asks too");
+    h.click("dialog-secondary", cx);
+    assert_eq!(wait_for(&a.join("stopped.txt")).trim(), "stopped");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn quitting_with_a_running_service_asks_first(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let a = spring_service(&h, "alpha", 8081);
+    open_services(&h, 1, cx);
+    h.with_app(cx, |app, window, cx| app.run_java_service(0, window, cx));
+    wait_for(&a.join("up.txt"));
+    settle(cx);
+
+    let allowed = h.with_app(cx, |app, window, cx| app.confirm_quit(window, cx));
+    assert!(!allowed, "a running service blocks a silent quit");
+    assert!(h.has("dialog-secondary", cx), "Quit Anyway / Keep Working");
+    h.click("dialog-cancel", cx);
+    // Quit stops running services (`quit` calls `terminate_all`).
+    stop_everything(&h, cx);
+    assert_eq!(wait_for(&a.join("stopped.txt")).trim(), "stopped");
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn start_all_with_many_services_does_not_panic(cx: &mut TestAppContext) {
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let names = ["alpha", "beta", "gamma", "delta", "epsilon"];
+    let mods: Vec<PathBuf> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| spring_service(&h, n, 8081 + i as u16))
+        .collect();
+    open_services(&h, 5, cx);
+    h.click("status-java-services", cx);
+    h.click("java-start-all", cx);
+    for m in &mods {
+        wait_for(&m.join("up.txt"));
+    }
+    for _ in 0..30 {
+        settle(cx);
+        assert!(h.has("java-stop-all", cx));
+    }
+    assert_eq!(running_tasks(&h, cx).len(), 5);
+    stop_everything(&h, cx);
+}
+
+/// Spring Boot modules with no wrapper: `mvn` comes from the JDK's `bin`
+/// (the task command puts it first on `PATH`), so the tool probe path runs.
+#[cfg(unix)]
+#[gpui_kit::test]
+fn start_all_without_wrappers_uses_the_tool_probe(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::new(cx);
+    h.folder("ws");
+    let names = ["alpha", "beta", "gamma", "delta", "epsilon"];
+    let mods: Vec<PathBuf> = names
+        .iter()
+        .map(|n| {
+            let m = spring_service(&h, n, 8081);
+            std::fs::remove_file(m.join("mvnw")).unwrap();
+            m
+        })
+        .collect();
+    let jdk = fake_jdk(&h, "jdk21", "21.0.2");
+    let mvn = jdk.join("bin/mvn");
+    std::fs::write(
+        &mvn,
+        "#!/bin/sh\ntrap 'echo stopped > stopped.txt; exit 0' INT TERM\necho 'Tomcat started on port 8080 (http)'\necho up > up.txt\nwhile true; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&mvn, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let ws = h.dir.path().join("ws");
+    h.open_folder(&ws, cx);
+    h.with_app(cx, |app, window, cx| app.register_jdk(&jdk, window, cx));
+    for _ in 0..100 {
+        if cx.read(|cx| h.app.read(cx).java_services.len()) == 5 {
+            break;
+        }
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.click("status-java-services", cx);
+    h.click("java-start-all", cx);
+    for m in &mods {
+        wait_for(&m.join("up.txt"));
+    }
+    settle(cx);
+    assert_eq!(running_tasks(&h, cx).len(), 5);
+    stop_everything(&h, cx);
 }
 
 #[gpui_kit::test]

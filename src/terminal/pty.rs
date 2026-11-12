@@ -112,6 +112,37 @@ impl PtySession {
         false
     }
 
+    /// Stop a task tab's program: SIGTERM to the foreground job and to the
+    /// tab's own shell group (the `-c` shell may run the program inside it),
+    /// SIGKILL for whatever survives ~1s, then hang up. Unix only.
+    pub fn terminate_task(&mut self) {
+        #[cfg(unix)]
+        {
+            let shell = self._child.process_id().map(|p| p as libc::pid_t);
+            let mut groups: Vec<libc::pid_t> = Vec::new();
+            groups.extend(self.master.lock().process_group_leader());
+            if let Some(shell) = shell
+                && !groups.contains(&shell)
+            {
+                groups.push(shell);
+            }
+            // SAFETY: plain signal syscalls on process groups we own.
+            for group in &groups {
+                unsafe { libc::killpg(*group, libc::SIGTERM) };
+            }
+            for _ in 0..10 {
+                if groups.iter().all(|g| unsafe { libc::killpg(*g, 0) } != 0) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            for group in &groups {
+                unsafe { libc::killpg(*group, libc::SIGKILL) };
+            }
+        }
+        let _ = self._child.kill();
+    }
+
     /// Stop what this terminal is running: SIGTERM to the foreground program
     /// (SIGKILL if it is still alive after ~1s), then hang up the shell.
     /// Used on quit so servers don't outlive the editor and hold their port.

@@ -2,6 +2,22 @@
 //! for the ones the user has (`crate::jdk`), offers a per-workspace picker in
 //! the status bar, and shows a dialog when none exists.
 use super::*;
+use crate::terminal::panel::{TaskExited, TaskSpec};
+
+/// What a launch is an instance of (see [`TaskSpec`]).
+struct Launch {
+    title: Option<String>,
+    group: String,
+    extra: bool,
+    instance: Option<u32>,
+}
+
+/// A restart keeps the kind and number of the instance it replaces.
+#[derive(Clone, Copy)]
+struct Restart {
+    extra: bool,
+    instance: u32,
+}
 
 impl IsengardApp {
     fn ensure_jdks(&mut self) {
@@ -224,7 +240,14 @@ impl IsengardApp {
         else {
             return;
         };
-        self.launch_task(build, task, None, window, cx);
+        let group = crate::java_tasks::task_group_key(&build.root, &task.label);
+        let launch = Launch {
+            title: None,
+            group,
+            extra: false,
+            instance: None,
+        };
+        self.launch_task(build, task, launch, window, cx);
     }
 
     /// Run a saved run configuration.
@@ -252,11 +275,59 @@ impl IsengardApp {
                 cx,
             );
         };
+        let group = crate::java_tasks::task_group_key(&build.root, &config.name);
         let task = crate::java_tasks::Task {
             label: config.name,
             args: vec![config.args],
         };
-        self.launch_task(build, task, None, window, cx);
+        let launch = Launch {
+            title: None,
+            group,
+            extra: false,
+            instance: None,
+        };
+        self.launch_task(build, task, launch, window, cx);
+    }
+
+    /// Instances of `group` that are still running.
+    fn running_in_group(&self, group: &str, cx: &App) -> Vec<crate::terminal::panel::RunningTask> {
+        self.terminal
+            .read(cx)
+            .running_tasks()
+            .into_iter()
+            .filter(|t| t.group == group)
+            .collect()
+    }
+
+    /// A service runs one instance at a time unless it is ticked "Allow
+    /// multiple instances": when `group` already runs, show its tab and say how
+    /// to start another.
+    fn may_start(
+        &mut self,
+        group: &str,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let running = self.running_in_group(group, cx);
+        let allowed = self.java_multi_services.contains(group);
+        // A start that has no tab yet counts: a double click must not start two.
+        if running.is_empty() {
+            return allowed || !self.java_launching.contains_key(group);
+        }
+        if allowed {
+            return true;
+        }
+        let first = &running[0];
+        self.focus_java_task(first.id, window, cx);
+        notify_warning(
+            format!(
+                "{name} is already running — tick “Allow multiple instances” on it to start another"
+            ),
+            window,
+            cx,
+        );
+        false
     }
 
     /// Re-scan the workspace for runnable `main` classes (off the UI thread).
@@ -290,17 +361,43 @@ impl IsengardApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_service(index, None, window, cx);
+    }
+
+    /// `restart`: replaces an instance — same kind (primary / extra, so the
+    /// port logic holds) and number, and no one-instance check.
+    fn start_service(
+        &mut self,
+        index: usize,
+        restart: Option<Restart>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(service) = self.java_services.get(index).cloned() else {
             return;
         };
         let title = service.name().to_string();
+        let group = service.group_key();
+        if restart.is_none() && !self.may_start(&group, &title, window, cx) {
+            return;
+        }
+        let extra = restart.map(|r| r.extra).unwrap_or_else(|| {
+            !self.running_in_group(&group, cx).is_empty()
+                || self.java_launching.contains_key(&group)
+        });
         if let Some(build) = service
             .module
             .as_deref()
             .and_then(crate::java_tasks::detect)
         {
-            let task = service.task(&build);
-            return self.launch_task(build, task, Some(title), window, cx);
+            let task = service.task(&build, extra);
+            let launch = Launch {
+                title: Some(title),
+                group,
+                extra,
+                instance: restart.map(|r| r.instance),
+            };
+            return self.launch_task(build, task, launch, window, cx);
         }
         self.ensure_jdks();
         let Some(jdk) = self.active_jdk().map(|j| j.home.clone()) else {
@@ -312,13 +409,111 @@ impl IsengardApp {
             .file
             .parent()
             .map_or_else(PathBuf::new, Path::to_path_buf);
-        self.spawn_task_tab(cwd, title, command, window, cx);
+        *self.java_launching.entry(group.clone()).or_default() += 1;
+        let spec = TaskSpec {
+            title,
+            group,
+            extra,
+            instance: restart.map(|r| r.instance),
+        };
+        self.spawn_task_tab(cwd, spec, command, window, cx);
     }
 
-    /// Ctrl+C one running task tab.
+    /// Start every service that is not running yet (the menu stays open).
+    pub(super) fn start_all_java_services(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let running: Vec<String> = self
+            .terminal
+            .read(cx)
+            .running_tasks()
+            .into_iter()
+            .map(|t| t.group)
+            .collect();
+        let todo: Vec<usize> = self
+            .java_services
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !running.contains(&s.group_key()))
+            .map(|(i, _)| i)
+            .collect();
+        if todo.is_empty() {
+            return notify_warning("Every service is already running", window, cx);
+        }
+        self.ensure_jdks();
+        if self.active_jdk().is_none() {
+            return self.show_jdk_missing(window, cx);
+        }
+        for i in todo {
+            self.run_java_service(i, window, cx);
+        }
+    }
+
+    /// Stop every running instance of one service / task. Their terminals
+    /// close once the programs have exited.
+    pub(super) fn stop_java_group(&mut self, group: &str, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |term, cx| term.stop_group(group, false, cx));
+    }
+
+    /// Stop every running instance of a service and start each again.
+    pub(super) fn restart_java_group(&mut self, group: &str, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |term, cx| term.stop_group(group, true, cx));
+    }
+
+    /// Expand / collapse a service's instance list in the Services menu.
+    pub(super) fn toggle_java_group(&mut self, group: &str, cx: &mut Context<Self>) {
+        if !self.java_expanded.remove(group) {
+            self.java_expanded.insert(group.to_string());
+        }
+        cx.notify();
+    }
+
+    /// A service's "Allow multiple instances" checkbox (kept per folder / workspace).
+    pub(super) fn set_java_multi(&mut self, group: &str, on: bool, cx: &mut Context<Self>) {
+        if on {
+            self.java_multi_services.insert(group.to_string());
+        } else {
+            self.java_multi_services.remove(group);
+        }
+        self.persist_session(cx);
+        cx.notify();
+    }
+
+    /// Stop one running instance (its terminal closes once it has exited).
     pub(super) fn stop_java_task(&mut self, id: usize, cx: &mut Context<Self>) {
         self.terminal
-            .update(cx, |term, cx| term.interrupt_task(id, cx));
+            .update(cx, |term, cx| term.stop_task(id, false, cx));
+    }
+
+    /// Stop one instance and start it again.
+    pub(super) fn restart_java_task(&mut self, id: usize, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |term, cx| term.stop_task(id, true, cx));
+    }
+
+    /// A task program ended. After a Restart, start the service again with the
+    /// same kind of instance (primary / extra).
+    pub(super) fn on_task_exited(
+        &mut self,
+        exited: &TaskExited,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !exited.restart {
+            return;
+        }
+        let Some(index) = self
+            .java_services
+            .iter()
+            .position(|s| s.group_key() == exited.group)
+        else {
+            return;
+        };
+        let restart = Restart {
+            extra: exited.extra,
+            instance: exited.instance,
+        };
+        self.start_service(index, Some(restart), window, cx);
     }
 
     /// Show a task's terminal tab.
@@ -335,11 +530,9 @@ impl IsengardApp {
         cx.notify();
     }
 
-    /// Ctrl+C every running task tab.
+    /// Stop every running task tab (each closes once its program exits).
     pub(super) fn stop_java_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let stopped = self
-            .terminal
-            .update(cx, |term, cx| term.interrupt_tasks(cx));
+        let stopped = self.terminal.update(cx, |term, cx| term.stop_tasks(cx));
         if stopped == 0 {
             notify_warning("Nothing is running", window, cx);
         }
@@ -349,7 +542,7 @@ impl IsengardApp {
         &mut self,
         build: crate::java_tasks::Build,
         task: crate::java_tasks::Task,
-        title: Option<String>,
+        launch: Launch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -358,11 +551,19 @@ impl IsengardApp {
             return self.show_jdk_missing(window, cx);
         };
         let command = build.command(&task, Some(&jdk));
-        let title = title.unwrap_or_else(|| build.title(&task));
+        let spec = TaskSpec {
+            title: launch.title.unwrap_or_else(|| build.title(&task)),
+            group: launch.group,
+            extra: launch.extra,
+            instance: launch.instance,
+        };
+        // Until the tab exists the menu shows the group as starting.
+        *self.java_launching.entry(spec.group.clone()).or_default() += 1;
+        cx.notify();
         // A wrapper always exists; otherwise make sure the tool is installed
         // before opening a tab that would only say "command not found".
-        if build.wrapper || cfg!(test) {
-            return self.spawn_task_tab(build.root, title, command, window, cx);
+        if build.wrapper {
+            return self.spawn_task_tab(build.root, spec, command, window, cx);
         }
         let tool = build.tool_name();
         cx.spawn_in(window, async move |this, window| {
@@ -371,8 +572,10 @@ impl IsengardApp {
                 .await;
             this.update_in(window, |this, window, cx| {
                 if found {
-                    this.spawn_task_tab(build.root, title, command, window, cx);
+                    this.spawn_task_tab(build.root, spec, command, window, cx);
                 } else {
+                    this.finish_launch(&spec.group);
+                    cx.notify();
                     notify_error(
                         format!(
                             "`{tool}` was not found. Install it, or add the project wrapper \
@@ -393,17 +596,29 @@ impl IsengardApp {
         .detach();
     }
 
+    /// The launch of `group` is over (its tab exists, or it failed).
+    fn finish_launch(&mut self, group: &str) {
+        if let Some(n) = self.java_launching.get_mut(group) {
+            *n -= 1;
+            if *n == 0 {
+                self.java_launching.remove(group);
+            }
+        }
+    }
+
     fn spawn_task_tab(
         &mut self,
         cwd: PathBuf,
-        title: String,
+        spec: TaskSpec,
         command: crate::terminal::pty::TerminalCommand,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let group = spec.group.clone();
         let result = self.terminal.update(cx, |term, cx| {
-            term.add_task_session(cwd, title, &command, window, cx)
+            term.add_task_session(cwd, spec, &command, window, cx)
         });
+        self.finish_launch(&group);
         if let Err(err) = result {
             return notify_error(err, window, cx);
         }

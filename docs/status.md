@@ -138,8 +138,8 @@ What works today:
   test); the Windows `.cmd` launcher, macOS, Lombok / annotation processors and
   real Maven import progress are untested.
   **Run menu (Maven / Gradle):** a root with `pom.xml` or `build.gradle*` /
-  `settings.gradle*` (Maven wins if both) adds a task-list button to the status
-  bar — Maven: clean, compile, test, package, clean install (+
+  `settings.gradle*` (Maven wins if both) adds its own status-bar button with the Material Maven /
+  Gradle icon (one button per tool present) — its menu lists, per build folder, Maven: clean, compile, test, package, clean install (+
   `spring-boot:run` when the pom mentions spring-boot); Gradle: clean, build,
   test (+ `bootRun` for the Spring Boot plugin, else `run` for `application`).
   Multi-root shows one group per build root. A click opens a new terminal tab
@@ -147,33 +147,83 @@ What works today:
   the project wrapper (`mvnw` / `gradlew`) if present, else `mvn` / `gradle`
   from the user's login shell `PATH` (Unix: `$SHELL -l -i -c`; Windows:
   `cmd /C`, untested). Without a wrapper, a login-shell `command -v` probe
-  (5 s cap, then assumed present) runs first; missing tool → error toast
+  (5 s cap, then assumed present; run in its own session so several
+  interactive probes cannot grab the terminal and SIGTTIN-freeze the editor) runs first; missing tool → error toast
   naming the wrapper command instead of an empty tab. The command line itself
   exports `JAVA_HOME` + `PATH` for the selected project JDK (rc files like
   sdkman cannot override it); no JDK → the No JDK dialog.
-  **Services:** the same menu lists every runnable class in the workspace
+  **Services:** a separate Play button (spinner while anything runs) opens the
+  Services menu: every runnable class in the workspace, with what runs from it,
   (non-test `.java` with `static void main(`, found by a background scan on
   open and when a `.java` / `pom.xml` / `build.gradle` changes; skips `target`,
   `build`, `out`, `dist`, `node_modules`, gitignored). Spring Boot apps
-  (`@SpringBootApplication`) come first, then by name; each row shows
-  `Class · module folder`. A click runs it in the service's own module (nearest
+  (`@SpringBootApplication`) come first, then by name; each row shows only
+  the service name (no folder). The play button runs it in the service's own module (nearest
   folder up to the workspace root with a `pom.xml` / Gradle build — so a
   workspace of many microservice folders works): Spring Boot →
   `spring-boot:run -Dspring-boot.run.main-class=<Class>` (Gradle `bootRun`),
   others → `exec:java`, no build → `java File.java`. The tab is titled with the
-  class name. The Run button also shows when only services exist (no root
-  build file).
-  **Running list:** tasks and services that were started from the menu show
-  under a **Running** heading at the top while their program is alive: green
-  square, tab title, the port the program announced in its output (`Tomcat
-  started on port 8080`, Netty / Jetty / Undertow, `Listening on:
-  http://host:port` — first match wins; no port until it prints one), and a
-  per-row stop (Ctrl+C to that tab). A **Stop all** row sits right under the
-  list. Clicking a row shows its terminal tab. A program that exits (or was
-  stopped) leaves the list; its tab stays open with the output. The Run button
-  icon becomes a spinner while anything runs. There is no separate "Run File"
-  button — start a class from the Services list. Quitting terminates running
-  tasks like any terminal program.
+  class name. The Services button shows without any root build file.
+  **Closing a terminal tab** whose program is still running (a service, a
+  task, or a foreground job in a shell) asks first (Stop & Close / Keep
+  Running) and stops the program with the tab (SIGTERM to the job and the tab's
+  shell group, SIGKILL after ~1s, off the UI thread). Quitting asks the same way
+  and stops everything the same way. So does leaving the folder / workspace
+  (open another folder or workspace, Close Folder / Close Workspace): **Stop
+  running programs?** → Stop & Continue / Keep Running; the terminals closed by
+  the switch stop their programs the same way (no silent hang-up).
+  **Menus scroll:** every Java menu (and the LSP / JDK lists) gets a fixed
+  height and a scrollbar once it is long — a popover is auto-height, so `max_h`
+  alone would just grow it (UI-tested with 40 services).
+  **Running instances (accordion):** there is no separate Running list. Each
+  service row in the Services menu carries what runs from it: a summary
+  (`:8080` for a lone instance with a known port, else `N running`), a
+  **Restart** button, a stop for all its instances and, at the far right, a
+  chevron. The chevron opens an accordion of its instances (status mark, tab
+  title — `Name`, `Name (2)`, … — the port the program announced in its
+  output (`Tomcat started on port 8080`, Netty / Jetty / Undertow, `Listening
+  on: http://host:port` — first match wins; no port until it prints one), a
+  restart and a stop for that instance). Folded by default; open / folded
+  state is per menu session, not persisted. Clicking an instance shows its
+  terminal tab; the menu stays open for toggle / stop / restart / show.
+  Running tasks that are not services (`mvn clean`, run configurations)
+  appear under a **Tasks** heading with the same accordion (no restart).
+  **Start all** and **Stop all** are two buttons at the top (Stop all only
+  while something runs; Start all skips services that already run). A program
+  that exits on its own leaves the list; its tab stays open with the output.
+  There is no separate "Run File" button — start a class from the Services
+  list. Quitting terminates running tasks like any terminal program.
+  **Loading indicators** (design.md: the control that started the work shows
+  the spinner): the **play** button while a start is pending — from the click
+  (the `mvn` probe can take a moment) until the program announces it is up
+  (port, or `Started X in N seconds` / `started in Ns`) or 45 s have passed
+  (a plain `main` prints neither); the **stop** button while a stop is
+  pending (Ctrl+C sent, program still alive); the **restart** button while
+  the old instance is stopping. Instance rows show a `Spinner` in place of the
+  green square while starting or stopping.
+  **Stop closes the terminal:** stopping from the menu (instance, service, or
+  Stop all) closes the instance's terminal tab once the program has exited —
+  without moving keyboard focus. A program that exits on its own (crash) keeps
+  its tab. **Restart** stops the instance(s) the same way and, when each has
+  exited, starts the service again as the same kind of instance (a primary
+  stays primary, an extra one keeps taking a free port) with the same number
+  (`Name (2)` restarts as `Name (2)`). Starting a service twice before its
+  first tab exists starts only one (unless multiple instances are allowed).
+  **Allow multiple instances** is a per-service checkbox at the right of each
+  service row (tooltip; kept per folder / workspace in
+  `sessions.*.java_multi_services`, default off). Off → starting a service that
+  already runs only shows its tab and a toast; on → every start adds an
+  instance. Instance numbers per service never repeat. A **further Spring Boot
+  instance** is started with `--server.port=0` (Maven
+  `-Dspring-boot.run.arguments=…`, Gradle `--args=…`) so it takes a free port
+  instead of dying on "port already in use" — the first instance keeps its
+  configured port, and the chosen port shows in the menu once printed.
+  Non-Spring mains get no port change. Run configurations and Maven / Gradle
+  tasks are not gated: they always start another run (put a port in the
+  arguments yourself).
+  **Starting:** only a service's play button starts it (the row is not a click
+  target) and the menu stays open, so several services can be started in a
+  row; Start all behaves the same.
   **Run configurations:** the `+` next to a build's name opens a dialog (name +
   raw Maven/Gradle arguments, e.g. `spring-boot:run
   -Dspring-boot.run.profiles=dev`); saved per workspace in
@@ -242,8 +292,8 @@ What works today:
   a status read cannot rewrite `.git/index` and re-trigger the watcher.
 - **Save / close:** Save, Save All, close-tab and quit confirmations when
   unsaved (New File is buffer-only until Save; save dialog uses active tree
-  dir / root) or while an agent turn or a terminal foreground process (Unix) is running
-  (Quit Anyway / Keep Working). Quitting terminates each terminal's foreground
+  dir / root) or while an agent turn or a terminal foreground process (Unix) or a Run-menu
+  service / task is running (Quit Anyway / Keep Working). Quitting terminates each terminal's foreground
   program (SIGTERM, then SIGKILL after ~1s) and hangs up the shell, so dev servers
   don't keep their port.
   Linux in-window close × confirms unsaved changes. Save All

@@ -119,6 +119,11 @@ impl IsengardApp {
             git_repos: self.git.read(cx).snapshot_session_ui(cx),
             java_home: self.java_home.clone(),
             java_runs: self.java_runs.clone(),
+            java_multi_services: {
+                let mut keys: Vec<String> = self.java_multi_services.iter().cloned().collect();
+                keys.sort();
+                keys
+            },
         };
         // Keep other agents' chat indexes + remembered agent; only refresh the
         // active slot (and the remembered id when not on the picker).
@@ -157,6 +162,8 @@ impl IsengardApp {
         self.agent_width = DEFAULT_AGENT_WIDTH;
         self.java_home = None;
         self.java_runs.clear();
+        self.java_multi_services.clear();
+        self.java_expanded.clear();
     }
 
     /// Reopens saved tabs (with cursor/scroll), expands dirs, and restores terminals.
@@ -173,6 +180,7 @@ impl IsengardApp {
         self.restoring_session = true;
         self.java_home = session.java_home.clone();
         self.java_runs = session.java_runs.clone();
+        self.java_multi_services = session.java_multi_services.iter().cloned().collect();
         self.sidebar_width = if session.sidebar_width >= 100. {
             session.sidebar_width
         } else {

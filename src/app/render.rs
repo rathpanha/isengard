@@ -2,6 +2,7 @@
 use super::lsp::lsp_aggregate_color;
 use super::tab::{DiffKind, TabBody};
 use super::*;
+use crate::java_tasks::Tool;
 use gpui_kit::component::Icon;
 
 impl IsengardApp {
@@ -703,6 +704,13 @@ impl IsengardApp {
         // Always offer the icon while a folder is open (empty → short hint).
         let show_lsp = has_folders;
 
+        let java_menus: Vec<AnyElement> = [Tool::Maven, Tool::Gradle]
+            .into_iter()
+            .filter(|tool| self.java_builds.iter().any(|b| b.tool == *tool))
+            .map(|tool| self.java_build_menu(tool, cx))
+            .collect();
+        let services_menu = self.java_services_menu(cx);
+
         let right = h_flex()
             .gap_4()
             .items_center()
@@ -726,51 +734,9 @@ impl IsengardApp {
                     this.child("Image")
                 }
             })
-            .when(
-                has_folders && (!self.java_builds.is_empty() || !self.java_services.is_empty()),
-                |this| {
-                    let builds = self.java_builds.clone();
-                    let services = self.java_services.clone();
-                    let runs = self.java_runs.clone();
-                    let running = self.terminal.read(cx).running_tasks();
-                    let app = cx.entity().downgrade();
-                    this.child(
-                        Popover::new("java-run")
-                            .anchor(Anchor::BottomRight)
-                            .open(self.java_run_open)
-                            .on_open_change(cx.listener(|this, open, window, cx| {
-                                this.java_run_open = *open;
-                                if !*open {
-                                    this.focus_active_editor(window, cx);
-                                }
-                                cx.notify();
-                            }))
-                            .trigger(
-                                Button::new("status-java-run")
-                                    .ghost()
-                                    .cursor_pointer()
-                                    .small()
-                                    .icon(if running.is_empty() {
-                                        LucideIcon::Play
-                                    } else {
-                                        LucideIcon::Loader
-                                    })
-                                    .tooltip("Run services / Maven / Gradle"),
-                            )
-                            .content(move |_state: &mut PopoverState, _, cx| {
-                                java_run_menu(
-                                    &app,
-                                    cx.weak_entity(),
-                                    &running,
-                                    &services,
-                                    &builds,
-                                    &runs,
-                                    cx,
-                                )
-                            }),
-                    )
-                },
-            )
+            .when(has_folders, |this| {
+                this.children(java_menus).child(services_menu)
+            })
             .when(has_folders && self.java_context(), |this| {
                 let active = self.active_jdk().cloned();
                 let jdks = self.jdks.clone();
@@ -817,6 +783,7 @@ impl IsengardApp {
                             v_flex()
                                 .w(px(300.))
                                 .max_h(px(320.))
+                                .when(jdks.len() > 9, |col| col.h(px(320.)))
                                 .gap_1()
                                 .overflow_y_scrollbar()
                                 .when(jdks.is_empty(), |col| {
@@ -921,9 +888,12 @@ impl IsengardApp {
                                 .content(move |_state: &mut PopoverState, _, cx| {
                                     let popover = cx.weak_entity();
                                     let empty = servers.is_empty();
+                                    // Auto-height popover: a long list needs a definite
+                                    // height or it grows instead of scrolling.
                                     v_flex()
                                         .w(px(280.))
                                         .max_h(px(280.))
+                                        .when(servers.len() > 8, |col| col.h(px(280.)))
                                         .gap_1()
                                         .overflow_y_scrollbar()
                                         .when(empty, |col| {
@@ -1296,6 +1266,7 @@ impl Render for IsengardApp {
             .on_action(cx.listener(Self::on_toggle_terminal))
             .on_action(cx.listener(Self::on_new_terminal))
             .on_action(cx.listener(Self::on_terminal_tabs_changed))
+            .on_action(cx.listener(Self::on_close_terminal_tab))
             .on_action(cx.listener(Self::on_toggle_agent_panel))
             .on_action(cx.listener(Self::on_new_agent_chat))
             .on_action(cx.listener(Self::on_add_selection_to_agent))
@@ -1308,217 +1279,4 @@ impl Render for IsengardApp {
                 this.child(self.render_status_bar(cx))
             })
     }
-}
-
-/// Status-bar menu entry: runs against the app once the popover has closed.
-type AppAction = Box<dyn Fn(&mut IsengardApp, &mut Window, &mut Context<IsengardApp>)>;
-type ClickAction = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
-/// Left-aligned, full-width menu row. Kit's label-only `Button` centres its
-/// text, so menus built from it would not line up with icon rows.
-fn menu_row(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
-    let hover = cx.theme().accent.opacity(0.15);
-    h_flex()
-        .id(id)
-        .w_full()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .py_1()
-        .text_sm()
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-}
-
-fn menu_heading(text: impl Into<SharedString>, cx: &App) -> Div {
-    div()
-        .px_2()
-        .py_1()
-        .text_xs()
-        .text_color(cx.theme().muted_foreground)
-        .child(text.into())
-}
-
-/// The Run menu: running tasks (port + stop), services, Maven / Gradle tasks
-/// and saved run configurations.
-fn java_run_menu(
-    app: &WeakEntity<IsengardApp>,
-    popover: WeakEntity<PopoverState>,
-    running: &[crate::terminal::panel::RunningTask],
-    services: &[crate::java_tasks::Service],
-    builds: &[crate::java_tasks::Build],
-    runs: &[crate::config::RunConfig],
-    cx: &mut App,
-) -> impl IntoElement + use<> {
-    let muted = cx.theme().muted_foreground;
-    // Close the popover, then run `f` on the app.
-    let act = |f: AppAction| -> ClickAction {
-        let (app, popover) = (app.clone(), popover.clone());
-        Box::new(move |_, window, cx| {
-            if let Some(p) = popover.upgrade() {
-                p.update(cx, |p, cx| p.dismiss(window, cx));
-            }
-            _ = app.update(cx, |this, cx| {
-                this.java_run_open = false;
-                f(this, window, cx);
-            });
-        })
-    };
-    // Same, but the popover stays open (stopping a service, say).
-    let keep_open = |f: AppAction| -> ClickAction {
-        let app = app.clone();
-        Box::new(move |_, window, cx| {
-            _ = app.update(cx, |this, cx| f(this, window, cx));
-        })
-    };
-    let multi = builds.len() > 1;
-
-    v_flex()
-        .w(px(340.))
-        .max_h(px(460.))
-        .gap_1()
-        .overflow_y_scrollbar()
-        .when(!running.is_empty(), |col| {
-            col.child(menu_heading("Running", cx))
-                .children(running.iter().map(|task| {
-                    let id = task.id;
-                    let on_focus = act(Box::new(move |this, window, cx| {
-                        this.focus_java_task(id, window, cx)
-                    }));
-                    let on_stop =
-                        keep_open(Box::new(move |this, _, cx| this.stop_java_task(id, cx)));
-                    menu_row(SharedString::from(format!("java-running-{id}")), cx)
-                        .on_click(move |e, window, cx| on_focus(e, window, cx))
-                        .child(div().size(px(7.)).flex_shrink_0().bg(cx.theme().success))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(task.title.clone()),
-                        )
-                        .when_some(task.port, |row, port| {
-                            row.child(div().text_color(muted).child(format!(":{port}")))
-                        })
-                        .child(
-                            Button::new(SharedString::from(format!("java-running-stop-{id}")))
-                                .ghost()
-                                .cursor_pointer()
-                                .xsmall()
-                                .icon(LucideIcon::CircleX)
-                                .tooltip("Stop")
-                                .on_click(move |e, window, cx| {
-                                    cx.stop_propagation();
-                                    on_stop(e, window, cx)
-                                }),
-                        )
-                        .test_support()
-                }))
-                .child({
-                    let on_stop_all = keep_open(Box::new(|this, window, cx| {
-                        this.stop_java_tasks(window, cx)
-                    }));
-                    menu_row("java-stop-all", cx)
-                        .on_click(move |e, window, cx| on_stop_all(e, window, cx))
-                        .child(Icon::new(LucideIcon::CircleX).small())
-                        .child("Stop all")
-                        .test_support()
-                })
-        })
-        .when(!services.is_empty(), |col| {
-            col.child(menu_heading("Services", cx))
-                .children(services.iter().enumerate().map(|(i, svc)| {
-                    let on_run = act(Box::new(move |this, window, cx| {
-                        this.run_java_service(i, window, cx)
-                    }));
-                    let module = svc.module_label();
-                    menu_row(SharedString::from(format!("java-service-{i}")), cx)
-                        .on_click(move |e, window, cx| on_run(e, window, cx))
-                        .child(Icon::new(LucideIcon::Play).small())
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(svc.name().to_string()),
-                        )
-                        .when(!module.is_empty(), |row| {
-                            row.child(div().text_color(muted).truncate().child(module))
-                        })
-                        .test_support()
-                }))
-        })
-        .children(builds.iter().enumerate().map(|(b, build)| {
-            let tool = match build.tool {
-                crate::java_tasks::Tool::Maven => "Maven",
-                crate::java_tasks::Tool::Gradle => "Gradle",
-            };
-            let heading = if multi {
-                let dir = build
-                    .root
-                    .file_name()
-                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                format!("{dir} · {tool}")
-            } else {
-                tool.to_string()
-            };
-            let on_add = act(Box::new(move |this, window, cx| {
-                this.add_run_config(b, window, cx)
-            }));
-            v_flex()
-                .child(
-                    h_flex()
-                        .items_center()
-                        .justify_between()
-                        .child(menu_heading(heading, cx))
-                        .child(
-                            Button::new(SharedString::from(format!("java-config-add-{b}")))
-                                .ghost()
-                                .cursor_pointer()
-                                .xsmall()
-                                .icon(LucideIcon::Plus)
-                                .tooltip("New run configuration")
-                                .on_click(move |e, window, cx| on_add(e, window, cx)),
-                        ),
-                )
-                .children(build.tasks.iter().enumerate().map(|(t, task)| {
-                    let on_run = act(Box::new(move |this, window, cx| {
-                        this.run_java_task(b, t, window, cx)
-                    }));
-                    menu_row(SharedString::from(format!("java-task-{b}-{t}")), cx)
-                        .on_click(move |e, window, cx| on_run(e, window, cx))
-                        .child(task.label.clone())
-                        .test_support()
-                }))
-                .children(
-                    runs.iter()
-                        .enumerate()
-                        .filter(|(_, r)| r.root == build.root)
-                        .map(|(i, run)| {
-                            let on_run = act(Box::new(move |this, window, cx| {
-                                this.run_java_config(i, window, cx)
-                            }));
-                            let on_del = keep_open(Box::new(move |this, _, cx| {
-                                this.remove_run_config(i, cx)
-                            }));
-                            menu_row(SharedString::from(format!("java-config-{i}")), cx)
-                                .on_click(move |e, window, cx| on_run(e, window, cx))
-                                .child(Icon::new(LucideIcon::Play).small())
-                                .child(div().flex_1().min_w_0().truncate().child(run.name.clone()))
-                                .child(
-                                    Button::new(SharedString::from(format!("java-config-del-{i}")))
-                                        .ghost()
-                                        .cursor_pointer()
-                                        .xsmall()
-                                        .icon(LucideIcon::Trash)
-                                        .tooltip("Delete configuration")
-                                        .on_click(move |e, window, cx| {
-                                            cx.stop_propagation();
-                                            on_del(e, window, cx)
-                                        }),
-                                )
-                                .test_support()
-                        }),
-                )
-        }))
 }

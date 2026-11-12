@@ -29,6 +29,7 @@ mod chrome;
 mod files;
 mod git;
 mod java;
+mod java_menu;
 mod lsp;
 mod render;
 mod search;
@@ -251,13 +252,20 @@ pub struct IsengardApp {
     java_project: bool,
     /// Maven / Gradle builds in the workspace roots (the status-bar Run menu).
     java_builds: Vec<crate::java_tasks::Build>,
-    java_run_open: bool,
+    /// Open Java status-bar popover (Maven / Gradle / Services).
+    java_menu: Option<java_menu::JavaMenu>,
     /// Every runnable `main` class in the workspace (the Run menu's Services list).
     java_services: Vec<crate::java_tasks::Service>,
     /// Bumps per scan so a slow, stale scan is dropped.
     java_services_gen: u64,
     /// Saved run configurations of this workspace (`sessions.*.java_runs`).
     java_runs: Vec<crate::config::RunConfig>,
+    /// Services ticked "Allow multiple instances" (`sessions.*.java_multi_services`).
+    java_multi_services: std::collections::HashSet<String>,
+    /// Service / task groups whose instance list is open in the Services menu.
+    java_expanded: std::collections::HashSet<String>,
+    /// Launches that have no tab yet (tool probe running), per group key.
+    java_launching: HashMap<String, usize>,
     /// JDK home chosen for this workspace (`None` → newest / `JAVA_HOME`).
     java_home: Option<PathBuf>,
     jdk_picker_open: bool,
@@ -474,6 +482,13 @@ impl IsengardApp {
 
         let terminal = cx.new(|_| TerminalPanel::new(&[]));
         let terminal_sub = cx.observe(&terminal, |_, _, cx| cx.notify());
+        let task_exit_sub = cx.subscribe_in(
+            &terminal,
+            window,
+            |this, _, exited: &crate::terminal::panel::TaskExited, window, cx| {
+                this.on_task_exited(exited, window, cx)
+            },
+        );
 
         let mut app = Self {
             config,
@@ -499,10 +514,13 @@ impl IsengardApp {
             jdks_scanned: false,
             java_project: false,
             java_builds: Vec::new(),
-            java_run_open: false,
+            java_menu: None,
             java_services: Vec::new(),
             java_services_gen: 0,
             java_runs: Vec::new(),
+            java_multi_services: std::collections::HashSet::new(),
+            java_expanded: std::collections::HashSet::new(),
+            java_launching: HashMap::new(),
             java_home: None,
             jdk_picker_open: false,
             jdk_missing_shown: false,
@@ -539,6 +557,7 @@ impl IsengardApp {
                 bounds_sub,
                 activation_sub,
                 terminal_sub,
+                task_exit_sub,
             ],
         };
 

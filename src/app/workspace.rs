@@ -131,7 +131,38 @@ impl IsengardApp {
 
     /// Leaves the current workspace: offers to save an untitled multi-root
     /// workspace, then to save unsaved files, then switches.
+    /// Leaving the folder / workspace closes its terminals, which stops what
+    /// runs in them: ask first when something does (a service, a dev server).
     pub(super) fn request_switch(
+        &mut self,
+        switch: Switch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let busy = self.terminal.read(cx).busy_tab_count();
+        if busy == 0 {
+            return self.request_switch_checked(switch, window, cx);
+        }
+        let noun = self.workspace.kind_noun();
+        let what = if busy == 1 {
+            "A terminal is still running a program (a service, for example).".to_string()
+        } else {
+            format!("{busy} terminals are still running programs (services, for example).")
+        };
+        self.open_choice_dialog(
+            "Stop running programs?",
+            format!("{what} Leaving this {noun} closes its terminals and stops them."),
+            "Stop & Continue",
+            "Keep Running",
+            move |this, window, cx| this.request_switch_checked(switch.clone(), window, cx),
+            |_, _, _| {},
+            window,
+            cx,
+        );
+    }
+
+    /// The unsaved-work half of [`Self::request_switch`].
+    fn request_switch_checked(
         &mut self,
         switch: Switch,
         window: &mut Window,

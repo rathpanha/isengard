@@ -285,6 +285,8 @@ src/
 │   ├── git.rs           Source Control diff/conflict tabs
 │   ├── watch.rs         watcher pump: reload clean tabs, refresh tree + Git
 │   ├── terminal.rs      bottom PTY panel show/create/cwd
+│   ├── java.rs          JDK picker, Run tasks / services / run configs, start·stop·restart
+│   ├── java_menu.rs     Maven / Gradle / Services status-bar popovers (accordion rows)
 │   ├── terminal_cwd.rs  multi-root “Open Terminal in…” picker
 │   ├── chrome.rs        sidebar toggle, About, config, quit
 │   ├── update.rs        update / download / password-install / restart dialogs
@@ -370,7 +372,9 @@ src/
 │   ├── diff_highlight.rs line ranges + conflict hunks via `similar`
 │   └── panel.rs         GitPanel: stacked repos, conflict banner, list
 ├── terminal/            bottom integrated PTY panel (adapted from gpui-terminal)
-│   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch
+│   ├── panel.rs         TerminalPanel: Kit chrome, show/hide, restart on switch; task
+│   │                    tabs (group / instance, `TaskPhase`, port + readiness sniffing,
+│   │                    stop closes the tab) and the `TaskExited` event
 │   ├── pty.rs           portable-pty session + default shell / cwd
 │   ├── view.rs          TerminalView: paint, select/copy/paste, URL click
 │   ├── state.rs         alacritty_terminal Term wrapper

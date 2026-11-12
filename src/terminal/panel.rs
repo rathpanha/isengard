@@ -8,6 +8,7 @@ use gpui_kit::component::{
     h_flex, v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use serde::Deserialize;
 
 use crate::editor::document;
 use crate::editor::tabs::reorder_for_drop_before;
@@ -33,21 +34,106 @@ struct TerminalTab {
     _session: PtySession,
 }
 
+/// How long a task counts as "starting" when it never announces readiness
+/// (a plain `main` prints no "started" line).
+const STARTUP_GRACE: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// What a task tab is doing, for the Run menu's loading indicators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskPhase {
+    /// Launched, not ready yet (no port / "Started … in N seconds" seen, and
+    /// the grace period has not run out).
+    Starting,
+    Running,
+    /// Stop requested (Ctrl+C sent), program still alive.
+    Stopping,
+}
+
 /// What the panel knows about a Maven / Gradle / service tab.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct TaskState {
+    /// What the tab is an instance of (a service, a Maven task, …): tabs with
+    /// the same key are instances of one thing and group together in the menu.
+    group: String,
+    /// Display name without the instance number.
+    name: String,
+    /// 1-based, per group; a later instance never reuses a number.
+    instance: u32,
+    /// Started next to a running instance (took a free port); a restart keeps it.
+    extra: bool,
     /// The program has not exited yet.
     running: bool,
     /// Port the program said it listens on (Spring Boot, Quarkus, …).
     port: Option<u16>,
+    /// The program said it is up (port announced / "Started … in N seconds").
+    ready: bool,
+    started: std::time::Instant,
+    /// Stop requested: the tab closes by itself once the program exits.
+    stopping: bool,
+    /// …and the service starts again afterwards.
+    restart: bool,
 }
+
+impl TaskState {
+    fn phase(&self) -> TaskPhase {
+        if self.stopping {
+            TaskPhase::Stopping
+        } else if !self.ready && self.started.elapsed() < STARTUP_GRACE {
+            TaskPhase::Starting
+        } else {
+            TaskPhase::Running
+        }
+    }
+}
+
+/// What a new task tab is an instance of.
+pub struct TaskSpec {
+    /// Tab title (a further instance is numbered by the panel).
+    pub title: String,
+    /// Group key, see [`TaskState::group`].
+    pub group: String,
+    pub extra: bool,
+    /// A restart keeps the instance number of the tab it replaces.
+    pub instance: Option<u32>,
+}
+
+/// A task program ended (the tab stays until the panel closes it).
+pub struct TaskExited {
+    pub id: usize,
+    pub group: String,
+    /// It was stopped by a Restart: start the service again.
+    pub restart: bool,
+    pub extra: bool,
+    pub instance: u32,
+}
+
+impl EventEmitter<TaskExited> for TerminalPanel {}
 
 /// A task tab whose program is still running (the Run menu's "Running" list).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningTask {
     pub id: usize,
+    /// Tab title (`Name`, or `Name (2)` for a further instance).
     pub title: String,
+    /// Group key shared by every instance of the same service / task.
+    pub group: String,
+    /// Display name without the instance number.
+    pub name: String,
+    pub instance: u32,
     pub port: Option<u16>,
+    pub phase: TaskPhase,
+    /// Being stopped for a Restart.
+    pub restarting: bool,
+    pub extra: bool,
+}
+
+/// A server announcing it is up without naming a port (non-web apps).
+pub fn detect_ready(text: &str) -> bool {
+    use std::sync::LazyLock;
+    static READY: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\bstarted\s+(?:\S+\s+)?in\s+[\d.]+\s*(?:seconds?|s)\b").unwrap()
+    });
+    READY.is_match(text)
 }
 
 /// Port a server announced in its output, e.g. `Tomcat started on port 8080 (http)`
@@ -66,6 +152,37 @@ pub fn detect_port(text: &str) -> Option<u16> {
     PORT.captures(&clean)?.get(1)?.as_str().parse().ok()
 }
 
+impl TerminalTab {
+    fn is_busy(&self) -> bool {
+        self.task.as_ref().is_some_and(|t| t.running) || self._session.has_foreground_process()
+    }
+
+    /// Dropping a tab stops the program it is running (servers must not keep
+    /// their port). Off the UI thread: the stop waits up to ~1s for a graceful exit.
+    fn stop_in_background(self) {
+        if !self.is_busy() {
+            return;
+        }
+        let is_task = self.task.is_some();
+        let mut session = self._session;
+        std::thread::spawn(move || {
+            if is_task {
+                session.terminate_task();
+            } else {
+                session.terminate();
+            }
+        });
+    }
+}
+
+/// Ask the app to close terminal tab `id` (it confirms first when the tab is
+/// still running something).
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = isengard, no_json)]
+pub struct CloseTerminalTab {
+    pub id: usize,
+}
+
 /// Host view for the integrated terminal: tab strip + active [`TerminalView`].
 pub struct TerminalPanel {
     visible: bool,
@@ -74,6 +191,8 @@ pub struct TerminalPanel {
     next_id: usize,
     /// Extra env for new plain shells (e.g. `JAVA_HOME` of the project JDK).
     shell_env: Vec<(String, String)>,
+    /// Window of the last task tab: stopped tabs close themselves through it.
+    window: Option<AnyWindowHandle>,
 }
 
 impl TerminalPanel {
@@ -84,6 +203,7 @@ impl TerminalPanel {
             active: 0,
             next_id: 1,
             shell_env: Vec::new(),
+            window: None,
         }
     }
 
@@ -106,50 +226,109 @@ impl TerminalPanel {
                 Some(RunningTask {
                     id: t.id,
                     title: t.title.clone(),
+                    group: task.group.clone(),
+                    name: task.name.clone(),
+                    instance: task.instance,
                     port: task.port,
+                    phase: task.phase(),
+                    restarting: task.stopping && task.restart,
+                    extra: task.extra,
                 })
             })
             .collect()
     }
 
-    /// Ctrl+C to one task tab.
-    pub fn interrupt_task(&mut self, id: usize, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.iter().find(|t| t.id == id && t.task.is_some()) {
+    /// Stop one task: Ctrl+C now, and the tab closes once the program exits.
+    /// `restart` makes the app start the service again afterwards. Asking
+    /// again while it is stopping does not send a second Ctrl+C.
+    pub fn stop_task(&mut self, id: usize, restart: bool, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        let Some(task) = tab.task.as_mut().filter(|t| t.running) else {
+            return;
+        };
+        task.restart |= restart;
+        if !task.stopping {
+            task.stopping = true;
             tab.view.update(cx, |view, _| view.interrupt());
         }
+        cx.notify();
     }
 
-    /// Ctrl+C to every running task tab; returns how many there were.
-    pub fn interrupt_tasks(&mut self, cx: &mut Context<Self>) -> usize {
-        let ids: Vec<usize> = self.running_tasks().iter().map(|t| t.id).collect();
+    /// [`Self::stop_task`] for every running instance of `group`; returns how many.
+    pub fn stop_group(&mut self, group: &str, restart: bool, cx: &mut Context<Self>) -> usize {
+        let ids: Vec<usize> = self
+            .running_tasks()
+            .iter()
+            .filter(|t| t.group == group)
+            .map(|t| t.id)
+            .collect();
         for id in &ids {
-            self.interrupt_task(*id, cx);
+            self.stop_task(*id, restart, cx);
         }
         ids.len()
     }
 
-    fn set_task_port(&mut self, id: usize, port: u16, cx: &mut Context<Self>) {
-        if let Some(task) = self
-            .tabs
+    /// [`Self::stop_task`] for every running task tab; returns how many.
+    pub fn stop_tasks(&mut self, cx: &mut Context<Self>) -> usize {
+        let ids: Vec<usize> = self.running_tasks().iter().map(|t| t.id).collect();
+        for id in &ids {
+            self.stop_task(*id, false, cx);
+        }
+        ids.len()
+    }
+
+    fn task_mut(&mut self, id: usize) -> Option<&mut TaskState> {
+        self.tabs
             .iter_mut()
             .find(|t| t.id == id)
             .and_then(|t| t.task.as_mut())
-        {
+    }
+
+    fn set_task_port(&mut self, id: usize, port: u16, cx: &mut Context<Self>) {
+        if let Some(task) = self.task_mut(id) {
             task.port = Some(port);
+            task.ready = true;
+            cx.notify();
+        }
+    }
+
+    fn set_task_ready(&mut self, id: usize, cx: &mut Context<Self>) {
+        if let Some(task) = self.task_mut(id) {
+            task.ready = true;
             cx.notify();
         }
     }
 
     fn set_task_closed(&mut self, id: usize, cx: &mut Context<Self>) {
-        if let Some(task) = self
-            .tabs
-            .iter_mut()
-            .find(|t| t.id == id)
-            .and_then(|t| t.task.as_mut())
-        {
-            task.running = false;
-            cx.notify();
+        let Some(task) = self.task_mut(id) else {
+            return;
+        };
+        task.running = false;
+        let exited = TaskExited {
+            id,
+            group: task.group.clone(),
+            restart: task.restart,
+            extra: task.extra,
+            instance: task.instance,
+        };
+        let close = task.stopping;
+        cx.emit(exited);
+        if close {
+            // A stop the user asked for also closes the terminal. Deferred:
+            // we are inside a panel update, closing needs the window.
+            if let Some(handle) = self.window {
+                let panel = cx.entity().downgrade();
+                cx.defer(move |cx| {
+                    _ = handle.update(cx, move |_, window, cx| {
+                        _ = panel.update(cx, |p, cx| p.close_tab_with(id, false, window, cx));
+                        window.dispatch_action(Box::new(crate::app::TerminalTabsChanged), cx);
+                    });
+                });
+            }
         }
+        cx.notify();
     }
 
     pub fn is_visible(&self) -> bool {
@@ -163,16 +342,22 @@ impl TerminalPanel {
 
     /// Tabs whose shell is running a foreground program (build, server, …).
     pub fn busy_tab_count(&self) -> usize {
-        self.tabs
-            .iter()
-            .filter(|tab| tab._session.has_foreground_process())
-            .count()
+        self.tabs.iter().filter(|tab| tab.is_busy()).count()
+    }
+
+    /// The tab runs a program (task still alive, or a foreground job in a shell).
+    pub fn tab_is_busy(&self, id: usize) -> bool {
+        self.tabs.iter().any(|t| t.id == id && t.is_busy())
     }
 
     /// Stop every tab's running program (called on quit).
     pub fn terminate_all(&mut self) {
         for tab in &mut self.tabs {
-            tab._session.terminate();
+            if tab.task.is_some() {
+                tab._session.terminate_task();
+            } else {
+                tab._session.terminate();
+            }
         }
     }
 
@@ -209,7 +394,9 @@ impl TerminalPanel {
 
     /// Drop every session (e.g. workspace switch / welcome).
     pub fn clear_sessions(&mut self, cx: &mut Context<Self>) {
-        self.tabs.clear();
+        for tab in self.tabs.drain(..) {
+            tab.stop_in_background();
+        }
         self.active = 0;
         cx.notify();
     }
@@ -294,21 +481,53 @@ impl TerminalPanel {
     /// Like [`Self::add_command_session`], but the tab counts as a build / run
     /// task: it shows in [`Self::running_tasks`] (with the port it announces)
     /// until its program exits.
+    ///
+    /// `group` says what the tab is an instance of; a second tab of the same
+    /// group is titled `Name (2)` and so on.
     pub fn add_task_session(
         &mut self,
         cwd: PathBuf,
-        title: String,
+        spec: TaskSpec,
         command: &TerminalCommand,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
         let mut tab = self.spawn_tab(cwd, Some((command, Box::new(|_, _| {}))), true, cx)?;
-        tab.title = title;
+        let instance = spec.instance.unwrap_or_else(|| {
+            self.tabs
+                .iter()
+                .filter_map(|t| t.task.as_ref())
+                .filter(|t| t.group == spec.group)
+                .map(|t| t.instance)
+                .max()
+                .unwrap_or(0)
+                + 1
+        });
+        tab.title = if instance > 1 {
+            format!("{} ({instance})", spec.title)
+        } else {
+            spec.title.clone()
+        };
         tab.task = Some(TaskState {
+            group: spec.group,
+            name: spec.title,
+            instance,
+            extra: spec.extra,
             running: true,
             port: None,
+            ready: false,
+            started: std::time::Instant::now(),
+            stopping: false,
+            restart: false,
         });
+        self.window = Some(window.window_handle());
         self.push_active(tab, window, cx);
+        // The "starting" indicator ends by itself when no readiness shows up.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(STARTUP_GRACE).await;
+            _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
         Ok(())
     }
 
@@ -375,23 +594,37 @@ impl TerminalPanel {
     }
 
     pub fn close_tab(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_tab_with(id, true, window, cx);
+    }
+
+    /// `focus` false: do not move keyboard focus to the neighbouring tab (a
+    /// stopped service closing itself must not steal focus from the editor).
+    fn close_tab_with(
+        &mut self,
+        id: usize,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(ix) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
         // Close × tooltip can stick if the tab unmounts before Kit's hide settles.
         window.dismiss_tooltip(cx);
-        self.tabs.remove(ix);
+        let tab = self.tabs.remove(ix);
+        tab.stop_in_background();
         if self.tabs.is_empty() {
             self.active = 0;
             self.visible = false;
-        } else if self.active >= self.tabs.len() {
-            self.active = self.tabs.len() - 1;
-            self.focus_active(window, cx);
-        } else if ix < self.active {
-            self.active -= 1;
-            self.focus_active(window, cx);
         } else {
-            self.focus_active(window, cx);
+            if self.active >= self.tabs.len() {
+                self.active = self.tabs.len() - 1;
+            } else if ix < self.active {
+                self.active -= 1;
+            }
+            if focus {
+                self.focus_active(window, cx);
+            }
         }
         cx.notify();
     }
@@ -454,16 +687,24 @@ impl TerminalPanel {
                 // Task tabs report the port the program announces and when it ends.
                 let (out_panel, closed_panel) = (panel.clone(), panel);
                 let mut tail = String::new();
-                let mut found = false;
+                let (mut ready_sent, mut port_found) = (false, false);
+                // After "ready" keep looking for a port for a while only.
+                let mut chunks_after_ready = 0u32;
                 view.with_taps(
                     move |bytes, cx| {
-                        if found {
+                        if port_found || chunks_after_ready > 50 {
                             return;
+                        }
+                        if ready_sent {
+                            chunks_after_ready += 1;
                         }
                         tail.push_str(&String::from_utf8_lossy(bytes));
                         if let Some(port) = detect_port(&tail) {
-                            found = true;
+                            port_found = true;
                             _ = out_panel.update(cx, |p, cx| p.set_task_port(id, port, cx));
+                        } else if !ready_sent && detect_ready(&tail) {
+                            ready_sent = true;
+                            _ = out_panel.update(cx, |p, cx| p.set_task_ready(id, cx));
                         } else if tail.len() > 4096 {
                             // Keep a tail: a line may be split across chunks.
                             let mut cut = tail.len() - 1024;
@@ -621,10 +862,9 @@ impl Render for TerminalPanel {
                                         .icon(IconName::Close)
                                         .tooltip("Close Terminal")
                                         .on_click(
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.close_tab(id, window, cx);
+                                            cx.listener(move |_, _, window, cx| {
                                                 window.dispatch_action(
-                                                    Box::new(crate::app::TerminalTabsChanged),
+                                                    Box::new(CloseTerminalTab { id }),
                                                     cx,
                                                 );
                                             }),
@@ -724,5 +964,10 @@ mod tests {
             Some(8083)
         );
         assert_eq!(detect_port("Started App in 3.2 seconds"), None);
+        assert!(super::detect_ready(
+            "INFO Started ShopApplication in 3.2 seconds (process running for 3.9)"
+        ));
+        assert!(super::detect_ready("started in 0.9s"));
+        assert!(!super::detect_ready("Starting ShopApplication"));
     }
 }

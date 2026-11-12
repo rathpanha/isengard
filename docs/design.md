@@ -215,7 +215,28 @@ Add a row here whenever a new shared component is created.
   level adds one `INDENT_COL`. Guide segments use a 1px vertical overlap;
   ListItem `py_0`/`px_0` so hover is full-bleed to the panel edge; row content
   keeps `px_3`. A narrow panel truncates labels instead of compressing the tree.
-- **Status-bar menus (Run / JDK / LSP):** rows are left-aligned full-width
+- **Scrolling popovers:** a Popover is auto-height, so `max_h` +
+  `overflow_y_scrollbar` never overflows — the wrapper just grows. Once a list
+  is long (Java menus > 14 rows — 400px wide, 440px tall when scrolling — LSP > 8, JDK > 9) give it a definite `.h(…)` so
+  it scrolls with a scrollbar.
+- **Run-menu loading:** follows the in-flight rule above — the control that
+  started the work shows Kit's loading spinner (`.loading()`, buttons already
+  have an icon): Play while starting, Restart while the old instance stops,
+  Stop while stopping. Instance rows (status marks, like tool-call rows) use a
+  `Spinner` in place of the green square while starting / stopping. Starting
+  ends on a readiness line or after 45 s; the menu does not grey anything out.
+- **Menu accordions:** a status-bar menu row that owns children (a service
+  and its running instances) is a custom accordion in the N Files pattern, not
+  Kit `Accordion` (its title row toggles the item, but here the row's own click
+  must not toggle, and `size_full` fights the scroll body). Row order: ghost
+  `Play` button (the only start target and always the first item — the row
+  itself is not clickable, so it has no hover fill or pointer), the service
+  **name only** (no folder), muted summary, a small `Checkbox` with a tooltip,
+  ghost `RotateCw` restart, ghost `CircleX` stop, and the ghost `ChevronRight`
+  / `ChevronDown` toggle at the **far right**.
+  Optional items (summary, stop, chevron) are simply absent on idle rows — no
+  padding spacers. Children indent under the name, folded by default.
+- **Status-bar menus (Maven / Gradle / Services / JDK / LSP):** rows are left-aligned full-width
   rows with a hover fill (`menu_row` in `app/render.rs`): optional icon, label
   (truncates), muted detail (module, `:port`), trailing ghost icon button
   (stop, delete). Kit's label-only `Button` centres its text, so do not use it

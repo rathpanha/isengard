@@ -205,6 +205,9 @@ pub struct WorkspaceSession {
     /// Saved Maven / Gradle run configurations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub java_runs: Vec<RunConfig>,
+    /// Services (group keys) that may run several instances at once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub java_multi_services: Vec<String>,
 }
 
 /// A named Maven / Gradle invocation, e.g. `dev` → `spring-boot:run -Dspring-boot.run.profiles=dev`.
@@ -336,6 +339,7 @@ impl Default for WorkspaceSession {
             git_repos: Vec::new(),
             java_home: None,
             java_runs: Vec::new(),
+            java_multi_services: Vec::new(),
         }
     }
 }

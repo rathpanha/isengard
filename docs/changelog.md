@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-12** — Java Services menu: loading spinners while a service starts / stops / restarts, Stop closes the service's terminal, Restart (header + per instance, keeps instance kind and number), service name only (no folder), larger popup (400 × 440).
+- **2026-11-12** — Java Services menu: "Allow multiple instances" is a per-service checkbox (further Spring Boot instances take a free port); only the play button starts a service and the menu stays open; running instances group under their service in a folded-by-default accordion (chevron at the far right, play button always first, no padding spacers).
+- **2026-11-11** — Fix Start all freezing the editor when launched from a terminal: the `mvn` / `gradle` probe shells now run in their own session (interactive bash sent SIGTTIN to our process group).
+- **2026-11-11** — Switching or closing the folder / workspace while a terminal runs a program asks first and stops those programs.
+- **2026-11-11** — Services: Start all, Running rows keep the menu open; closing a terminal tab or quitting while a service runs asks first and stops the service.
+- **2026-11-11** — Java status bar: Maven and Gradle each get their own menu (Material icons), Services (with Running) its own; long popovers (Java, LSP, JDK) now actually scroll.
 - **2026-11-11** — Java Run menu: Running list with detected port + per-service stop and Stop all below it; left-aligned rows; Run File button removed (Services list replaces it).
 - **2026-11-11** — File tree: single-folder chains share one row (Java packages dotted below a source root). Java Run menu lists every runnable service up front, run in its own module.
 - **2026-11-11** — Java: Run File (Maven exec / Gradle / `java File.java`), Stop for task tabs, saved run configurations, missing-Maven/Gradle check, `JAVA_HOME` for new plain terminals.
