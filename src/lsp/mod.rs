@@ -5,6 +5,8 @@
 //! system `PATH`. Install downloads into the app data dir (no global `-g` /
 //! brew / pip into the user toolchain).
 
+#[cfg(test)]
+mod baseline;
 mod bridge;
 mod client;
 mod edits;

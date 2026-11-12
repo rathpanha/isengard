@@ -801,44 +801,7 @@ impl LspHost {
     }
 
     fn build_init(&self, command: &str) -> anyhow::Result<InitializeParams> {
-        let folders = self.folders.clone();
-        if folders.is_empty() {
-            anyhow::bail!("no workspace folder for language server");
-        }
-
-        let workspace_folders: Vec<WorkspaceFolder> = folders
-            .iter()
-            .filter_map(|folder| {
-                let uri = path_to_uri(folder).ok()?;
-                let name = folder
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| folder.display().to_string());
-                Some(WorkspaceFolder { uri, name })
-            })
-            .collect();
-
-        let root_uri = workspace_folders
-            .first()
-            .map(|f| f.uri.clone())
-            .context("workspace folder URI")?;
-
-        #[allow(deprecated)]
-        Ok(InitializeParams {
-            process_id: Some(std::process::id()),
-            root_path: None,
-            root_uri: Some(root_uri),
-            initialization_options: initialization_options(command),
-            capabilities: client_capabilities(),
-            trace: None,
-            workspace_folders: Some(workspace_folders),
-            client_info: Some(lsp_types::ClientInfo {
-                name: "Isengard".into(),
-                version: Some(env!("CARGO_PKG_VERSION").into()),
-            }),
-            locale: None,
-            work_done_progress_params: Default::default(),
-        })
+        initialize_params(&self.folders, command)
     }
 
     fn spawn_event_thread(
@@ -944,6 +907,50 @@ fn initialization_options(command: &str) -> Option<Value> {
         }
     }
     None
+}
+
+/// `initialize` request for `folders` (the first is the root).
+pub(super) fn initialize_params(
+    folders: &[PathBuf],
+    command: &str,
+) -> anyhow::Result<InitializeParams> {
+    if folders.is_empty() {
+        anyhow::bail!("no workspace folder for language server");
+    }
+
+    let workspace_folders: Vec<WorkspaceFolder> = folders
+        .iter()
+        .filter_map(|folder| {
+            let uri = path_to_uri(folder).ok()?;
+            let name = folder
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| folder.display().to_string());
+            Some(WorkspaceFolder { uri, name })
+        })
+        .collect();
+
+    let root_uri = workspace_folders
+        .first()
+        .map(|f| f.uri.clone())
+        .context("workspace folder URI")?;
+
+    #[allow(deprecated)]
+    Ok(InitializeParams {
+        process_id: Some(std::process::id()),
+        root_path: None,
+        root_uri: Some(root_uri),
+        initialization_options: initialization_options(command),
+        capabilities: client_capabilities(),
+        trace: None,
+        workspace_folders: Some(workspace_folders),
+        client_info: Some(lsp_types::ClientInfo {
+            name: "Isengard".into(),
+            version: Some(env!("CARGO_PKG_VERSION").into()),
+        }),
+        locale: None,
+        work_done_progress_params: Default::default(),
+    })
 }
 
 fn client_capabilities() -> ClientCapabilities {

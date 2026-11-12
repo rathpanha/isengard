@@ -136,7 +136,17 @@ What works today:
   app-local one (gets `JAVA_HOME` + `-data`). Verified on Linux with JDK 21
   (initialize round-trip via the ignored `jdtls_recipe_installs_a_launchable_server`
   test); the Windows `.cmd` launcher, macOS, Lombok / annotation processors and
-  real Maven import progress are untested.
+  real Maven import progress are untested. **Measured baseline** (ignored test
+  `lsp/baseline.rs`: `cargo test -- --ignored --nocapture jdtls_baseline`, runs
+  our exact launch on a /tmp copy of a real project — Spring Boot 4.1.1 / Java
+  21, 34 Maven modules, Lombok + MapStruct): jdtls (on JDK 25) imports it in
+  ~7 s, RSS ~1.2 GB / peak ~1.4 GB at `-Xmx1g`, writes **no** Eclipse metadata
+  into the project, reports progress only through `language/status`
+  (`Starting` with a % message → `ProjectStatus` → `Started` → `ServiceReady`;
+  no `$/progress`, which needs the client capability). **Lombok does not work
+  yet**: `@RequiredArgsConstructor` classes get "blank final field may not
+  have been initialized" (4 of 10 sampled files); MapStruct interfaces show no
+  errors.
   **Run menu (Maven / Gradle):** a root with `pom.xml` or `build.gradle*` /
   `settings.gradle*` (Maven wins if both) adds its own status-bar button with the Material Maven /
   Gradle icon (one button per tool present) — its menu lists, per build folder, Maven: clean, compile, test, package, clean install (+

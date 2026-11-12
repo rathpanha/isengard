@@ -123,6 +123,12 @@ impl LspClient {
         Ok((client, incoming_rx))
     }
 
+    /// OS process id of the server (memory probes in the Java baseline test).
+    #[cfg(test)]
+    pub fn pid(&self) -> Option<u32> {
+        self.child.lock().ok().map(|c| c.id())
+    }
+
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }

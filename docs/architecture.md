@@ -337,6 +337,7 @@ src/
 │   ├── registry.rs      Language → default ServerSpec + config overrides
 │   ├── install.rs       app-local download / resolve (bin then PATH); Bun + jdtls recipes
 │   ├── java.rs          jdtls launch: server JDK (21+), runtimes, -Xmx, -data dir
+│   ├── baseline.rs      (test, ignored) jdtls on a real Maven project: import / RSS / diagnostics
 │   ├── edits.rs         apply TextEdit / WorkspaceEdit to buffers
 │   ├── protocol.rs      Content-Length framing
 │   └── uri.rs           file:// path ↔ Uri
