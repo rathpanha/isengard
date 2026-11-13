@@ -44,6 +44,8 @@ pub struct RepoStatus {
     pub ahead: u32,
     /// Commits on `@{upstream}` not in HEAD (`0` if no upstream).
     pub behind: u32,
+    /// `false` for a named local branch with no `@{upstream}` (needs publishing).
+    pub has_upstream: bool,
     /// Merge / rebase / cherry-pick in progress (if any).
     pub op: Option<RepoOp>,
     /// Set when `git` itself failed for this repo.
@@ -227,6 +229,7 @@ pub fn load_repo_status(root: &Path) -> RepoStatus {
     let branch =
         git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|_| "HEAD".into());
     let (ahead, behind) = ahead_behind_upstream(root);
+    let has_upstream = branch == "HEAD" || has_upstream(root);
     let op = detect_repo_op(root);
     match git(root, &["status", "--porcelain=v1", "-uall"]) {
         Ok(out) => RepoStatus {
@@ -235,6 +238,7 @@ pub fn load_repo_status(root: &Path) -> RepoStatus {
             changes: parse_porcelain(&out, root),
             ahead,
             behind,
+            has_upstream,
             op,
             error: None,
         },
@@ -244,6 +248,7 @@ pub fn load_repo_status(root: &Path) -> RepoStatus {
             changes: Vec::new(),
             ahead,
             behind,
+            has_upstream,
             op,
             error: Some(error),
         },
@@ -311,6 +316,11 @@ pub fn ahead_behind_upstream(root: &Path) -> (u32, u32) {
     let ahead = rev_list_count(root, "@{upstream}..HEAD");
     let behind = rev_list_count(root, "HEAD..@{upstream}");
     (ahead, behind)
+}
+
+/// Whether the current branch tracks a remote branch.
+pub fn has_upstream(root: &Path) -> bool {
+    git(root, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_ok()
 }
 
 fn rev_list_count(root: &Path, range: &str) -> u32 {
@@ -457,7 +467,19 @@ pub fn push(root: &Path) -> Result<String, String> {
     if detect_repo_op(root).is_some() {
         return Err("Cannot push while a merge/rebase/cherry-pick is in progress".into());
     }
-    git(root, &["push"])
+    if has_upstream(root) {
+        return git(root, &["push"]);
+    }
+    // Unpublished branch: create it on the remote and track it.
+    let remotes = git(root, &["remote"])?;
+    let mut names = remotes.lines().map(str::trim).filter(|r| !r.is_empty());
+    let first = names.next().ok_or("No remote configured to publish to")?;
+    let remote = if first == "origin" || names.clone().all(|r| r != "origin") {
+        first
+    } else {
+        "origin"
+    };
+    git(root, &["push", "-u", remote, "HEAD"])
 }
 
 /// Discard one change: untracked → delete; tracked → restore from `HEAD`
@@ -1518,6 +1540,8 @@ DD both_deleted.rs\n";
                 .success()
         );
         assert_eq!(ahead_behind_upstream(&root), (0, 0), "no upstream yet");
+        assert!(!has_upstream(&root));
+        assert!(!load_repo_status(&root).has_upstream);
 
         assert!(
             Command::new("git")

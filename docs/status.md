@@ -138,7 +138,7 @@ What works today:
   Co-Authored-By / Generated-with / Claude-Session trailers) / Commit from
   selection;
   Open File + discard;
-  Pull(N)/Push(N) (push/pull/fetch/clone use the interactive shell's `SSH_AUTH_SOCK` on
+  Pull(N)/Push(N) (Push becomes "Publish Branch" for a branch with no upstream; runs `push -u origin HEAD`) (push/pull/fetch/clone use the interactive shell's `SSH_AUTH_SOCK` on
   unix, so SSH agents set in `~/.bashrc` work from a desktop launch);
   side-by-side diff preview (scroll locked; active row
   highlighted in the change list; restored across sessions while still

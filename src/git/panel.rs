@@ -520,6 +520,7 @@ impl GitPanel {
             changes,
             ahead,
             behind,
+            has_upstream: true,
             op: None,
             error: None,
         };
@@ -1229,7 +1230,9 @@ impl Render for GitPanel {
                                             .child(
                                                 with_loading(
                                                     outline_btn(format!("git-push-{si}").into()).label(
-                                                        if section.status.ahead > 0 {
+                                                        if !section.status.has_upstream {
+                                                            "Publish Branch".into()
+                                                        } else if section.status.ahead > 0 {
                                                             format!("Push ({})", section.status.ahead)
                                                         } else {
                                                             "Push".into()
