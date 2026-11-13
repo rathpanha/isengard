@@ -3,6 +3,8 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-13** — Release prep v0.2.12 (Windows static MSVC CRT): version bump,
+  `docs/releases/v0.2.12.md`, status release lines.
 - **2026-11-13** — Windows: link the MSVC CRT statically (`+crt-static`) so
   zip / `install-windows.ps1` / in-app updates work on clean PCs without
   `vcruntime140.dll` (`.cargo/config.toml`, `scripts/package-windows.ps1`).
