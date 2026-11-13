@@ -3,6 +3,7 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-13** — Release prep v0.2.11 (Publish Branch, LSP bracket-path fix, wrapped terminal URLs): version bump, `docs/releases/v0.2.11.md`, status release lines.
 - **2026-11-13** — LSP: files under paths with `[ ] ^ |` (e.g. Next.js `[locale]`) now get a language server; their `file://` URI was rejected, leaving Go to Definition / Code Actions disabled.
 - **2026-11-13** — Git panel: Push button reads "Publish Branch" for local branches with no upstream and publishes with `git push -u`.
 - **2026-11-06** — Release prep v0.2.10 (agent chat reopen fix): version bump, `docs/releases/v0.2.10.md`, status release lines.
