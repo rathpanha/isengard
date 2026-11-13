@@ -230,10 +230,14 @@ Settings: `dirs::config_dir()/isengard/config.json` (macOS:
    reminder: `.\scripts\install-dev-icon.ps1`.
 5. Release builds are GUI-subsystem (`windows_subsystem = "windows"` in
    `main.rs`, release only) so no console window opens behind the editor.
-   `.\scripts\package-windows.ps1` writes `dist\windows\isengard-<ver>-windows-x86_64.zip`
-   (`isengard.exe`, `LICENSE`, `credits.md`); the workflow's `windows` job
-   (`windows-latest`) builds and packages only — tests/clippy run on the Linux
-   and macOS jobs because the suite assumes Unix paths in places.
+   MSVC CRT is linked **statically** (`+crt-static` in `.cargo/config.toml` and
+   `scripts/package-windows.ps1`) so the zip/`install-windows.ps1`/in-app updater
+   do not need `vcruntime140.dll` on a clean PC (updater only replaces
+   `isengard.exe`). `.\scripts\package-windows.ps1` writes
+   `dist\windows\isengard-<ver>-windows-x86_64.zip` (`isengard.exe`, `LICENSE`,
+   `credits.md`); the workflow's `windows` job (`windows-latest`) builds and
+   packages only — tests/clippy run on the Linux and macOS jobs because the
+   suite assumes Unix paths in places.
 
 **Windows distribution has no code-signing certificate** (costs money). A
 browser-downloaded zip gets SmartScreen's "Windows protected your PC"

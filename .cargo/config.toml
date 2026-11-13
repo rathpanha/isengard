@@ -1,0 +1,5 @@
+# Dynamic MSVC CRT needs vcruntime140.dll on the machine. Clean Windows (and
+# our zip/updater, which only ship/replace isengard.exe) do not install that.
+# Static CRT keeps the release self-contained.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

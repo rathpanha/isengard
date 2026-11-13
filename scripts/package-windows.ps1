@@ -1,5 +1,7 @@
 # Build the Windows release zip: dist\windows\isengard-<ver>-windows-x86_64.zip
 # (isengard.exe + LICENSE + credits). Unsigned: see scripts/install-windows.ps1.
+# Links the MSVC CRT statically (+crt-static) so clean PCs need no vcruntime140.dll
+# (matches .cargo/config.toml; set here too because RUSTFLAGS overrides config).
 # Env: VERSION (default: Cargo.toml version).
 $ErrorActionPreference = 'Stop'
 
@@ -10,6 +12,15 @@ $Version = $env:VERSION
 if (-not $Version) {
     $Version = (Select-String -Path 'Cargo.toml' -Pattern '^version = "(.*)"' |
         Select-Object -First 1).Matches[0].Groups[1].Value
+}
+
+$CrtStatic = '-C target-feature=+crt-static'
+if ($env:RUSTFLAGS) {
+    if ($env:RUSTFLAGS -notmatch 'crt-static') {
+        $env:RUSTFLAGS = "$env:RUSTFLAGS $CrtStatic"
+    }
+} else {
+    $env:RUSTFLAGS = $CrtStatic
 }
 
 cargo build --release

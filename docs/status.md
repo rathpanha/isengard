@@ -342,7 +342,9 @@ What works today:
   `process::command`; unverified whether it flashes a console window.
 - Terminal scrollback UI is still minimal.
 - Windows installer / updater: not yet smoke-tested on a clean PC (needs a
-  second release to exercise update-to).
+  second release to exercise update-to). Release builds use static MSVC CRT
+  (`+crt-static`) so missing `vcruntime140.dll` should not block startup; still
+  verify once on a clean VM.
 
 UI test coverage is an agent rule
 ([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
