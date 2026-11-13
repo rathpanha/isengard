@@ -3,11 +3,17 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-13** — Release prep v0.2.13 (Windows CRT DLLs beside exe): version
+  bump, `docs/releases/v0.2.13.md`, status release lines.
+- **2026-11-13** — Windows: revert `+crt-static` (v0.2.12 silent crash on open);
+  ship `vcruntime140.dll` / `vcruntime140_1.dll` / `msvcp140.dll` in the zip and
+  extract them on update (`package-windows.ps1`, `install_windows_exe`).
 - **2026-11-13** — Release prep v0.2.12 (Windows static MSVC CRT): version bump,
   `docs/releases/v0.2.12.md`, status release lines.
 - **2026-11-13** — Windows: link the MSVC CRT statically (`+crt-static`) so
   zip / `install-windows.ps1` / in-app updates work on clean PCs without
   `vcruntime140.dll` (`.cargo/config.toml`, `scripts/package-windows.ps1`).
+  **Superseded by v0.2.13** — static CRT crashed on open with GPUI/D3D.
 - **2026-11-13** — Release prep v0.2.11 (Publish Branch, LSP bracket-path fix, wrapped terminal URLs): version bump, `docs/releases/v0.2.11.md`, status release lines.
 - **2026-11-13** — LSP: files under paths with `[ ] ^ |` (e.g. Next.js `[locale]`) now get a language server; their `file://` URI was rejected, leaving Go to Definition / Code Actions disabled.
 - **2026-11-13** — Git panel: Push button reads "Publish Branch" for local branches with no upstream and publishes with `git push -u`.

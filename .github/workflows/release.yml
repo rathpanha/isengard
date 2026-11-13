@@ -163,8 +163,8 @@ jobs:
             dist/macos/*.dmg
             dist/macos/*.tar.gz
 
-  # Unsigned x86_64 zip (isengard.exe + LICENSE + credits). Installed by
-  # scripts/install-windows.ps1 and updated in place by the app.
+  # Unsigned x86_64 zip (isengard.exe + MSVC CRT DLLs + LICENSE + credits).
+  # Installed by scripts/install-windows.ps1 and updated in place by the app.
   windows:
     runs-on: windows-latest
     defaults:

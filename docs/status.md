@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.2.12): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.2.13): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude + Cursor Agent panel (ACP), and in-app updates on Linux /
 macOS / Windows. Early phased plan (egui → Kit → Agent v1) is finished — do
@@ -342,9 +342,9 @@ What works today:
   `process::command`; unverified whether it flashes a console window.
 - Terminal scrollback UI is still minimal.
 - Windows installer / updater: not yet smoke-tested on a clean PC (needs a
-  second release to exercise update-to). Release builds use static MSVC CRT
-  (`+crt-static`) so missing `vcruntime140.dll` should not block startup; still
-  verify once on a clean VM.
+  second release to exercise update-to). v0.2.12’s `+crt-static` linked but
+  crashed on open; shipping CRT DLLs beside the exe instead (from v0.2.13).
+  Still verify once on a clean VM.
 
 UI test coverage is an agent rule
 ([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
@@ -353,7 +353,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.2.12 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.2.13 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -364,13 +364,13 @@ not a product TODO. License is **GPL-3.0-only** — see
   `windows` CI job + `scripts/install-windows.ps1` + in-app updater
   (`InstallKind::WinExe`); unsigned (see [architecture.md](architecture.md)).
   Still needs a smoke test on a clean PC (updater needs a second release to
-  update to). Only x86_64.
+  update to). Only x86_64. CRT DLLs ship in the zip (not `+crt-static`).
 - **macOS:** no Apple Developer ID (see [architecture.md](architecture.md) for
   the signing / Gatekeeper trade-offs); signed with the self-signed cert from
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.2.12.md](releases/v0.2.12.md). Human install:
+- Notes: [docs/releases/v0.2.13.md](releases/v0.2.13.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

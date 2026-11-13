@@ -629,10 +629,12 @@ fn old_exe_path(exe: &Path) -> PathBuf {
     exe.with_file_name(name)
 }
 
-/// Replace `exe` with `isengard.exe` from the release zip. Windows will not
+/// Replace `exe` with `isengard.exe` from the release zip, and write any other
+/// top-level files (MSVC CRT DLLs, LICENSE, …) beside it. Windows will not
 /// overwrite a running executable but does allow renaming it, so the old file
 /// moves to `isengard.exe.old` (restored if the swap fails).
 pub fn install_windows_exe(zip_path: &Path, exe: &Path) -> Result<()> {
+    let dest_dir = exe.parent().context("exe has no parent")?;
     let file = fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(file).context("read zip")?;
     let mut name = exe.file_name().unwrap_or_default().to_os_string();
@@ -641,22 +643,31 @@ pub fn install_windows_exe(zip_path: &Path, exe: &Path) -> Result<()> {
     let mut found = false;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).context("zip entry")?;
-        let is_exe = entry.is_file()
-            && entry.enclosed_name().is_some_and(|p| {
-                p.file_name()
-                    .is_some_and(|n| n.eq_ignore_ascii_case("isengard.exe"))
-            });
-        if !is_exe {
+        if !entry.is_file() {
             continue;
         }
+        let Some(rel) = entry.enclosed_name() else {
+            continue;
+        };
+        // Flat zip only (no nested paths) — matches `package-windows.ps1`.
+        if rel.components().count() != 1 {
+            continue;
+        }
+        let file_name = rel.as_os_str();
+        let is_exe = file_name.eq_ignore_ascii_case("isengard.exe");
+        let out_path = if is_exe {
+            found = true;
+            staged.clone()
+        } else {
+            dest_dir.join(file_name)
+        };
         let mut out =
-            fs::File::create(&staged).with_context(|| format!("create {}", staged.display()))?;
-        std::io::copy(&mut entry, &mut out).context("extract exe")?;
-        out.flush().context("flush exe")?;
-        found = true;
-        break;
+            fs::File::create(&out_path).with_context(|| format!("create {}", out_path.display()))?;
+        std::io::copy(&mut entry, &mut out).context("extract zip entry")?;
+        out.flush().context("flush zip entry")?;
     }
     if !found {
+        let _ = fs::remove_file(&staged);
         bail!("archive has no isengard.exe");
     }
     let old = old_exe_path(exe);
@@ -1076,7 +1087,14 @@ mod tests {
         fs::write(&exe, b"old").unwrap();
         fs::write(dir.path().join("isengard.exe.old"), b"older").unwrap();
         let zip = dir.path().join("isengard-0.2.0-windows-x86_64.zip");
-        windows_zip(&zip, &[("LICENSE", b"gpl"), ("isengard.exe", b"new")]);
+        windows_zip(
+            &zip,
+            &[
+                ("LICENSE", b"gpl"),
+                ("vcruntime140.dll", b"crt"),
+                ("isengard.exe", b"new"),
+            ],
+        );
 
         install_windows_exe(&zip, &exe).unwrap();
 
@@ -1085,6 +1103,11 @@ mod tests {
             fs::read(dir.path().join("isengard.exe.old")).unwrap(),
             b"old"
         );
+        assert_eq!(
+            fs::read(dir.path().join("vcruntime140.dll")).unwrap(),
+            b"crt"
+        );
+        assert_eq!(fs::read(dir.path().join("LICENSE")).unwrap(), b"gpl");
         assert!(!dir.path().join("isengard.exe.update").exists());
         assert!(!zip.exists(), "zip removed after install");
     }

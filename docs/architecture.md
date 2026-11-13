@@ -230,14 +230,16 @@ Settings: `dirs::config_dir()/isengard/config.json` (macOS:
    reminder: `.\scripts\install-dev-icon.ps1`.
 5. Release builds are GUI-subsystem (`windows_subsystem = "windows"` in
    `main.rs`, release only) so no console window opens behind the editor.
-   MSVC CRT is linked **statically** (`+crt-static` in `.cargo/config.toml` and
-   `scripts/package-windows.ps1`) so the zip/`install-windows.ps1`/in-app updater
-   do not need `vcruntime140.dll` on a clean PC (updater only replaces
-   `isengard.exe`). `.\scripts\package-windows.ps1` writes
-   `dist\windows\isengard-<ver>-windows-x86_64.zip` (`isengard.exe`, `LICENSE`,
-   `credits.md`); the workflow's `windows` job (`windows-latest`) builds and
-   packages only — tests/clippy run on the Linux and macOS jobs because the
-   suite assumes Unix paths in places.
+   Do **not** use `+crt-static` for shipping (v0.2.12 did; GPUI/D3D then
+   crashed on open with no dialog). Instead `scripts/package-windows.ps1`
+   copies the MSVC CRT DLLs (`vcruntime140.dll`, `vcruntime140_1.dll`,
+   `msvcp140.dll`) from the VS redist folder into the zip beside
+   `isengard.exe`, and `install_windows_exe` extracts those top-level files
+   on update. `.\scripts\package-windows.ps1` writes
+   `dist\windows\isengard-<ver>-windows-x86_64.zip` (`isengard.exe`, CRT DLLs,
+   `LICENSE`, `credits.md`); the workflow's `windows` job (`windows-latest`)
+   builds and packages only — tests/clippy run on the Linux and macOS jobs
+   because the suite assumes Unix paths in places.
 
 **Windows distribution has no code-signing certificate** (costs money). A
 browser-downloaded zip gets SmartScreen's "Windows protected your PC"
@@ -248,11 +250,12 @@ into `%LOCALAPPDATA%\Programs\Isengard` (no admin), adds a Start Menu shortcut
 and the folder to the user `PATH`. It embeds the minisign public key — keep it
 equal to `update::PUBLIC_KEY`. In-app updates (`InstallKind::WinExe`,
 `classify_windows`: writable folder and not a `target\` build) extract
-`isengard.exe` from `…-windows-x86_64.zip`, rename the running exe to
-`isengard.exe.old` (Windows allows renaming, not overwriting, a running exe),
-move the new one in, restore on failure, then restart; `cleanup_old_exe` removes
-the `.old` at the next launch. Free signing is possible later through the
-SignPath Foundation (open-source projects) — not applied for yet.
+`isengard.exe` and other top-level zip files (CRT DLLs, LICENSE, …) from
+`…-windows-x86_64.zip`, rename the running exe to `isengard.exe.old`
+(Windows allows renaming, not overwriting, a running exe), move the new one
+in, restore on failure, then restart; `cleanup_old_exe` removes the `.old` at
+the next launch. Free signing is possible later through the SignPath
+Foundation (open-source projects) — not applied for yet.
 
 ### App icon matrix (`cargo run`)
 
