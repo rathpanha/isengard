@@ -534,7 +534,13 @@ impl IsengardApp {
 
         app.refresh_menus(cx);
         app.check_for_updates_on_start(window, cx);
-        app.check_bun_on_start(window, cx);
+        // `new` runs inside `open_window`'s build closure, before the window's
+        // Root exists: opening a dialog now panics ("component window state is
+        // missing"), which is what a PC without Bun hit on every launch.
+        let this = cx.entity().downgrade();
+        window.defer(cx, move |window, cx| {
+            let _ = this.update(cx, |app, cx| app.check_bun_on_start(window, cx));
+        });
         app
     }
 }

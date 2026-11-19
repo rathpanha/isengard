@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.2.15): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.2.16): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude + Cursor Agent panel (ACP), and in-app updates on Linux /
 macOS / Windows. Early phased plan (egui → Kit → Agent v1) is finished — do
@@ -344,9 +344,11 @@ What works today:
 - Windows installer / updater: not yet smoke-tested on a clean PC (needs a
   second release to exercise update-to). v0.2.12’s `+crt-static` linked but
   crashed on open; shipping CRT DLLs beside the exe instead (from v0.2.13).
-  Still verify once on a clean VM. v0.2.13 still crashes silently on open on a
-  Windows 10 PC (CRT DLLs present); v0.2.15 writes
-  `%LOCALAPPDATA%\isengard\isengard.log` (info logs + panic backtrace) to find why.
+  Still verify once on a clean VM. v0.2.12–v0.2.15 panicked on open on any PC
+  without Bun (the Set up Bun dialog opened inside `IsengardApp::new`, before
+  the window Root existed); fixed in v0.2.16 by deferring it. Windows builds
+  write `%LOCALAPPDATA%\isengard\isengard.log` (info logs + panic backtrace).
+  Not yet confirmed on Windows.
 
 UI test coverage is an agent rule
 ([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
@@ -355,7 +357,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.2.15 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.2.16 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -372,7 +374,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.2.15.md](releases/v0.2.15.md). Human install:
+- Notes: [docs/releases/v0.2.16.md](releases/v0.2.16.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

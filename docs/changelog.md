@@ -3,6 +3,12 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-19** — Release prep v0.2.16 (Windows startup panic fix): version
+  bump, `docs/releases/v0.2.16.md`, status release lines.
+- **2026-11-19** — Fix startup panic on PCs without Bun ("component window state
+  is missing"): `check_bun_on_start` opened a dialog inside `IsengardApp::new`,
+  before the window Root existed; now deferred with `window.defer`. This was the
+  Windows "crashes on open, no error" bug (found via the v0.2.15 log).
 - **2026-11-19** — Release prep v0.2.15 (Windows crash log; v0.2.14 never
   published — its Windows build failed to compile): version bump,
   `docs/releases/v0.2.15.md`, status release lines.
