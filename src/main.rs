@@ -115,8 +115,43 @@ impl AssetSource for AppAssets {
     }
 }
 
-fn main() {
+/// Release Windows builds have no console, so a panic or a failed window open
+/// vanishes. Log everything (info+, `RUST_LOG` overrides) and panics to
+/// `<local data>\isengard\isengard.log`, truncated each launch.
+#[cfg(windows)]
+fn init_logging() {
+    use std::io::Write;
+    let file = dirs::data_local_dir().and_then(|dir| {
+        let dir = dir.join("isengard");
+        std::fs::create_dir_all(&dir).ok()?;
+        std::fs::File::create(dir.join("isengard.log")).ok()
+    });
+    let Some((file, sink)) = file.and_then(|f| Some((f.try_clone().ok()?, f))) else {
+        env_logger::init();
+        return;
+    };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .target(env_logger::Target::Pipe(Box::new(sink)))
+        .init();
+    let mut panic_file = file;
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = writeln!(
+            panic_file,
+            "PANIC: {info}\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+        let _ = panic_file.flush();
+    }));
+    log::info!("isengard {} starting", env!("CARGO_PKG_VERSION"));
+}
+
+#[cfg(not(windows))]
+fn init_logging() {
     env_logger::init();
+}
+
+fn main() {
+    init_logging();
     // Before any thread starts: set_var is only sound while single-threaded.
     shell_env::import_login_path();
     update::cleanup_old_exe();
@@ -174,6 +209,7 @@ fn main() {
                 cx.new(|cx| IsengardApp::new(config, initial_path, app_menu_bar, window, cx))
             })
             .expect("failed to open window");
+            log::info!("window opened");
             cx.activate(true);
         });
 }
