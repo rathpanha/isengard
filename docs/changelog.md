@@ -3,8 +3,9 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
-- **2026-11-19** — Release prep v0.2.14 (Windows crash log): version bump,
-  `docs/releases/v0.2.14.md`, status release lines.
+- **2026-11-19** — Release prep v0.2.15 (Windows crash log; v0.2.14 never
+  published — its Windows build failed to compile): version bump,
+  `docs/releases/v0.2.15.md`, status release lines.
 - **2026-11-19** — Windows: release builds log to
   `%LOCALAPPDATA%\isengard\isengard.log` and record panics with a backtrace
   (`init_logging` in `src/main.rs`), since the GUI-subsystem exe has no console

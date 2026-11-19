@@ -133,14 +133,16 @@ fn init_logging() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .target(env_logger::Target::Pipe(Box::new(sink)))
         .init();
-    let mut panic_file = file;
+    let panic_file = file;
     std::panic::set_hook(Box::new(move |info| {
+        // `&File` implements `Write`; the hook is `Fn`, so no `&mut` capture.
+        let mut out = &panic_file;
         let _ = writeln!(
-            panic_file,
+            out,
             "PANIC: {info}\n{}",
             std::backtrace::Backtrace::force_capture()
         );
-        let _ = panic_file.flush();
+        let _ = out.flush();
     }));
     log::info!("isengard {} starting", env!("CARGO_PKG_VERSION"));
 }
