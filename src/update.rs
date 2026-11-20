@@ -622,77 +622,121 @@ pub fn install_in_place(tarball: &Path, exe: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Where the previous exe waits until the next update or launch removes it.
-fn old_exe_path(exe: &Path) -> PathBuf {
-    let mut name = exe.file_name().unwrap_or_default().to_os_string();
+/// Where a replaced file waits until the next update or launch removes it.
+fn old_path(file: &Path) -> PathBuf {
+    let mut name = file.file_name().unwrap_or_default().to_os_string();
     name.push(".old");
-    exe.with_file_name(name)
+    file.with_file_name(name)
 }
 
-/// Replace `exe` with `isengard.exe` from the release zip, and write any other
+/// Undo the swaps made so far and drop every staged file.
+fn roll_back_windows_install(swapped: &[(PathBuf, bool)], staged: &[(PathBuf, PathBuf)]) {
+    for (dest, had_old) in swapped.iter().rev() {
+        if *had_old {
+            let _ = fs::rename(old_path(dest), dest);
+        } else {
+            let _ = fs::remove_file(dest);
+        }
+    }
+    for (tmp, _) in staged {
+        let _ = fs::remove_file(tmp);
+    }
+}
+
+/// Replace `exe` with `isengard.exe` from the release zip, and the other
 /// top-level files (MSVC CRT DLLs, LICENSE, …) beside it. Windows will not
-/// overwrite a running executable but does allow renaming it, so the old file
-/// moves to `isengard.exe.old` (restored if the swap fails).
+/// overwrite a file a running process has open (the exe, and the CRT DLLs it
+/// loaded) but does allow renaming it, so every replaced file moves to
+/// `<name>.old` first. Everything is staged before anything is swapped, and a
+/// failed swap puts the old files back.
 pub fn install_windows_exe(zip_path: &Path, exe: &Path) -> Result<()> {
     let dest_dir = exe.parent().context("exe has no parent")?;
     let file = fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(file).context("read zip")?;
-    let mut name = exe.file_name().unwrap_or_default().to_os_string();
-    name.push(".update");
-    let staged = exe.with_file_name(name);
+    // (staged copy, final path)
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut found = false;
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).context("zip entry")?;
-        if !entry.is_file() {
-            continue;
+    let extracted = (|| -> Result<()> {
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).context("zip entry")?;
+            if !entry.is_file() {
+                continue;
+            }
+            let Some(rel) = entry.enclosed_name() else {
+                continue;
+            };
+            // Flat zip only (no nested paths) — matches `package-windows.ps1`.
+            if rel.components().count() != 1 {
+                continue;
+            }
+            let file_name = rel.as_os_str();
+            let dest = if file_name.eq_ignore_ascii_case("isengard.exe") {
+                found = true;
+                exe.to_path_buf()
+            } else {
+                dest_dir.join(file_name)
+            };
+            let mut tmp_name = dest.file_name().unwrap_or_default().to_os_string();
+            tmp_name.push(".update");
+            let tmp = dest.with_file_name(tmp_name);
+            let mut out =
+                fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+            staged.push((tmp, dest));
+            std::io::copy(&mut entry, &mut out).context("extract zip entry")?;
+            out.flush().context("flush zip entry")?;
         }
-        let Some(rel) = entry.enclosed_name() else {
-            continue;
-        };
-        // Flat zip only (no nested paths) — matches `package-windows.ps1`.
-        if rel.components().count() != 1 {
-            continue;
+        if !found {
+            bail!("archive has no isengard.exe");
         }
-        let file_name = rel.as_os_str();
-        let is_exe = file_name.eq_ignore_ascii_case("isengard.exe");
-        let out_path = if is_exe {
-            found = true;
-            staged.clone()
-        } else {
-            dest_dir.join(file_name)
-        };
-        let mut out =
-            fs::File::create(&out_path).with_context(|| format!("create {}", out_path.display()))?;
-        std::io::copy(&mut entry, &mut out).context("extract zip entry")?;
-        out.flush().context("flush zip entry")?;
+        Ok(())
+    })();
+    if let Err(err) = extracted {
+        roll_back_windows_install(&[], &staged);
+        return Err(err);
     }
-    if !found {
-        let _ = fs::remove_file(&staged);
-        bail!("archive has no isengard.exe");
-    }
-    let old = old_exe_path(exe);
-    let _ = fs::remove_file(&old);
-    if let Err(err) = fs::rename(exe, &old) {
-        let _ = fs::remove_file(&staged);
-        return Err(err).with_context(|| format!("move aside {}", exe.display()));
-    }
-    if let Err(err) = fs::rename(&staged, exe) {
-        let _ = fs::rename(&old, exe);
-        let _ = fs::remove_file(&staged);
-        return Err(err).with_context(|| format!("replace {}", exe.display()));
+    let mut swapped: Vec<(PathBuf, bool)> = Vec::new();
+    for (tmp, dest) in &staged {
+        let old = old_path(dest);
+        let _ = fs::remove_file(&old);
+        let had_old = dest.exists();
+        if had_old && let Err(err) = fs::rename(dest, &old) {
+            roll_back_windows_install(&swapped, &staged);
+            return Err(err).with_context(|| format!("move aside {}", dest.display()));
+        }
+        if let Err(err) = fs::rename(tmp, dest) {
+            if had_old {
+                let _ = fs::rename(&old, dest);
+            }
+            roll_back_windows_install(&swapped, &staged);
+            return Err(err).with_context(|| format!("replace {}", dest.display()));
+        }
+        swapped.push((dest.clone(), had_old));
     }
     let _ = fs::remove_file(zip_path);
     Ok(())
 }
 
-/// Remove the `.old` exe an earlier update left behind (Windows only; it was
-/// still running when it was renamed, so it could not be deleted then).
+/// Remove the `.old` files an earlier update left behind (Windows only; the
+/// exe and DLLs were in use when they were renamed, so they could not be
+/// deleted then).
 pub fn cleanup_old_exe() {
     if !cfg!(windows) {
         return;
     }
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = fs::remove_file(old_exe_path(&exe));
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if name.ends_with(".exe.old") || name.ends_with(".dll.old") {
+            let _ = fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -1113,6 +1157,31 @@ mod tests {
     }
 
     #[test]
+    fn replaces_existing_crt_dll_by_moving_it_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("isengard.exe");
+        fs::write(&exe, b"old").unwrap();
+        fs::write(dir.path().join("vcruntime140.dll"), b"oldcrt").unwrap();
+        let zip = dir.path().join("t.zip");
+        windows_zip(
+            &zip,
+            &[("vcruntime140.dll", b"crt"), ("isengard.exe", b"new")],
+        );
+
+        install_windows_exe(&zip, &exe).unwrap();
+
+        assert_eq!(
+            fs::read(dir.path().join("vcruntime140.dll")).unwrap(),
+            b"crt"
+        );
+        assert_eq!(
+            fs::read(dir.path().join("vcruntime140.dll.old")).unwrap(),
+            b"oldcrt"
+        );
+        assert!(!dir.path().join("vcruntime140.dll.update").exists());
+    }
+
+    #[test]
     fn zip_without_exe_leaves_windows_exe_alone() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("isengard.exe");
@@ -1122,6 +1191,11 @@ mod tests {
 
         assert!(install_windows_exe(&zip, &exe).is_err());
         assert_eq!(fs::read(&exe).unwrap(), b"old");
+        assert!(
+            !dir.path().join("LICENSE").exists(),
+            "nothing half-installed"
+        );
+        assert!(!dir.path().join("LICENSE.update").exists());
         assert!(!dir.path().join("isengard.exe.old").exists());
     }
 

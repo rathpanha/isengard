@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.2.17): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.2.18): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude + Cursor Agent panel (ACP), and in-app updates on Linux /
 macOS / Windows. Early phased plan (egui → Kit → Agent v1) is finished — do
@@ -313,7 +313,7 @@ What works today:
   swap in place, then offer Restart now (unsaved-changes prompt first;
   workspace reopens). On macOS an `Isengard.app` in a writable folder (e.g.
   `/Applications`) swaps the whole bundle (no password, no Gatekeeper prompt).
-  Windows portable install renames the running `.exe` aside and replaces it.
+  Windows portable install renames the running `.exe` and its loaded CRT DLLs aside (`*.old`) and replaces them.
   RPM/DEB installs download + verify, then **Install now** asks for the sudo
   password in a masked dialog, runs `sudo -S <manager> install -y <file>` with
   live output (wrong password re-asks) and restarts into the new binary; Copy
@@ -352,7 +352,8 @@ What works today:
   Anything that opens a dialog or toast must not run synchronously in `new`
   (`window.defer` it). Windows builds write
   `%LOCALAPPDATA%\isengard\isengard.log` (info logs + panic backtrace). Still
-  to smoke-test on Windows: Bun install, agent panel (console flash?),
+  to smoke-test on Windows (the updater from ≤ v0.2.17 fails on the loaded CRT
+  DLLs; fixed after, so that one jump needs a manual reinstall): Bun install, agent panel (console flash?),
   terminal, LSP Install, and the updater (needs a later release).
 
 UI test coverage is an agent rule
@@ -362,7 +363,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.2.17 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.2.18 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -379,7 +380,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.2.17.md](releases/v0.2.17.md). Human install:
+- Notes: [docs/releases/v0.2.18.md](releases/v0.2.18.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

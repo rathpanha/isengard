@@ -3,6 +3,14 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-20** — Release prep v0.2.18 (Windows updater fix): version bump,
+  `docs/releases/v0.2.18.md`, status release lines.
+- **2026-11-20** — Windows updater: `Update failed: create …vcruntime140.dll …
+  being used by another process (os error 32)`. The running app has the CRT
+  DLLs loaded, so `install_windows_exe` now stages every zip file, renames each
+  existing file to `<name>.old`, swaps, and rolls back on failure;
+  `cleanup_old_exe` removes `*.exe.old` / `*.dll.old` at launch. An install
+  already running the old updater must be reinstalled once by hand.
 - **2026-11-20** — Release prep v0.2.17 (startup-path toast fix, Windows
   notifications): version bump, `docs/releases/v0.2.17.md`, status release lines.
 - **2026-11-20** — Startup with a path argument: `open_folder` /

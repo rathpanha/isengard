@@ -251,9 +251,10 @@ and the folder to the user `PATH`. It embeds the minisign public key — keep it
 equal to `update::PUBLIC_KEY`. In-app updates (`InstallKind::WinExe`,
 `classify_windows`: writable folder and not a `target\` build) extract
 `isengard.exe` and other top-level zip files (CRT DLLs, LICENSE, …) from
-`…-windows-x86_64.zip`, rename the running exe to `isengard.exe.old`
-(Windows allows renaming, not overwriting, a running exe), move the new one
-in, restore on failure, then restart; `cleanup_old_exe` removes the `.old` at
+`…-windows-x86_64.zip` to `<name>.update`, then rename each existing file
+(the running exe and the CRT DLLs it loaded) to `<name>.old` (Windows allows
+renaming, not overwriting, a file in use), move the new ones in, restore all on
+failure, then restart; `cleanup_old_exe` removes `*.exe.old` / `*.dll.old` at
 the next launch. Free signing is possible later through the SignPath
 Foundation (open-source projects) — not applied for yet.
 
