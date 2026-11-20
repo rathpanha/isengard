@@ -3,6 +3,13 @@
 Newest first. Append **one** bullet per change here only — never duplicate in
 status, architecture, or design. See [README.md](README.md).
 
+- **2026-11-20** — Release prep v0.2.17 (startup-path toast fix, Windows
+  notifications): version bump, `docs/releases/v0.2.17.md`, status release lines.
+- **2026-11-20** — Startup with a path argument: `open_folder` /
+  `open_workspace_file` / `open_file` now run via `window.defer` (a bad path
+  toasts, and toasts need the window Root that does not exist yet inside `new`).
+- **2026-11-20** — Windows: agent-done notification (PowerShell toast + chime
+  via `SoundPlayer`, `src/notify.rs`); untested on a real PC.
 - **2026-11-19** — Release prep v0.2.16 (Windows startup panic fix): version
   bump, `docs/releases/v0.2.16.md`, status release lines.
 - **2026-11-19** — Fix startup panic on PCs without Bun ("component window state

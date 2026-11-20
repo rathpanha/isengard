@@ -517,20 +517,25 @@ impl IsengardApp {
         app.start_lsp_event_pump(cx);
         app.start_instance_listener(window, cx);
 
-        // Otherwise start on the welcome screen.
-        match initial_path {
-            Some(path) if Workspace::is_workspace_file(&path) => {
-                app.open_workspace_file(&path, window, cx)
-            }
-            Some(path) if path.is_dir() => app.open_folder(&path, window, cx),
-            Some(path) if path.is_file() => {
-                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                    app.open_folder(parent, window, cx);
+        // Otherwise start on the welcome screen. Deferred: these can raise a
+        // toast ("Folder not found"), which needs the window's Root, and that
+        // only exists once `open_window`'s build closure (this fn) returns.
+        let this = cx.entity().downgrade();
+        window.defer(cx, move |window, cx| {
+            let _ = this.update(cx, |app, cx| match initial_path {
+                Some(path) if Workspace::is_workspace_file(&path) => {
+                    app.open_workspace_file(&path, window, cx)
                 }
-                app.open_file(&path, true, window, cx);
-            }
-            _ => {}
-        }
+                Some(path) if path.is_dir() => app.open_folder(&path, window, cx),
+                Some(path) if path.is_file() => {
+                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                        app.open_folder(parent, window, cx);
+                    }
+                    app.open_file(&path, true, window, cx);
+                }
+                _ => {}
+            });
+        });
 
         app.refresh_menus(cx);
         app.check_for_updates_on_start(window, cx);

@@ -1,6 +1,6 @@
 # Current status
 
-Shipping editor (v0.2.16): welcome, multi-root workspaces, file tree, tabs,
+Shipping editor (v0.2.17): welcome, multi-root workspaces, file tree, tabs,
 tree-sitter editor, LSP Install, Bun + `bun fmt`, terminal, search, Source
 Control, Claude + Cursor Agent panel (ACP), and in-app updates on Linux /
 macOS / Windows. Early phased plan (egui → Kit → Agent v1) is finished — do
@@ -177,7 +177,8 @@ What works today:
   (`src/notify.rs`; Mixkit pop sound, logo icon; Linux `notify-send`+`paplay`; macOS
   native `UNUserNotificationCenter` from the app bundle — app icon, listed under
   Isengard in System Settings > Notifications, asks permission on first use — with
-  `osascript` only for unbundled `cargo run` builds, plus `afplay`; no Windows yet).
+  `osascript` only for unbundled `cargo run` builds, plus `afplay`; Windows: PowerShell
+  toast under PowerShell's app id + `SoundPlayer` chime, click does not raise — untested).
   First open in a folder/workspace with no remembered agent → **Which
   agent?** (Claude / Cursor); pick is stored on that workspace session
   (`sessions.*.agent`) — **not** `config.json` `agent.command` — so restart
@@ -337,18 +338,22 @@ What works today:
 - Bun: only the Claude adapter is verified on Bun; npm-packaged language
   servers are untested there. Windows `.cmd` shims are not rewritten to Bun
   yet. `bun fmt` has no timeout.
-- Agent OS notification + sound: no Windows yet.
+- Agent OS notification + sound on Windows: written, not yet run on a real PC;
+  the toast carries PowerShell's name and clicking it does not raise the window.
 - Windows: the agent (ACP) subprocess is spawned inside the SDK, not via
   `process::command`; unverified whether it flashes a console window.
 - Terminal scrollback UI is still minimal.
 - Windows installer / updater: not yet smoke-tested on a clean PC (needs a
   second release to exercise update-to). v0.2.12’s `+crt-static` linked but
   crashed on open; shipping CRT DLLs beside the exe instead (from v0.2.13).
-  Still verify once on a clean VM. v0.2.12–v0.2.15 panicked on open on any PC
-  without Bun (the Set up Bun dialog opened inside `IsengardApp::new`, before
-  the window Root existed); fixed in v0.2.16 by deferring it. Windows builds
-  write `%LOCALAPPDATA%\isengard\isengard.log` (info logs + panic backtrace).
-  Not yet confirmed on Windows.
+  v0.2.12–v0.2.15 panicked on open on any PC without Bun (the Set up Bun
+  dialog opened inside `IsengardApp::new`, before the window Root existed);
+  fixed in v0.2.16 by deferring it, **confirmed starting on a Windows 10 PC**.
+  Anything that opens a dialog or toast must not run synchronously in `new`
+  (`window.defer` it). Windows builds write
+  `%LOCALAPPDATA%\isengard\isengard.log` (info logs + panic backtrace). Still
+  to smoke-test on Windows: Bun install, agent panel (console flash?),
+  terminal, LSP Install, and the updater (needs a later release).
 
 UI test coverage is an agent rule
 ([`.cursor/rules/ui-test-coverage.mdc`](../.cursor/rules/ui-test-coverage.mdc)),
@@ -357,7 +362,7 @@ not a product TODO. License is **GPL-3.0-only** — see
 
 ## Release
 
-- **v0.2.16 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
+- **v0.2.17 — Linux + macOS + Windows** (Linux `.deb` / `.rpm` / tarball via
   `scripts/package-linux.sh`; macOS universal `.dmg` / tarball via
   `scripts/package-macos.sh`; Windows x86_64 `.zip` via
   `scripts/package-windows.ps1`; all from
@@ -374,7 +379,7 @@ not a product TODO. License is **GPL-3.0-only** — see
   secrets `MACOS_CERT_P12` / `MACOS_CERT_PASSWORD`. The CI keychain-trust step
   and the x86_64 cross-build ran in the v0.1.10 release (arm64 verified on a
   real Mac; the Intel half has not been run on an Intel Mac).
-- Notes: [docs/releases/v0.2.16.md](releases/v0.2.16.md). Human install:
+- Notes: [docs/releases/v0.2.17.md](releases/v0.2.17.md). Human install:
   root [README.md](../README.md).
 
 ## Roadmap

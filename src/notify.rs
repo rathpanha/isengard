@@ -1,5 +1,6 @@
 //! OS desktop notification plus a short sound, via the platform's own tools
-//! (`notify-send` / `paplay` on Linux, `osascript` / `afplay` on macOS).
+//! (`notify-send` / `paplay` on Linux, `osascript` / `afplay` on macOS,
+//! PowerShell toast + `SoundPlayer` on Windows).
 //! Best effort: a missing tool is silently skipped.
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -141,7 +142,58 @@ mod native {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Windows PowerShell's own AppUserModelID: an unpackaged exe has none, and a
+/// toast needs a registered one. The toast shows under that name.
+#[cfg(windows)]
+const TOAST_APP_ID: &str = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
+
+/// Text goes in through the environment so it needs no PowerShell quoting.
+#[cfg(windows)]
+const TOAST_SCRIPT: &str = r#"
+$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text/><text/></binding></visual><audio silent="true"/></toast>')
+$text = $xml.GetElementsByTagName('text')
+$text.Item(0).InnerText = $env:ISENGARD_TOAST_TITLE
+$text.Item(1).InnerText = $env:ISENGARD_TOAST_BODY
+$toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($env:ISENGARD_TOAST_APP).Show($toast)
+"#;
+
+/// Toast through Windows PowerShell + the chime through `SoundPlayer` (the
+/// toast itself is silent). Clicking the toast does not raise the window.
+#[cfg(windows)]
+fn platform(title: &str, body: &str, _on_click: OnClick) {
+    let show = |script: &str, envs: &[(&str, &str)]| {
+        let mut cmd = crate::process::command("powershell.exe");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .envs(envs.iter().copied())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        cmd.status().is_ok_and(|s| s.success())
+    };
+    let (t, b) = (title.to_string(), body.to_string());
+    std::thread::spawn(move || {
+        show(
+            TOAST_SCRIPT,
+            &[
+                ("ISENGARD_TOAST_TITLE", &t),
+                ("ISENGARD_TOAST_BODY", &b),
+                ("ISENGARD_TOAST_APP", TOAST_APP_ID),
+            ],
+        );
+    });
+    if let Some(file) = sound_file().as_deref().and_then(|p| p.to_str()) {
+        show(
+            "(New-Object System.Media.SoundPlayer $env:ISENGARD_SOUND).PlaySync()",
+            &[("ISENGARD_SOUND", file)],
+        );
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn platform(_: &str, _: &str, _: OnClick) {}
 
 #[cfg(all(test, target_os = "macos"))]

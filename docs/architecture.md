@@ -307,7 +307,7 @@ src/
 │                        `node_modules`/… so Linux inotify does not blow up)
 │                        → flume of `FsChange`
 ├── notify.rs            agent-done OS notification + sound (Linux / macOS;
-│                        Windows not implemented)
+│                        Windows: PowerShell toast + SoundPlayer, untested)
 ├── shell_env.rs         macOS: merge login-shell PATH for Finder launches
 ├── theme.rs             bundled font loading + Theme overrides (font, radius 0, sizes)
 ├── branding.rs          logo mark, APP_ID, Dock / window icon helpers
